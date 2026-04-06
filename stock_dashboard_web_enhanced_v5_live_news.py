@@ -37,7 +37,6 @@ NEGATIVE_NEWS_KEYWORDS = {
 
 st.set_page_config(page_title="Market Sentinel News Lens", page_icon="📰", layout="wide")
 
-
 # ---------------------------
 # Styling
 # ---------------------------
@@ -141,15 +140,6 @@ def inject_css():
             position: relative;
             overflow: hidden;
         }
-        .sentinel-shell::after {
-            content: "";
-            position: absolute;
-            inset: auto -60px -70px auto;
-            width: 220px;
-            height: 220px;
-            background: radial-gradient(circle, rgba(37,99,235,.18) 0%, rgba(37,99,235,0) 70%);
-            pointer-events: none;
-        }
         .sentinel-kicker {
             font-size: 12px;
             font-weight: 800;
@@ -217,7 +207,6 @@ def inject_css():
         unsafe_allow_html=True,
     )
 
-
 # ---------------------------
 # Data Fetch
 # ---------------------------
@@ -234,7 +223,6 @@ def fetch_daily_data(tickers: list[str], period: str, interval: str):
         prepost=False,
     )
 
-
 @st.cache_data(ttl=120)
 def fetch_intraday_data(tickers: list[str]):
     return yf.download(
@@ -247,7 +235,6 @@ def fetch_intraday_data(tickers: list[str]):
         threads=True,
         prepost=True,
     )
-
 
 @st.cache_data(ttl=600)
 def fetch_ticker_news(ticker: str, max_items: int = 12):
@@ -324,7 +311,6 @@ def fetch_ticker_news(ticker: str, max_items: int = 12):
     filtered = [x for x in items if x["relevance"] > 0]
     return (filtered or items)[:max_items], None
 
-
 # ---------------------------
 # Helpers
 # ---------------------------
@@ -357,14 +343,12 @@ def get_series(data: pd.DataFrame | None, field: str, ticker: str):
     except Exception:
         return None
 
-
 def get_price_series(data: pd.DataFrame | None, ticker: str):
     for field in PRICE_FIELDS_PRIORITY:
         s = get_series(data, field, ticker)
         if s is not None and not s.empty:
             return ensure_datetime_index(s), field
     return None, None
-
 
 def ensure_datetime_index(series: pd.Series | None):
     if series is None or series.empty:
@@ -373,37 +357,31 @@ def ensure_datetime_index(series: pd.Series | None):
     s.index = pd.to_datetime(s.index)
     return s
 
-
 def localize_timestamp(ts):
     ts = pd.Timestamp(ts)
     if ts.tzinfo is None:
         return ts.tz_localize(US_TZ)
     return ts.tz_convert(US_TZ)
 
-
 def format_us_timestamp(ts) -> str:
     if ts is None or pd.isna(ts):
         return "N/A"
     return localize_timestamp(ts).strftime("%Y-%m-%d %H:%M %Z")
-
 
 def format_tw_timestamp(ts) -> str:
     if ts is None or pd.isna(ts):
         return "N/A"
     return localize_timestamp(ts).tz_convert(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
 
-
 def format_price(value):
     if pd.isna(value):
         return "N/A"
     return f"${value:,.2f}"
 
-
 def format_percent(value):
     if pd.isna(value):
         return "N/A"
     return f"{value:+.2f}%"
-
 
 def rsi_signal(rsi_value):
     if pd.isna(rsi_value):
@@ -418,7 +396,6 @@ def rsi_signal(rsi_value):
         return "Weak Momentum"
     return "Neutral"
 
-
 def trend_label(one_year_return):
     if pd.isna(one_year_return):
         return "N/A"
@@ -432,7 +409,6 @@ def trend_label(one_year_return):
         return "Mild Downtrend"
     return "Flat"
 
-
 def calculate_rsi(series: pd.Series, period: int = 14):
     if series is None or len(series) < period + 1:
         return pd.Series(dtype="float64")
@@ -444,7 +420,6 @@ def calculate_rsi(series: pd.Series, period: int = 14):
     rs = avg_gain / avg_loss.replace(0, pd.NA)
     return (100 - (100 / (1 + rs))).astype("float64")
 
-
 def build_indicator_frame(price_series: pd.Series):
     price_series = ensure_datetime_index(price_series)
     df = pd.DataFrame({"Price": price_series.copy()})
@@ -455,18 +430,13 @@ def build_indicator_frame(price_series: pd.Series):
     df["1Y Return %"] = ((price_series / price_series.iloc[0]) - 1) * 100
     return df
 
-
 def get_intraday_snapshot(intraday_data: pd.DataFrame | None, ticker: str):
     price_series, field_name = get_price_series(intraday_data, ticker)
     volume_series = get_series(intraday_data, "Volume", ticker)
     if price_series is None or price_series.empty:
         return {
-            "available": False,
-            "last_price": pd.NA,
-            "change_pct": pd.NA,
-            "timestamp": None,
-            "field_name": "N/A",
-            "volume": pd.NA,
+            "available": False, "last_price": pd.NA, "change_pct": pd.NA,
+            "timestamp": None, "field_name": "N/A", "volume": pd.NA,
             "chart": pd.DataFrame(),
         }
     latest_ts = price_series.index[-1]
@@ -475,46 +445,32 @@ def get_intraday_snapshot(intraday_data: pd.DataFrame | None, ticker: str):
     change_pct = ((last_price / prev_price) - 1) * 100 if pd.notna(prev_price) and prev_price != 0 else pd.NA
     chart = pd.DataFrame({"Intraday Price": price_series.tail(78)})
     return {
-        "available": True,
-        "last_price": last_price,
-        "change_pct": change_pct,
-        "timestamp": latest_ts,
-        "field_name": field_name,
+        "available": True, "last_price": last_price, "change_pct": change_pct,
+        "timestamp": latest_ts, "field_name": field_name,
         "volume": volume_series.iloc[-1] if volume_series is not None and not volume_series.empty else pd.NA,
         "chart": chart,
     }
-
 
 def infer_news_impact(title: str, summary: str = ""):
     text = f"{title} {summary}".lower()
     pos = sum(1 for kw in POSITIVE_NEWS_KEYWORDS if kw in text)
     neg = sum(1 for kw in NEGATIVE_NEWS_KEYWORDS if kw in text)
     score = pos - neg
-
-    if score >= 2:
-        return "Likely bullish", score, "Headline language leans positive for demand, margins, upgrades, or growth."
-    if score <= -2:
-        return "Likely bearish", score, "Headline language leans negative for guidance, regulation, demand, or execution risk."
-    if score > 0:
-        return "Mildly bullish", score, "Some positive wording is present, but the signal is not strong."
-    if score < 0:
-        return "Mildly bearish", score, "Some negative wording is present, but the signal is not strong."
+    if score >= 2: return "Likely bullish", score, "Headline language leans positive for demand, margins, upgrades, or growth."
+    if score <= -2: return "Likely bearish", score, "Headline language leans negative for guidance, regulation, demand, or execution risk."
+    if score > 0: return "Mildly bullish", score, "Some positive wording is present, but the signal is not strong."
+    if score < 0: return "Mildly bearish", score, "Some negative wording is present, but the signal is not strong."
     return "Neutral / mixed", score, "The headline is informational or the signals conflict."
-
 
 def infer_news_confidence(relevance: int, impact_score: int):
     strength = abs(impact_score)
     total = relevance + strength
-    if total >= 6:
-        return "High"
-    if total >= 3:
-        return "Medium"
+    if total >= 6: return "High"
+    if total >= 3: return "Medium"
     return "Low"
 
-
 def build_news_pulse(news_items: list[dict]):
-    if not news_items:
-        return {"score": 0.0, "label": "Flat", "up": 0, "down": 0, "neutral": 0}
+    if not news_items: return {"score": 0.0, "label": "Flat", "up": 0, "down": 0, "neutral": 0}
     weighted = 0.0
     up = down = neutral = 0
     for item in news_items:
@@ -522,433 +478,120 @@ def build_news_pulse(news_items: list[dict]):
         score = item.get("impact_score", 0)
         weighted += score * weight
         label = item.get("impact_label", "Neutral / mixed")
-        if "bullish" in label.lower():
-            up += 1
-        elif "bearish" in label.lower():
-            down += 1
-        else:
-            neutral += 1
+        if "bullish" in label.lower(): up += 1
+        elif "bearish" in label.lower(): down += 1
+        else: neutral += 1
     avg = weighted / max(len(news_items), 1)
-    if avg >= 1.4:
-        label = "News tilt: bullish"
-    elif avg <= -1.4:
-        label = "News tilt: bearish"
-    else:
-        label = "News tilt: mixed"
+    if avg >= 1.4: label = "News tilt: bullish"
+    elif avg <= -1.4: label = "News tilt: bearish"
+    else: label = "News tilt: mixed"
     return {"score": avg, "label": label, "up": up, "down": down, "neutral": neutral}
-
 
 def analyze_market_sentinel(price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict], ticker: str):
     indicators = build_indicator_frame(price_series)
     latest = indicators.iloc[-1]
-    last_price = latest["Price"]
-    sma20 = latest["SMA 20"]
-    sma50 = latest["SMA 50"]
-    sma200 = latest["SMA 200"]
-    rsi14 = latest["RSI 14"]
-    one_year_return = latest["1Y Return %"]
+    last_price = latest["Price"]; sma20 = latest["SMA 20"]; sma50 = latest["SMA 50"]
+    sma200 = latest["SMA 200"]; rsi14 = latest["RSI 14"]; one_year_return = latest["1Y Return %"]
 
-    score = 0
-    reasons = []
-
+    score = 0; reasons = []
     if pd.notna(last_price) and pd.notna(sma200):
-        if last_price > sma200:
-            score += 2
-            reasons.append("Price is above SMA 200, supporting the long-term uptrend.")
-        else:
-            score -= 2
-            reasons.append("Price is below SMA 200, which weakens the long-term setup.")
+        if last_price > sma200: score += 2; reasons.append("Price is above SMA 200, supporting the long-term uptrend.")
+        else: score -= 2; reasons.append("Price is below SMA 200, which weakens the long-term setup.")
     if pd.notna(sma50) and pd.notna(sma200):
-        if sma50 > sma200:
-            score += 2
-            reasons.append("SMA 50 is above SMA 200, confirming medium-term strength.")
-        else:
-            score -= 2
-            reasons.append("SMA 50 is below SMA 200, confirming medium-term weakness.")
+        if sma50 > sma200: score += 2; reasons.append("SMA 50 is above SMA 200, confirming medium-term strength.")
+        else: score -= 2; reasons.append("SMA 50 is below SMA 200, confirming medium-term weakness.")
     if pd.notna(sma20) and pd.notna(sma50):
-        if sma20 > sma50:
-            score += 1
-            reasons.append("SMA 20 is above SMA 50, so near-term momentum is supportive.")
-        else:
-            score -= 1
-            reasons.append("SMA 20 is below SMA 50, so near-term momentum has cooled.")
+        if sma20 > sma50: score += 1; reasons.append("SMA 20 is above SMA 50, near-term momentum is supportive.")
+        else: score -= 1; reasons.append("SMA 20 is below SMA 50, near-term momentum has cooled.")
     if pd.notna(rsi14):
-        if 50 <= rsi14 <= 68:
-            score += 1
-            reasons.append("RSI is in a healthy bullish range.")
-        elif rsi14 > 75:
-            score -= 1
-            reasons.append("RSI is stretched, so upside may be more fragile short term.")
-        elif rsi14 < 35:
-            score -= 1
-            reasons.append("RSI is weak, which suggests sellers still have control.")
-    if pd.notna(one_year_return):
-        if one_year_return > 15:
-            score += 1
-            reasons.append("The stock is up strongly over the past year, which supports the broader trend.")
-        elif one_year_return < -10:
-            score -= 1
-            reasons.append("The stock is down over the past year, which weakens the trend case.")
-
-    volume_status = "N/A"
-    if volume_series is not None and not volume_series.empty:
-        volume_series = ensure_datetime_index(volume_series)
-        avg_volume_50 = volume_series.tail(50).mean()
-        vol_ratio = (volume_series.iloc[-1] / avg_volume_50) if pd.notna(avg_volume_50) and avg_volume_50 != 0 else pd.NA
-        if pd.notna(vol_ratio) and vol_ratio >= 1.2:
-            volume_status = "Elevated"
-            score += 1
-            reasons.append("Recent volume is above the 50-day average, giving the move more confirmation.")
-        elif pd.notna(vol_ratio) and vol_ratio <= 0.8:
-            volume_status = "Light"
-            reasons.append("Recent volume is light, so conviction behind the move is weaker.")
-        else:
-            volume_status = "Normal"
+        if 50 <= rsi14 <= 68: score += 1; reasons.append("RSI is in a healthy bullish range.")
+        elif rsi14 > 75: score -= 1; reasons.append("RSI is stretched, upside may be fragile short term.")
+        elif rsi14 < 35: score -= 1; reasons.append("RSI is weak, suggesting sellers still have control.")
 
     news_pulse = build_news_pulse(news_items)
-    if news_pulse["score"] >= 1.4:
-        score += 1
-        reasons.append("Recent news flow has skewed bullish.")
-    elif news_pulse["score"] <= -1.4:
-        score -= 1
-        reasons.append("Recent news flow has skewed bearish.")
-    else:
-        reasons.append("Recent news flow is mixed and does not materially change the core trend picture.")
+    if news_pulse["score"] >= 1.4: score += 1; reasons.append("Recent news flow has skewed bullish.")
+    elif news_pulse["score"] <= -1.4: score -= 1; reasons.append("Recent news flow has skewed bearish.")
 
-    if score >= 4:
-        signal = "BUY"
-        confidence = "High" if score >= 6 else "Moderate"
-        summary = "Trend structure and recent context are supportive for accumulation."
-    elif score <= -3:
-        signal = "SELL"
-        confidence = "High" if score <= -5 else "Moderate"
-        summary = "Trend structure is weak or deteriorating, so risk remains elevated."
-    else:
-        signal = "HOLD"
-        confidence = "Moderate"
-        summary = "Signals are mixed, so waiting for better confirmation is more disciplined."
+    if score >= 4: signal = "BUY"; confidence = "High" if score >= 6 else "Moderate"; summary = "Trend structure and news are supportive."
+    elif score <= -3: signal = "SELL"; confidence = "High" if score <= -5 else "Moderate"; summary = "Trend structure is weak or deteriorating."
+    else: signal = "HOLD"; confidence = "Moderate"; summary = "Signals are mixed; waiting for better confirmation."
 
     return {
-        "signal": signal,
-        "confidence": confidence,
-        "score": score,
-        "summary": summary,
-        "reasons": reasons,
-        "trend": trend_label(one_year_return),
-        "one_year_return": one_year_return,
-        "rsi14": rsi14,
-        "rsi_status": rsi_signal(rsi14),
-        "last_price": last_price,
-        "sma20": sma20,
-        "sma50": sma50,
-        "sma200": sma200,
-        "indicators": indicators,
+        "signal": signal, "confidence": confidence, "score": score, "summary": summary,
+        "reasons": reasons, "trend": trend_label(one_year_return), "one_year_return": one_year_return,
+        "rsi14": rsi14, "rsi_status": rsi_signal(rsi14), "last_price": last_price,
+        "sma20": sma20, "sma50": sma50, "sma200": sma200, "indicators": indicators,
         "latest_daily_ts": indicators.index[-1] if not indicators.empty else None,
-        "volume_status": volume_status,
-        "news_pulse": news_pulse,
-        "ticker": ticker,
+        "news_pulse": news_pulse, "ticker": ticker,
     }
 
-
-def signal_class(signal: str) -> str:
-    return {"BUY": "chip-buy", "HOLD": "chip-hold", "SELL": "chip-sell"}.get(signal, "chip-info")
-
-
 def badge_html(text: str, kind: str = "info") -> str:
-    klass = {
-        "buy": "chip chip-buy",
-        "hold": "chip chip-hold",
-        "sell": "chip chip-sell",
-        "info": "chip chip-info",
-    }.get(kind, "chip")
+    klass = {"buy": "chip chip-buy", "hold": "chip chip-hold", "sell": "chip chip-sell"}.get(kind, "chip chip-info")
     return f'<span class="{klass}">{escape(text)}</span>'
 
-
-def impact_bar(item: dict) -> str:
-    score = item.get("impact_score", 0)
-    width = min(100, max(18, abs(score) * 28 + item.get("relevance", 0) * 8))
-    if score > 0:
-        inner = f'<div class="impact-bar-pos" style="width:{width}%"></div>'
-    elif score < 0:
-        inner = f'<div class="impact-bar-neg" style="width:{width}%"></div>'
-    else:
-        inner = f'<div class="impact-bar-neu" style="width:{width}%"></div>'
-    return f'<div class="impact-bar-wrap">{inner}</div>'
-
-
-# ---------------------------
-# Rendering
-# ---------------------------
 def render_story_card(item: dict, ticker: str, idx: int):
     label = item["impact_label"]
-    if "bullish" in label.lower():
-        badge_kind = "buy"
-    elif "bearish" in label.lower():
-        badge_kind = "sell"
-    else:
-        badge_kind = "hold"
-
-    related = ", ".join(item.get("related", [])[:6]) if item.get("related") else "Not provided"
-    title = escape(item["title"])
-    summary = escape(item["summary"] or item["impact_reason"])
-    provider = escape(str(item["provider"]))
-    us_time = format_us_timestamp(item["published"])
-    tw_time = format_tw_timestamp(item["published"])
-    relevance_text = {0: "Low", 1: "Low", 2: "Medium", 3: "Medium", 4: "High", 5: "High", 6: "High"}.get(item.get("relevance", 0), "High")
-
-    link_html = ""
-    if item.get("url"):
-        safe_url = escape(str(item["url"]))
-        link_html = f'<a class="inline-link" href="{safe_url}" target="_blank">Open article ↗</a>'
-
-    st.markdown(
-        f"""
+    badge_kind = "buy" if "bullish" in label.lower() else "sell" if "bearish" in label.lower() else "hold"
+    st.markdown(f"""
         <div class="news-card">
             <div class="section-label">Story {idx:02d}</div>
-            <h4>{title}</h4>
+            <h4>{escape(item['title'])}</h4>
             <div class="chip-row">
                 {badge_html(label, badge_kind)}
                 {badge_html(f"Confidence: {item['confidence']}", 'info')}
-                {badge_html(f"Relevance: {relevance_text}", 'info')}
             </div>
-            <div class="news-meta">{provider} · US {us_time} · Taiwan {tw_time}</div>
-            <div class="news-summary">{summary}</div>
-            <div class="mini"><strong>Why this could matter to {escape(ticker)}:</strong> {escape(item['impact_reason'])}</div>
-            {impact_bar(item)}
-            <div class="mini" style="margin-top:8px;">Related tickers: {escape(related)}</div>
-            <div style="margin-top:10px;">{link_html}</div>
+            <div class="news-meta">{escape(item['provider'])} · US {format_us_timestamp(item['published'])}</div>
+            <div class="news-summary">{escape(item['summary'] or item['impact_reason'])}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_right_rail(analysis: dict, intraday: dict, news_items: list[dict]):
-    pulse = analysis["news_pulse"]
-    signal = analysis["signal"]
-    st.markdown(
-        f"""
-        <div class="side-card">
-            <h4>Market Sentinel</h4>
-            <div class="chip-row">
-                {badge_html(signal, 'buy' if signal == 'BUY' else 'sell' if signal == 'SELL' else 'hold')}
-                {badge_html(f"Confidence: {analysis['confidence']}", 'info')}
-            </div>
-            <p class="mini" style="margin-top:8px;">{escape(analysis['summary'])}</p>
-            <div class="mini">Sentinel score: <strong>{analysis['score']}</strong></div>
-            <div class="mini">1Y trend: <strong>{escape(analysis['trend'])}</strong></div>
-            <div class="mini">RSI: <strong>{analysis['rsi_status']}</strong></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"""
-        <div class="side-card">
-            <h4>News pulse</h4>
-            <div class="mini">{escape(pulse['label'])}</div>
-            <div class="pulse-grid">
-                <div class="pulse-box pulse-up">Bullish<br>{pulse['up']}</div>
-                <div class="pulse-box pulse-neu">Mixed<br>{pulse['neutral']}</div>
-                <div class="pulse-box pulse-down">Bearish<br>{pulse['down']}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    last_intraday = format_price(intraday["last_price"]) if intraday.get("available") else "N/A"
-    intraday_change = format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A"
-    intraday_time = format_tw_timestamp(intraday.get("timestamp")) if intraday.get("available") else "N/A"
-    st.markdown(
-        f"""
-        <div class="side-card">
-            <h4>Live snapshot</h4>
-            <div class="mini">Intraday price: <strong>{last_intraday}</strong></div>
-            <div class="mini">Intraday change: <strong>{intraday_change}</strong></div>
-            <div class="mini">Taiwan time: <strong>{intraday_time}</strong></div>
-            <div class="mini">Daily trend date: <strong>{format_us_timestamp(analysis['latest_daily_ts'])}</strong></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    top_reasons = "".join(f"<li>{escape(r)}</li>" for r in analysis["reasons"][:4])
-    st.markdown(
-        f"""
-        <div class="side-card">
-            <h4>Why the signal looks this way</h4>
-            <ul class="list-tight">{top_reasons}</ul>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="side-card">
-            <h4>How to read this page</h4>
-            <div class="mini">News labels show the article’s possible directional effect on the stock, not certainty. The trading signal combines 1-year trend, moving averages, RSI, volume, and recent news pulse.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_overview_header(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
-    signal = analysis["signal"]
-    signal_kind = "buy" if signal == "BUY" else "sell" if signal == "SELL" else "hold"
-    pulse = analysis["news_pulse"]
-    intraday_line = f"Intraday {format_price(intraday['last_price'])} ({format_percent(intraday['change_pct'])})" if intraday.get("available") else "Intraday snapshot unavailable"
-    st.markdown(
-        f"""
-        <div class="sentinel-shell">
-            <div class="sentinel-kicker">Ground-style stock news lens</div>
-            <div class="sentinel-title">{escape(ticker)}</div>
-            <div class="sentinel-sub">{escape(analysis['summary'])}</div>
-            <div class="chip-row">
-                {badge_html(signal, signal_kind)}
-                {badge_html(f"Confidence: {analysis['confidence']}", 'info')}
-                {badge_html(f"1Y Return: {format_percent(analysis['one_year_return'])}", 'info')}
-                {badge_html(f"News pulse: {pulse['label']}", 'info')}
-            </div>
-            <div class="chip-row">
-                {badge_html(intraday_line, 'info')}
-                {badge_html(f"Latest daily trend bar: {format_us_timestamp(analysis['latest_daily_ts'])}", 'info')}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_market_panel(analysis: dict, intraday: dict):
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Last daily close", format_price(analysis["last_price"]))
-    c2.metric("SMA 50 vs 200", f"{format_price(analysis['sma50'])} / {format_price(analysis['sma200'])}")
-    c3.metric("RSI 14", "N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}")
-    c4.metric("Intraday move", format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
-
-    indicators = analysis["indicators"][["Price", "SMA 20", "SMA 50", "SMA 200"]].tail(252).copy()
-    st.markdown("**1-year trend and moving averages**")
-    st.line_chart(indicators)
-
-    if intraday.get("available") and not intraday["chart"].empty:
-        st.markdown("**Live intraday trend (5m)**")
-        st.line_chart(intraday["chart"])
-
-
-def render_news_feed(ticker: str, news_items: list[dict]):
-    st.markdown("### Related news feed")
-    st.caption("Only stories associated with the selected stock are shown here. The impact badge is a reference signal, not a guarantee.")
-    if not news_items:
-        st.info(f"No recent stock-specific news was returned for {ticker}.")
-        return
-    for idx, item in enumerate(news_items, start=1):
-        render_story_card(item, ticker, idx)
-
-
-def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str):
-    price_series, field_name = get_price_series(daily_data, ticker)
-    volume_series = get_series(daily_data, "Volume", ticker)
-    intraday = get_intraday_snapshot(intraday_data, ticker)
-    news_items, _ = fetch_ticker_news(ticker, max_items=8)
-
-    if price_series is None or price_series.empty:
-        return {
-            "Ticker": ticker,
-            "Signal": "N/A",
-            "Confidence": "N/A",
-            "Daily Close": "N/A",
-            "Intraday": "N/A",
-            "1Y Trend": "N/A",
-            "News Pulse": "N/A",
-            "Price Source": field_name or "N/A",
-        }
-
-    analysis = analyze_market_sentinel(price_series, volume_series, news_items, ticker)
-    return {
-        "Ticker": ticker,
-        "Signal": analysis["signal"],
-        "Confidence": analysis["confidence"],
-        "Daily Close": format_price(analysis["last_price"]),
-        "Intraday": format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A",
-        "1Y Trend": analysis["trend"],
-        "News Pulse": analysis["news_pulse"]["label"],
-        "Price Source": field_name,
-    }
-
-
-def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str):
-    price_series, _ = get_price_series(daily_data, ticker)
-    volume_series = get_series(daily_data, "Volume", ticker)
-    news_items, news_error = fetch_ticker_news(ticker, max_items=10)
-    intraday = get_intraday_snapshot(intraday_data, ticker)
-
-    if news_error:
-        st.warning(news_error)
-
-    if price_series is None or price_series.empty:
-        st.warning(f"No usable price series found for {ticker}.")
-        return
-
-    analysis = analyze_market_sentinel(price_series, volume_series, news_items, ticker)
-    render_overview_header(ticker, analysis, intraday, news_items)
-
-    main_col, right_col = st.columns([2.2, 1.0], gap="large")
-    with main_col:
-        render_market_panel(analysis, intraday)
-        render_news_feed(ticker, news_items)
-    with right_col:
-        render_right_rail(analysis, intraday, news_items)
-
+    """, unsafe_allow_html=True)
 
 # ---------------------------
-# Main app
+# Main app rendering
 # ---------------------------
 def generate_dashboard():
     inject_css()
     st.title("📰 Market Sentinel News Lens")
-    st.caption("Ground News–inspired stock dashboard with high-contrast cards, fast visual scanning, and per-stock news impact references.")
-
+    
     with st.sidebar:
-        st.header("Settings")
-        tickers = st.multiselect(
-            "Tickers",
-            options=["NVDA", "TSM", "AAPL", "MSFT", "AMD", "QQQ", "TSLA", "META", "AMZN"],
-            default=DEFAULT_TICKERS,
-        )
-        period = st.selectbox("Trend lookback", SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
-        interval = st.selectbox("Trend interval", SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
-        if st.button("Refresh now", use_container_width=True):
-            st.cache_data.clear()
-        st.caption("Daily trend drives the Sentinel signal. Intraday is a live reference layer.")
+        # --- DAVID LAU SIGNATURE ---
+        st.markdown("""
+            <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px;">
+                <p style="margin:0; font-size: 12px; color: #8892b0;">Dashboard Creator</p>
+                <h3 style="margin:0; color: #2563eb !important; font-size: 18px;">David Lau</h3>
+                <p style="margin:0; font-size: 11px; color: #5c7cfa;">Stock Trending View</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        tickers = st.multiselect("Tickers", ["NVDA", "TSM", "AAPL", "MSFT", "AMD", "TSLA"], DEFAULT_TICKERS)
+        if st.button("Refresh now", use_container_width=True): st.cache_data.clear()
 
     if not tickers:
-        st.warning("Please select at least one ticker.")
+        st.warning("Please select a ticker.")
         return
 
-    with st.spinner("Loading market data and stock-specific news..."):
-        daily_data = fetch_daily_data(tickers, period, interval)
-        intraday_data = fetch_intraday_data(tickers)
+    daily_data = fetch_daily_data(tickers, "1y", "1d")
+    intraday_data = fetch_intraday_data(tickers)
 
-    if daily_data is None or daily_data.empty:
-        st.error("No market data was returned. Please try again.")
-        return
+    for ticker in tickers:
+        price_series, _ = get_price_series(daily_data, ticker)
+        news_items, _ = fetch_ticker_news(ticker, max_items=5)
+        analysis = analyze_market_sentinel(price_series, None, news_items, ticker)
+        
+        st.header(f"Sentinel Analysis: {ticker}")
+        st.markdown(f"**Signal:** {analysis['signal']} ({analysis['confidence']} confidence)")
+        st.line_chart(analysis["indicators"]["Price"].tail(100))
+        
+        for idx, item in enumerate(news_items, 1):
+            render_story_card(item, ticker, idx)
 
-    st.markdown("### Snapshot")
-    snapshot_df = pd.DataFrame([build_snapshot_row(daily_data, intraday_data, t) for t in tickers])
-    st.dataframe(snapshot_df, use_container_width=True, hide_index=True)
-
+    # --- FOOTER SIGNATURE ---
     st.markdown("---")
-    tabs = st.tabs(tickers)
-    for tab, ticker in zip(tabs, tickers):
-        with tab:
-            render_ticker_page(daily_data, intraday_data, ticker)
-
-    st.markdown('<div class="disclaimer">This dashboard is for research and reference. News impact labels are heuristic and should not be used alone as a trading decision.</div>', unsafe_allow_html=True)
-
+    st.markdown("""
+        <div style="text-align: center; opacity: 0.8; padding-bottom: 20px;">
+            <p style="margin:0; font-size: 14px; color: #d0d5dd;">Created by <strong>David Lau</strong></p>
+            <p style="margin:0; font-size: 12px; color: #2563eb;">Stock Trending View | 2026 AI Creativity</p>
+        </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     generate_dashboard()
