@@ -872,6 +872,222 @@ def inject_css():
             .news-brief-card, .lead-story, .crypto-card { min-height: unset; }
             .story-row-grid { grid-template-columns: 1fr; }
         }
+
+        @media (max-width: 980px) {
+            .block-container {
+                padding-left: 0.7rem;
+                padding-right: 0.7rem;
+            }
+            .sentinel-shell,
+            .story-card,
+            .news-card,
+            .side-card,
+            .trend-shell,
+            .compare-shell,
+            .compare-table-shell,
+            .compare-chart-shell,
+            .chart-shell {
+                border-radius: 20px !important;
+            }
+            .sentinel-title {
+                font-size: 30px !important;
+            }
+            .sentinel-sub,
+            .top-intro,
+            .compare-copy,
+            .compare-table-copy,
+            .chart-copy,
+            .trend-sub {
+                font-size: 14px !important;
+                line-height: 1.55 !important;
+            }
+            .chip-row {
+                gap: 8px !important;
+            }
+            .chip {
+                padding: 8px 12px !important;
+                font-size: 12px !important;
+            }
+            .compare-topline {
+                grid-template-columns: 1fr !important;
+                gap: 12px !important;
+            }
+            .compare-hero-grid,
+            .news-first-grid,
+            .story-grid {
+                grid-template-columns: 1fr !important;
+                gap: 12px !important;
+            }
+            div[data-testid="stHorizontalBlock"] {
+                gap: 0.75rem !important;
+            }
+        }
+        @media (max-width: 768px) {
+            .block-container {
+                max-width: 100% !important;
+                padding-top: 0.6rem !important;
+                padding-left: 0.55rem !important;
+                padding-right: 0.55rem !important;
+                padding-bottom: 1.2rem !important;
+            }
+            .top-kicker {
+                font-size: 10px !important;
+                letter-spacing: .14em !important;
+            }
+            h1 {
+                font-size: 1.85rem !important;
+                line-height: 1.05 !important;
+            }
+            .top-intro {
+                font-size: 14px !important;
+                line-height: 1.55 !important;
+            }
+            .sentinel-shell {
+                padding: 16px 15px !important;
+            }
+            .sentinel-title {
+                font-size: 28px !important;
+            }
+            .compare-shell,
+            .compare-chart-shell,
+            .compare-table-shell,
+            .story-stream-shell,
+            .trend-shell,
+            .chart-shell,
+            .side-card,
+            .news-card,
+            .story-card {
+                padding-left: 14px !important;
+                padding-right: 14px !important;
+            }
+            .compare-title,
+            .compare-table-title,
+            .chart-title,
+            .trend-title {
+                font-size: 20px !important;
+            }
+            .section-header,
+            .section-label,
+            .compare-table-head {
+                letter-spacing: .09em !important;
+            }
+            .compare-table-head {
+                display: none !important;
+            }
+            .compare-table-body {
+                gap: 12px !important;
+            }
+            .compare-table-row {
+                grid-template-columns: 1fr !important;
+                gap: 10px !important;
+                padding: 14px !important;
+                border-radius: 18px !important;
+            }
+            .compare-table-cell {
+                display: grid !important;
+                grid-template-columns: minmax(92px, 110px) 1fr !important;
+                gap: 10px !important;
+                align-items: start !important;
+                padding-bottom: 6px !important;
+                border-bottom: 1px solid rgba(255,255,255,.07);
+            }
+            .compare-table-cell:last-child {
+                border-bottom: none !important;
+                padding-bottom: 0 !important;
+            }
+            .compare-table-ticker {
+                font-size: 22px !important;
+            }
+            .compare-table-sub {
+                font-size: 11px !important;
+                text-transform: uppercase;
+                letter-spacing: .08em;
+            }
+            .compare-table-value {
+                font-size: 17px !important;
+            }
+            .compare-table-note {
+                font-size: 12px !important;
+            }
+            .compare-table-chip {
+                padding: 7px 11px !important;
+                font-size: 11px !important;
+            }
+            .mini-candle-grid {
+                grid-template-columns: 1fr !important;
+            }
+            div[data-testid="stMetric"] {
+                min-height: 104px !important;
+                padding: 14px 14px !important;
+                border-radius: 16px !important;
+            }
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 6px !important;
+                overflow-x: auto !important;
+                scrollbar-width: none;
+                padding-bottom: 2px;
+            }
+            .stTabs [data-baseweb="tab"] {
+                white-space: nowrap !important;
+                min-width: max-content !important;
+                padding: 8px 12px !important;
+                font-size: 13px !important;
+            }
+            section[data-testid="stSidebar"] .stButton > button {
+                min-height: 48px !important;
+                font-size: 14px !important;
+            }
+        }
+        @media (max-width: 520px) {
+            .sentinel-title {
+                font-size: 24px !important;
+            }
+            .sentinel-sub,
+            .compare-copy,
+            .compare-table-copy,
+            .chart-copy,
+            .trend-sub,
+            .news-summary,
+            .story-summary {
+                font-size: 13px !important;
+            }
+            .chip-row {
+                gap: 6px !important;
+            }
+            .chip {
+                width: 100%;
+                justify-content: center;
+            }
+            .compare-table-shell,
+            .compare-chart-shell,
+            .trend-shell,
+            .chart-shell {
+                padding-top: 14px !important;
+                padding-bottom: 12px !important;
+            }
+            .compare-table-row {
+                padding: 12px !important;
+            }
+            .compare-table-cell {
+                grid-template-columns: 1fr !important;
+                gap: 4px !important;
+            }
+            .compare-table-sub {
+                font-size: 10px !important;
+            }
+            .compare-table-value {
+                font-size: 18px !important;
+            }
+            .compare-table-note {
+                font-size: 11.5px !important;
+                line-height: 1.45 !important;
+            }
+            .news-meta,
+            .story-meta {
+                font-size: 11px !important;
+            }
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -1955,25 +2171,25 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         unsafe_allow_html=True,
     )
 
-    compare_cols = st.columns(min(3, len(bundles)))
-    for idx, bundle in enumerate(bundles):
-        with compare_cols[idx % len(compare_cols)]:
-            st.markdown(
-                f"""
-                <div class="mini-candle-card">
-                    <div class="mini-candle-name">{escape(bundle['ticker'])}</div>
-                    <div class="mini-candle-sub">{escape(bundle['analysis']['signal'])} · {escape(bundle['analysis']['trend'])}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            render_candlestick_chart(
-                bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
-                f"{bundle['ticker']} recent structure",
-                "Recent daily candles in the shared dashboard theme.",
-                height=220,
-                show_ma=False,
-            )
+    st.markdown('<div class="mini-candle-grid">', unsafe_allow_html=True)
+    for bundle in bundles:
+        st.markdown(
+            f"""
+            <div class="mini-candle-card">
+                <div class="mini-candle-name">{escape(bundle['ticker'])}</div>
+                <div class="mini-candle-sub">{escape(bundle['analysis']['signal'])} · {escape(bundle['analysis']['trend'])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_candlestick_chart(
+            bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
+            f"{bundle['ticker']} recent structure",
+            "Recent daily candles in the shared dashboard theme.",
+            height=220,
+            show_ma=False,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
 
     board_html = (
         '<div class="compare-table-shell">'
