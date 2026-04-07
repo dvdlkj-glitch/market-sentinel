@@ -237,20 +237,150 @@ def inject_css():
             color: rgba(238,242,255,.74) !important;
             text-transform: uppercase;
         }
-        .stTabs [data-baseweb="tab-list"] {
+        
+        .explorer-nav-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(77,109,255,.20) 0%, rgba(77,109,255,0) 36%),
+                linear-gradient(180deg, #10192c 0%, #091120 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 26px;
+            padding: 18px 18px 14px 18px;
+            box-shadow: 0 18px 36px rgba(19, 28, 45, 0.14);
+            margin: 16px 0 14px 0;
+            color: #eef4ff;
+        }
+        .explorer-nav-shell::after {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -60px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(255,91,91,.14) 0%, rgba(255,91,91,0) 70%);
+            pointer-events: none;
+        }
+        .explorer-nav-head {
+            display:grid;
+            grid-template-columns: 1.25fr .9fr;
+            gap: 16px;
+            align-items: start;
+        }
+        .explorer-nav-kicker {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: rgba(238,244,255,.60);
+        }
+        .explorer-nav-title {
+            font-size: 26px;
+            font-weight: 900;
+            color:#ffffff;
+            line-height:1.04;
+            margin-top: 6px;
+        }
+        .explorer-nav-copy {
+            font-size: 13px;
+            line-height: 1.62;
+            color: rgba(238,244,255,.78);
+            margin-top: 8px;
+            max-width: 880px;
+        }
+        .explorer-nav-panel {
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.04) 100%);
+            border: 1px solid rgba(255,255,255,.10);
+            border-radius: 18px;
+            padding: 14px 14px 12px 14px;
+            backdrop-filter: blur(12px);
+        }
+        .explorer-nav-panel-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .10em;
+            color: rgba(238,244,255,.62);
+            font-weight: 900;
+        }
+        .explorer-nav-panel-value {
+            font-size: 18px;
+            font-weight: 900;
+            color: #ffffff;
+            margin-top: 8px;
+            line-height: 1.12;
+        }
+        .explorer-nav-panel-copy {
+            font-size: 12.5px;
+            line-height: 1.56;
+            color: rgba(238,244,255,.74);
+            margin-top: 8px;
+        }
+        .explorer-nav-row {
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+            margin-top: 14px;
+        }
+        .explorer-nav-chip {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            padding: 8px 12px;
+            border-radius:999px;
+            background: rgba(255,255,255,.08);
+            border:1px solid rgba(255,255,255,.10);
+            color:#eef4ff;
+            font-size:11px;
+            font-weight:900;
+            letter-spacing:.05em;
+            text-transform:uppercase;
+        }
+        .stTabs [data-baseweb="tab-list"]::before {
+            content: "Select a ticker to open its full research page";
+            display: block;
+            width: 100%;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: #667085;
+            margin-bottom: 2px;
+            padding: 0 4px 4px 4px;
+        }
+.stTabs [data-baseweb="tab-list"] {
             gap: 10px;
+            background: linear-gradient(180deg, rgba(255,255,255,.86) 0%, rgba(255,255,255,.72) 100%);
+            border: 1px solid #d9d2c4;
+            border-radius: 24px;
+            padding: 10px;
+            box-shadow: 0 10px 22px rgba(19, 28, 45, 0.08);
             margin-bottom: 12px;
         }
         .stTabs [data-baseweb="tab"] {
-            background: #ece8de;
+            position: relative;
+            background: linear-gradient(180deg, #f7f3ea 0%, #ffffff 100%);
             border: 1px solid #d7d1c4;
             border-radius: 999px;
             color: #2b3140;
-            font-weight: 700;
-            padding: 10px 18px;
+            font-weight: 800;
+            padding: 12px 18px;
+            min-height: 50px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 8px 18px rgba(19, 28, 45, 0.06);
+        }
+        .stTabs [data-baseweb="tab"]:hover {
+            transform: translateY(-1px);
+            border-color: #b9c7ff;
+            box-shadow: 0 10px 18px rgba(41,82,255,.12);
         }
         .stTabs [aria-selected="true"] {
-            background: #161b22 !important;
+            background:
+                radial-gradient(circle at top left, rgba(77,109,255,.18) 0%, rgba(77,109,255,0) 34%),
+                linear-gradient(180deg, #10192c 0%, #091120 100%) !important;
+            color: #fff !important;
+            border-color: rgba(114,140,255,.45) !important;
+            box-shadow: 0 12px 20px rgba(19, 28, 45, 0.18), inset 0 -2px 0 rgba(255,91,91,.9) !important;
+        }
+        .stTabs [aria-selected="true"] * {
             color: #fff !important;
         }
         .stDataFrame, div[data-testid="stDataFrame"] {
@@ -974,6 +1104,9 @@ def inject_css():
             }
         }
         @media (max-width: 768px) {
+            .explorer-nav-head {grid-template-columns: 1fr;}
+            .explorer-nav-title {font-size: 22px;}
+
             .lens-grid {grid-template-columns: 1fr;}
             .block-container {
                 max-width: 100% !important;
@@ -1082,8 +1215,9 @@ def inject_css():
             .stTabs [data-baseweb="tab"] {
                 white-space: nowrap !important;
                 min-width: max-content !important;
-                padding: 8px 12px !important;
+                padding: 10px 14px !important;
                 font-size: 13px !important;
+                min-height: 46px !important;
             }
             section[data-testid="stSidebar"] .stButton > button {
                 min-height: 48px !important;
@@ -1956,7 +2090,7 @@ def build_trading_lab(price_series: pd.Series, volume_series: pd.Series | None) 
     }
 
 
-def enrich_pro_analysis(analysis: dict, price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict]) -> dict:
+def enrich_pro_analysis(analysis: dict, price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict], active_lens_title: str | None = None, intraday: dict | None = None) -> dict:
     catalyst = build_catalyst_engine(news_items)
     trading_lab = build_trading_lab(price_series, volume_series)
 
@@ -1990,6 +2124,8 @@ def enrich_pro_analysis(analysis: dict, price_series: pd.Series, volume_series: 
     analysis["pro_tags"] = tags
     analysis["alerts"] = alerts
     analysis["pro_score"] = pro_score
+    analysis["active_lens_title"] = active_lens_title or "Position View"
+    analysis["lens_alerts"] = build_lens_alerts(analysis, intraday or {})
     return analysis
 
 
@@ -2162,8 +2298,8 @@ def render_section_guide():
                 </div>
                 <div class="guide-card">
                     <div class="guide-label">Step 3</div>
-                    <div class="guide-head">Catalyst + News</div>
-                    <div class="guide-sub">Find out what is actually driving the narrative: earnings, AI demand, regulation, macro, analysts, or supply chain.</div>
+                    <div class="guide-head">Catalyst + News + Alerts</div>
+                    <div class="guide-sub">Find out what is actually driving the narrative, then check how each lens sees the setup: earnings, AI demand, regulation, macro, analysts, or supply chain can shift different lenses in different ways.</div>
                 </div>
                 <div class="guide-card">
                     <div class="guide-label">Step 4</div>
@@ -2241,6 +2377,121 @@ def render_news_highlights(ticker: str, news_items: list[dict]):
             <div class="section-header" style="margin:0;">News highlights worth exploring</div>
             <div class="soft-note">These are the most immediately relevant stories for the selected stock. Treat them as directional clues, then confirm them in the Catalyst Engine and Trading Lab.</div>
             <div style="margin-top:10px;">{''.join(rows)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+
+def lens_signal_state(score: int) -> str:
+    if score >= 5:
+        return "bullish"
+    if score <= -3:
+        return "bearish"
+    return "neutral"
+
+
+def label_lens_state(state: str, lens_title: str) -> str:
+    mapping = {
+        "Fast Read": {"bullish": "Fast Read bullish", "bearish": "Fast Read bearish", "neutral": "Fast Read mixed"},
+        "Swing Map": {"bullish": "Swing Map improving", "bearish": "Swing Map weakening", "neutral": "Swing Map balanced"},
+        "Position View": {"bullish": "Position View intact", "bearish": "Position View broken", "neutral": "Position View mixed"},
+        "Cycle View": {"bullish": "Cycle View leader", "bearish": "Cycle View laggard", "neutral": "Cycle View mixed"},
+    }
+    return mapping.get(lens_title, {}).get(state, f"{lens_title} {state}")
+
+
+def build_lens_alerts(analysis: dict, intraday: dict) -> dict:
+    alerts = {}
+    summaries = {}
+    for lens_name, lens_meta in TREND_LENSES.items():
+        adj, reasons = compute_lens_adjustment(analysis, intraday, lens_meta)
+        base_score = analysis.get("pro_score", analysis.get("score", 0))
+        lens_score = base_score + adj
+        state = lens_signal_state(lens_score)
+        label = label_lens_state(state, lens_meta["title"])
+        alerts[lens_name] = {
+            "title": lens_meta["title"],
+            "score": lens_score,
+            "state": state,
+            "label": label,
+            "reasons": reasons[:2],
+        }
+        summaries[lens_name] = label
+
+    state_counts = {
+        "bullish": sum(1 for item in alerts.values() if item["state"] == "bullish"),
+        "bearish": sum(1 for item in alerts.values() if item["state"] == "bearish"),
+        "neutral": sum(1 for item in alerts.values() if item["state"] == "neutral"),
+    }
+
+    if state_counts["bullish"] >= 3:
+        headline = "Most lenses are leaning constructive."
+    elif state_counts["bearish"] >= 3:
+        headline = "Most lenses are leaning defensive."
+    else:
+        headline = "The lenses disagree, so context matters more."
+
+    return {
+        "headline": headline,
+        "states": alerts,
+        "counts": state_counts,
+    }
+
+
+def render_alert_layer(analysis: dict, intraday: dict):
+    alert_map = analysis.get("lens_alerts", {})
+    states = alert_map.get("states", {})
+    counts = alert_map.get("counts", {})
+    if not states:
+        return
+
+    active_title = analysis.get("active_lens_title", "Position View")
+    active_state = states.get(active_title, next(iter(states.values())))
+    chip_html = []
+    for lens_name in ["Fast Read", "Swing Map", "Position View", "Cycle View"]:
+        state = states.get(lens_name)
+        if not state:
+            continue
+        cls = "lens-alert-bull" if state["state"] == "bullish" else "lens-alert-bear" if state["state"] == "bearish" else "lens-alert-neutral"
+        chip_html.append(f'<span class="lens-alert-chip {cls}">{escape(state["label"])} · {state["score"]:+d}</span>')
+
+    reasons_html = "".join(f"<li>{escape(item)}</li>" for item in active_state.get("reasons", [])) or "<li>No extra alert context is active.</li>"
+
+    st.markdown(
+        f"""
+        <div class="alert-shell">
+            <div class="section-header" style="margin:0; color:#eef4ff;">Alert Layer</div>
+            <div class="alert-title">{escape(alert_map.get('headline', 'Lens states are mixed.'))}</div>
+            <div class="alert-copy">Each lens now has its own alert state, so the same stock can be Fast Read bullish while still being Cycle View mixed or laggard.</div>
+            <div class="alert-grid">
+                <div class="alert-box">
+                    <div class="alert-label">Fast Read</div>
+                    <div class="alert-value">{escape(states.get('Fast Read', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-sub">Score {states.get('Fast Read', {}).get('score', 0):+d}</div>
+                </div>
+                <div class="alert-box">
+                    <div class="alert-label">Swing Map</div>
+                    <div class="alert-value">{escape(states.get('Swing Map', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-sub">Score {states.get('Swing Map', {}).get('score', 0):+d}</div>
+                </div>
+                <div class="alert-box">
+                    <div class="alert-label">Position View</div>
+                    <div class="alert-value">{escape(states.get('Position View', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-sub">Score {states.get('Position View', {}).get('score', 0):+d}</div>
+                </div>
+                <div class="alert-box">
+                    <div class="alert-label">Cycle View</div>
+                    <div class="alert-value">{escape(states.get('Cycle View', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-sub">Score {states.get('Cycle View', {}).get('score', 0):+d}</div>
+                </div>
+            </div>
+            <div class="lens-alert-row">{''.join(chip_html)}</div>
+            <div class="lens-alert-note"><strong>Active lens focus:</strong> {escape(active_title)} · {escape(active_state.get('label', 'N/A'))}</div>
+            <ul class="crypto-reasons">{reasons_html}</ul>
+            <div class="lens-alert-note">Bullish {counts.get('bullish', 0)} · Neutral {counts.get('neutral', 0)} · Bearish {counts.get('bearish', 0)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2863,7 +3114,14 @@ def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
         }
 
     analysis = analyze_market_sentinel(price_series, volume_series, news_items, ticker)
-    analysis = enrich_pro_analysis(analysis, price_series, volume_series, news_items)
+    analysis = enrich_pro_analysis(
+        analysis,
+        price_series,
+        volume_series,
+        news_items,
+        active_lens_title=(lens_meta or {}).get("title", "Position View"),
+        intraday=intraday,
+    )
     return {
         "Ticker": ticker,
         "Signal": analysis["signal"],
@@ -2876,7 +3134,7 @@ def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     }
 
 
-def collect_ticker_context(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, news_limit: int = 10):
+def collect_ticker_context(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, news_limit: int = 10, lens_meta: dict | None = None):
     price_series, field_name = get_price_series(daily_data, ticker)
     volume_series = get_series(daily_data, "Volume", ticker)
     news_items, news_error = fetch_ticker_news(ticker, max_items=news_limit)
@@ -2903,7 +3161,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     if len(tickers) < 2:
         return
 
-    bundles = [collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8) for ticker in tickers]
+    bundles = [collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta) for ticker in tickers]
     bundles = [bundle for bundle in bundles if bundle is not None]
     if len(bundles) < 2:
         return
@@ -3087,7 +3345,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     st.markdown(board_html, unsafe_allow_html=True)
 
 def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
-    bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10)
+    bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
     if bundle is None:
         st.warning(f"No usable price series found for {ticker}.")
         return
@@ -3110,12 +3368,42 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
 # ---------------------------
 # Main app
 # ---------------------------
+
+
+def render_stock_explorer_nav(tickers: list[str]):
+    chip_html = "".join(f'<span class="explorer-nav-chip">{escape(ticker)}</span>' for ticker in tickers[:10])
+    if len(tickers) > 10:
+        chip_html += f'<span class="explorer-nav-chip">+{len(tickers) - 10} more</span>'
+
+    st.markdown(
+        f"""
+        <div class="explorer-nav-shell">
+            <div class="explorer-nav-head">
+                <div>
+                    <div class="explorer-nav-kicker">Explorer Navigation</div>
+                    <div class="explorer-nav-title">Open any selected stock below for its full research page</div>
+                    <div class="explorer-nav-copy">This is the handoff point from <strong>comparison mode</strong> into <strong>deep-dive mode</strong>. Click a ticker tab below to open its own page with related news, Catalyst Engine, lens-aware alerts, Trading Lab, and candlestick confirmation.</div>
+                    <div class="explorer-nav-row">
+                        {chip_html}
+                    </div>
+                </div>
+                <div class="explorer-nav-panel">
+                    <div class="explorer-nav-panel-label">What happens next</div>
+                    <div class="explorer-nav-panel-value">Tap a ticker tab ↓</div>
+                    <div class="explorer-nav-panel-copy">You’ll move into that stock’s dedicated workspace, where the news, catalysts, alerts, and chart structure are all focused on just that one name.</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 def generate_dashboard():
     inject_css()
     st.markdown('<div class="top-kicker">David Lau Stock Market Vision</div>', unsafe_allow_html=True)
     st.title("David Lau Stock Market Vision")
     st.markdown(
-        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. The trend lookback is now upgraded into purpose-built lenses, and the Winner Card changes with the active lens so comparison feels much more decision-ready.</div>',
+        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. The trend lookback is now upgraded into purpose-built lenses, the Winner Card changes with the active lens, the Alert Layer shows how each lens reads the same stock differently, and the stock explorer navigation makes it much clearer where to open each name’s full page.</div>',
         unsafe_allow_html=True,
     )
     render_explore_hero()
@@ -3225,7 +3513,7 @@ def generate_dashboard():
     render_active_trend_lens(lens_meta)
     render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
 
-    st.markdown("---")
+    render_stock_explorer_nav(tickers)
     tabs = st.tabs(tickers)
     for tab, ticker in zip(tabs, tickers):
         with tab:
