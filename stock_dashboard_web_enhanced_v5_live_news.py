@@ -16,8 +16,44 @@ import yfinance as yf
 DEFAULT_TICKERS = ["NVDA", "TSM"]
 DEFAULT_PERIOD = "1y"
 DEFAULT_INTERVAL = "1d"
-SUPPORTED_PERIODS = ["6mo", "1y", "2y"]
+SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
+
+TREND_LENSES = {
+    "Fast Read": {
+        "period": "3mo",
+        "interval": "1d",
+        "title": "Fast Read",
+        "hook": "Best for fresh news reactions and short swing context.",
+        "how_to_read": "Use this when you want to know whether the last few weeks of headlines are accelerating momentum or fading.",
+        "watch_for": "Gap follow-through, recent support tests, and whether the signal is getting stronger or weaker quickly.",
+    },
+    "Swing Map": {
+        "period": "6mo",
+        "interval": "1d",
+        "title": "Swing Map",
+        "hook": "Best balance for active traders and medium-term setups.",
+        "how_to_read": "This is the most practical lens for comparing current trend structure against the last few earnings or macro cycles.",
+        "watch_for": "Repeated resistance zones, clean pullbacks, momentum resets, and breakout confirmation.",
+    },
+    "Position View": {
+        "period": "1y",
+        "interval": "1d",
+        "title": "Position View",
+        "hook": "Best for seeing whether the thesis still holds over a fuller trend year.",
+        "how_to_read": "Use this when you care more about structural strength than daily noise.",
+        "watch_for": "Price vs SMA 200, sustained trend quality, and whether news is supporting or fighting the bigger move.",
+    },
+    "Cycle View": {
+        "period": "2y",
+        "interval": "1wk",
+        "title": "Cycle View",
+        "hook": "Best for stepping back and judging the bigger regime.",
+        "how_to_read": "This lens is for spotting full-cycle behavior, not precise entries.",
+        "watch_for": "Major inflection points, long-term leadership, and whether the stock is still in a broad accumulation or deterioration phase.",
+    },
+}
+DEFAULT_TREND_LENS = "Position View"
 
 WATCHLIST_PRESETS = {
     "Tech & AI": ["NVDA", "AMD", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA", "AVGO", "QCOM", "CRM", "ADBE", "PLTR", "SMCI"],
@@ -938,6 +974,7 @@ def inject_css():
             }
         }
         @media (max-width: 768px) {
+            .lens-grid {grid-template-columns: 1fr;}
             .block-container {
                 max-width: 100% !important;
                 padding-top: 0.6rem !important;
@@ -1208,7 +1245,45 @@ def inject_css():
         .guide-label, .reference-label {font-size:11px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; color:#727986;}
         .guide-head, .reference-head {font-size:18px; font-weight:900; color:#161b22; margin-top:8px; line-height:1.15;}
         .guide-sub, .reference-sub {font-size:12.5px; line-height:1.55; color:#5c6472; margin-top:6px;}
-        .winner-shell {
+
+        .lens-shell {
+            background: linear-gradient(135deg, #fff 0%, #fbf7ee 100%);
+            border: 1px solid #ddd6c8;
+            border-radius: 24px;
+            padding: 16px 16px 14px 16px;
+            box-shadow: var(--shadow);
+            margin: 0 0 16px 0;
+        }
+        .lens-title {font-size: 24px; font-weight: 900; color:#161b22; line-height:1.05;}
+        .lens-copy {font-size: 13px; line-height:1.6; color:#5c6472; margin-top:6px;}
+        .lens-grid {display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top:14px;}
+        .lens-card {
+            background: linear-gradient(135deg, #f8f5ee 0%, #ffffff 100%);
+            border: 1px solid #e3dccd;
+            border-radius: 18px;
+            padding: 14px 14px 12px 14px;
+        }
+        .lens-label {font-size:11px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; color:#727986;}
+        .lens-head {font-size:18px; font-weight:900; color:#161b22; margin-top:8px; line-height:1.12;}
+        .lens-sub {font-size:12.5px; line-height:1.58; color:#5c6472; margin-top:6px;}
+        .side-lens-shell {
+            background: linear-gradient(135deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,.04) 100%);
+            border: 1px solid rgba(255,255,255,.10);
+            border-radius: 18px;
+            padding: 14px 14px 12px 14px;
+            margin-top: 10px;
+            backdrop-filter: blur(12px);
+        }
+        .side-lens-title {font-size:18px; font-weight:900; color:#ffffff !important; line-height:1.08;}
+        .side-lens-copy {font-size:12.5px; line-height:1.55; color:rgba(238,242,255,.76) !important; margin-top:6px;}
+        .side-lens-chip-row {display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;}
+        .side-lens-chip {
+            display:inline-flex; align-items:center; justify-content:center;
+            padding:7px 10px; border-radius:999px;
+            background: rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.10);
+            color:#eef2ff; font-size:11px; font-weight:900; letter-spacing:.05em; text-transform:uppercase;
+        }
+        
             background:
                 radial-gradient(circle at top left, rgba(77,109,255,.22) 0%, rgba(77,109,255,0) 34%),
                 linear-gradient(180deg, #10192c 0%, #091120 100%);
@@ -2003,6 +2078,50 @@ def render_trading_lab_panel(analysis: dict):
     )
 
 
+
+def resolve_trend_lens(lens_name: str, manual_override: bool, manual_period: str, manual_interval: str):
+    if manual_override:
+        return {
+            "title": "Custom Lens",
+            "hook": "Manual view for special cases.",
+            "how_to_read": f"Custom chart using {manual_period} at {manual_interval} resolution.",
+            "watch_for": "Use this when you already know the exact timeframe you want to inspect.",
+            "period": manual_period,
+            "interval": manual_interval,
+        }
+    return TREND_LENSES.get(lens_name, TREND_LENSES[DEFAULT_TREND_LENS])
+
+
+def render_active_trend_lens(lens_meta: dict):
+    st.markdown(
+        f"""
+        <div class="lens-shell">
+            <div class="section-header" style="margin:0;">Trend Lens</div>
+            <div class="lens-title">{escape(lens_meta.get('title', 'Trend Lens'))}</div>
+            <div class="lens-copy">{escape(lens_meta.get('hook', ''))}</div>
+            <div class="lens-grid">
+                <div class="lens-card">
+                    <div class="lens-label">Best use</div>
+                    <div class="lens-head">{escape(lens_meta.get('title', 'Trend Lens'))}</div>
+                    <div class="lens-sub">{escape(lens_meta.get('hook', ''))}</div>
+                </div>
+                <div class="lens-card">
+                    <div class="lens-label">How to read it</div>
+                    <div class="lens-head">What this lens is good at</div>
+                    <div class="lens-sub">{escape(lens_meta.get('how_to_read', ''))}</div>
+                </div>
+                <div class="lens-card">
+                    <div class="lens-label">Watch for</div>
+                    <div class="lens-head">Most useful reference points</div>
+                    <div class="lens-sub">{escape(lens_meta.get('watch_for', ''))}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_explore_hero():
     st.markdown(
         """
@@ -2048,7 +2167,7 @@ def render_section_guide():
                 <div class="guide-card">
                     <div class="guide-label">Step 4</div>
                     <div class="guide-head">Trading Lab + Candles</div>
-                    <div class="guide-sub">Only after the narrative makes sense should you confirm the structure with MACD, Bollinger context, support, resistance, and candles.</div>
+                    <div class="guide-sub">Only after the narrative makes sense should you confirm the structure with the active trend lens, MACD, Bollinger context, support, resistance, and candles.</div>
                 </div>
             </div>
         </div>
@@ -2558,7 +2677,7 @@ def render_news_stream(ticker: str, news_items: list[dict]):
         render_story_row(item, ticker, idx)
 
 
-def render_trend_section(analysis: dict, intraday: dict, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None):
+def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None):
     st.markdown(
         f"""
         <div class="trend-shell">
@@ -2566,7 +2685,7 @@ def render_trend_section(analysis: dict, intraday: dict, daily_ohlc: pd.DataFram
                 <div>
                     <div class="section-header" style="margin:0;">Trend Lab</div>
                     <div class="trend-title">Candlestick confirmation</div>
-                    <div class="trend-sub">This section stays at the bottom so readers first absorb the news and estimated stock impact, then confirm the setup with candlestick structure and live tape.</div>
+                    <div class="trend-sub">This section stays at the bottom so readers first absorb the news and estimated stock impact, then confirm the setup with the active trend lens and live tape.</div>
                 </div>
             </div>
         </div>
@@ -2584,8 +2703,8 @@ def render_trend_section(analysis: dict, intraday: dict, daily_ohlc: pd.DataFram
 
     render_candlestick_chart(
         daily_ohlc.tail(252) if daily_ohlc is not None else pd.DataFrame(),
-        "1-year candlestick structure",
-        "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
+        "Candlestick structure under the active trend lens",
+        f"{lens_meta.get('title', 'Trend Lens')}: {lens_meta.get('how_to_read', 'Use this view to confirm structure.')}" if lens_meta else "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
         height=440,
         show_ma=True,
     )
@@ -2847,7 +2966,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     )
     st.markdown(board_html, unsafe_allow_html=True)
 
-def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str):
+def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
     bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10)
     if bundle is None:
         st.warning(f"No usable price series found for {ticker}.")
@@ -2865,7 +2984,7 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     render_reference_guide(analysis, ticker, news_items)
     st.markdown('<div class="story-stream-shell"></div>', unsafe_allow_html=True)
     render_news_stream(ticker, news_items)
-    render_trend_section(analysis, intraday, daily_ohlc=daily_ohlc, intraday_ohlc=intraday_ohlc)
+    render_trend_section(analysis, intraday, lens_meta=lens_meta, daily_ohlc=daily_ohlc, intraday_ohlc=intraday_ohlc)
 
 
 # ---------------------------
@@ -2876,7 +2995,7 @@ def generate_dashboard():
     st.markdown('<div class="top-kicker">David Lau Stock Market Vision</div>', unsafe_allow_html=True)
     st.title("David Lau Stock Market Vision")
     st.markdown(
-        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. Readers see stock-specific news and grouped catalysts first, then a crypto-style signal deck, then candlestick confirmation with deeper trade structure.</div>',
+        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. The trend lookback is now upgraded into purpose-built lenses, so the chart range actually helps you answer different questions instead of feeling like a random dropdown.</div>',
         unsafe_allow_html=True,
     )
     render_explore_hero()
@@ -2932,9 +3051,40 @@ def generate_dashboard():
         tickers = final_tickers
 
         st.caption("You can now build a much broader U.S. stock watchlist by sector, and also type any extra symbol manually.")
-        st.markdown('<div class="side-group-label">Trend setup</div>', unsafe_allow_html=True)
-        period = st.selectbox("Trend lookback", SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
-        interval = st.selectbox("Trend interval", SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
+        st.markdown('<div class="side-group-label">Trend lens</div>', unsafe_allow_html=True)
+        lens_name = st.select_slider(
+            "Trend lens",
+            options=list(TREND_LENSES.keys()),
+            value=DEFAULT_TREND_LENS,
+            help="Swap between purpose-built chart lenses instead of raw lookback periods.",
+        )
+        manual_override = st.toggle("Manual period override", value=False)
+        if manual_override:
+            manual_period = st.selectbox("Custom lookback", SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
+            manual_interval = st.selectbox("Custom interval", SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
+        else:
+            manual_period = DEFAULT_PERIOD
+            manual_interval = DEFAULT_INTERVAL
+
+        lens_meta = resolve_trend_lens(lens_name, manual_override, manual_period, manual_interval)
+        period = lens_meta["period"]
+        interval = lens_meta["interval"]
+
+        st.markdown(
+            f"""
+            <div class="side-lens-shell">
+                <div class="side-lens-title">{escape(lens_meta['title'])}</div>
+                <div class="side-lens-copy">{escape(lens_meta['hook'])}</div>
+                <div class="side-lens-chip-row">
+                    <span class="side-lens-chip">{escape(period)}</span>
+                    <span class="side-lens-chip">{escape(interval)}</span>
+                    <span class="side-lens-chip">Reference lens</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         st.markdown('<div class="side-group-label">Live refresh</div>', unsafe_allow_html=True)
         if st.button("Refresh live data", use_container_width=True):
             st.cache_data.clear()
@@ -2952,13 +3102,14 @@ def generate_dashboard():
         st.error("No market data was returned. Please try again.")
         return
 
+    render_active_trend_lens(lens_meta)
     render_comparison_section(daily_data, intraday_data, tickers)
 
     st.markdown("---")
     tabs = st.tabs(tickers)
     for tab, ticker in zip(tabs, tickers):
         with tab:
-            render_ticker_page(daily_data, intraday_data, ticker)
+            render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta)
 
     st.markdown(
         '<div class="footer-note">This dashboard is for research and reference. The news effect percentages and directional labels are heuristic estimates, not guarantees or investment advice.</div>',
