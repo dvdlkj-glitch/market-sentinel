@@ -18,6 +18,21 @@ DEFAULT_PERIOD = "1y"
 DEFAULT_INTERVAL = "1d"
 SUPPORTED_PERIODS = ["6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
+
+WATCHLIST_PRESETS = {
+    "Tech & AI": ["NVDA", "AMD", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA", "AVGO", "QCOM", "CRM", "ADBE", "PLTR", "SMCI"],
+    "Semiconductors": ["NVDA", "AMD", "AVGO", "QCOM", "INTC", "MU", "TXN", "AMAT", "LRCX", "KLAC", "MRVL", "ON"],
+    "Financials": ["JPM", "BAC", "WFC", "GS", "MS", "BLK", "C", "SCHW", "AXP", "COF", "V", "MA"],
+    "Healthcare": ["LLY", "JNJ", "UNH", "MRK", "ABBV", "PFE", "ISRG", "BSX", "TMO", "SYK"],
+    "Consumer": ["WMT", "COST", "PG", "KO", "PEP", "MCD", "NKE", "SBUX", "HD", "LOW", "TGT"],
+    "Industrials": ["GE", "CAT", "DE", "RTX", "LMT", "BA", "HON", "UNP", "UPS", "ETN"],
+    "Energy": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "OXY", "VLO", "KMI"],
+    "Communication": ["GOOGL", "META", "NFLX", "DIS", "TMUS", "T", "VZ", "CHTR", "CMCSA", "ROKU"],
+    "Utilities & REITs": ["NEE", "DUK", "SO", "AEP", "EXC", "PLD", "AMT", "EQIX", "O", "SPG"],
+    "Transportation": ["UBER", "FDX", "DAL", "UAL", "LUV", "CSX", "NSC", "ODFL", "JBHT", "EXPD"],
+    "Market ETFs": ["SPY", "QQQ", "DIA", "IWM", "XLF", "XLK", "XLE", "XLV", "SMH", "SOXX"],
+}
+DEFAULT_WATCHLIST_UNIVERSE = sorted({ticker for group in WATCHLIST_PRESETS.values() for ticker in group} | {"TSM"})
 INTRADAY_PERIOD = "5d"
 INTRADAY_INTERVAL = "5m"
 PRICE_FIELDS_PRIORITY = ["Adj Close", "Close"]
@@ -2249,18 +2264,50 @@ def generate_dashboard():
             <div class="side-hero">
                 <div class="side-eyebrow">Control Center</div>
                 <div class="side-title">Vision Deck</div>
-                <div class="side-copy">Build the watchlist, compare the selected stocks side by side, and refresh the live tape in one modern control panel.</div>
+                <div class="side-copy">Build a much broader U.S. market watchlist, compare selected stocks side by side, and refresh the live tape in one modern control panel.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="side-group-label">Watchlist</div>', unsafe_allow_html=True)
+        st.markdown('<div class="side-group-label">Watchlist universe</div>', unsafe_allow_html=True)
+        selected_groups = st.multiselect(
+            "Preset groups",
+            options=list(WATCHLIST_PRESETS.keys()),
+            default=["Tech & AI", "Semiconductors", "Financials", "Healthcare", "Consumer", "Industrials", "Energy", "Market ETFs"],
+            placeholder="Expand by sector...",
+            label_visibility="collapsed",
+        )
+
+        available_universe = set(DEFAULT_WATCHLIST_UNIVERSE)
+        for group in selected_groups:
+            available_universe.update(WATCHLIST_PRESETS.get(group, []))
+        available_universe = sorted(available_universe)
+
         tickers = st.multiselect(
             "Tickers",
-            options=["NVDA", "TSM", "AAPL", "MSFT", "AMD", "QQQ", "TSLA", "META", "AMZN"],
-            default=DEFAULT_TICKERS,
-            placeholder="Add tickers to compare...",
+            options=available_universe,
+            default=[ticker for ticker in DEFAULT_TICKERS if ticker in available_universe],
+            placeholder="Pick any watchlist symbols...",
         )
+
+        custom_ticker_text = st.text_input(
+            "Custom symbols",
+            value="",
+            placeholder="Add any U.S. ticker, e.g. HOOD, NET, CRWD, SHOP",
+        )
+        custom_tickers = [
+            ticker.strip().upper()
+            for ticker in custom_ticker_text.replace("\n", ",").split(",")
+            if ticker.strip()
+        ]
+
+        final_tickers = []
+        for ticker in tickers + custom_tickers:
+            if ticker not in final_tickers:
+                final_tickers.append(ticker)
+        tickers = final_tickers
+
+        st.caption("You can now build a much broader U.S. stock watchlist by sector, and also type any extra symbol manually.")
         st.markdown('<div class="side-group-label">Trend setup</div>', unsafe_allow_html=True)
         period = st.selectbox("Trend lookback", SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
         interval = st.selectbox("Trend interval", SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
