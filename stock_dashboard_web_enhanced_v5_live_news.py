@@ -2116,6 +2116,7 @@ def render_active_trend_lens(lens_meta: dict):
                     <div class="lens-sub">{escape(lens_meta.get('watch_for', ''))}</div>
                 </div>
             </div>
+            <div class="lens-copy" style="margin-top:12px;">The Winner Card and comparison scores now adapt to this active lens, so the strongest stock can change depending on whether you care about fresh reaction, swing structure, position strength, or cycle leadership.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2246,16 +2247,136 @@ def render_news_highlights(ticker: str, news_items: list[dict]):
     )
 
 
-def render_winner_card(bundles: list[dict]):
+
+def compute_lens_adjustment(analysis: dict, intraday: dict, lens_meta: dict | None = None) -> tuple[int, list[str]]:
+    lens_title = (lens_meta or {}).get("title", "Position View")
+    adj = 0
+    reasons = []
+
+    rsi14 = analysis.get("rsi14", pd.NA)
+    one_year_return = analysis.get("one_year_return", pd.NA)
+    news_score = analysis.get("news_pulse", {}).get("score", 0.0)
+    trading_lab = analysis.get("trading_lab", {})
+    intraday_change = intraday.get("change_pct", pd.NA) if intraday else pd.NA
+
+    if lens_title == "Fast Read":
+        if pd.notna(intraday_change):
+            if intraday_change > 1.0:
+                adj += 2
+                reasons.append("Fast Read favors fresh intraday strength.")
+            elif intraday_change < -1.0:
+                adj -= 2
+                reasons.append("Fast Read penalizes weak live tape.")
+        if news_score >= 1.4:
+            adj += 1
+            reasons.append("Fast Read rewards bullish news flow.")
+        elif news_score <= -1.4:
+            adj -= 1
+            reasons.append("Fast Read penalizes bearish news flow.")
+        if pd.notna(rsi14):
+            if 52 <= rsi14 <= 72:
+                adj += 1
+                reasons.append("Fast Read likes active momentum.")
+            elif rsi14 < 42:
+                adj -= 1
+                reasons.append("Fast Read dislikes weak short-term momentum.")
+
+    elif lens_title == "Swing Map":
+        setup = trading_lab.get("setup", "Balanced")
+        if setup == "Momentum-led":
+            adj += 2
+            reasons.append("Swing Map rewards momentum-led setups.")
+        elif setup == "Pullback watch":
+            adj += 1
+            reasons.append("Swing Map likes controlled pullbacks.")
+        elif setup == "Risk-off":
+            adj -= 2
+            reasons.append("Swing Map penalizes unstable structure.")
+        volume_ratio = trading_lab.get("volume_ratio", pd.NA)
+        if pd.notna(volume_ratio):
+            if volume_ratio >= 1.2:
+                adj += 1
+                reasons.append("Swing Map rewards volume confirmation.")
+            elif volume_ratio <= 0.8:
+                adj -= 1
+                reasons.append("Swing Map discounts light participation.")
+
+    elif lens_title == "Position View":
+        if analysis.get("last_price", pd.NA) > analysis.get("sma200", pd.NA):
+            adj += 2
+            reasons.append("Position View prioritizes price above SMA 200.")
+        else:
+            adj -= 2
+            reasons.append("Position View penalizes price below SMA 200.")
+        if analysis.get("sma50", pd.NA) > analysis.get("sma200", pd.NA):
+            adj += 1
+            reasons.append("Position View rewards medium-term trend support.")
+        else:
+            adj -= 1
+            reasons.append("Position View penalizes weak medium-term structure.")
+        if pd.notna(one_year_return):
+            if one_year_return > 15:
+                adj += 1
+                reasons.append("Position View rewards strong 1Y return.")
+            elif one_year_return < -10:
+                adj -= 1
+                reasons.append("Position View penalizes weak 1Y return.")
+
+    elif lens_title == "Cycle View":
+        if pd.notna(one_year_return):
+            if one_year_return > 30:
+                adj += 2
+                reasons.append("Cycle View rewards long-cycle leadership.")
+            elif one_year_return < -15:
+                adj -= 2
+                reasons.append("Cycle View penalizes deterioration.")
+        if analysis.get("sma50", pd.NA) > analysis.get("sma200", pd.NA):
+            adj += 1
+            reasons.append("Cycle View likes broad trend alignment.")
+        else:
+            adj -= 1
+            reasons.append("Cycle View discounts broken leadership.")
+        if abs(news_score) >= 2.0:
+            reasons.append("Cycle View notes news, but does not over-weight it.")
+
+    return adj, reasons
+
+
+def compute_lens_winner_fields(bundle: dict, lens_meta: dict | None = None) -> dict:
+    analysis = bundle["analysis"]
+    intraday = bundle["intraday"]
+    base_score = analysis.get("pro_score", analysis.get("score", 0))
+    lens_adj, lens_reasons = compute_lens_adjustment(analysis, intraday, lens_meta)
+    lens_score = base_score + lens_adj
+    return {
+        "base_score": base_score,
+        "lens_adjustment": lens_adj,
+        "lens_score": lens_score,
+        "lens_reasons": lens_reasons,
+        "lens_title": (lens_meta or {}).get("title", "Position View"),
+    }
+
+
+def render_winner_card(bundles: list[dict], lens_meta: dict | None = None):
     if len(bundles) < 2:
         return
-    leader = max(bundles, key=lambda b: b["analysis"].get("pro_score", b["analysis"]["score"]))
-    runner = sorted(bundles, key=lambda b: b["analysis"].get("pro_score", b["analysis"]["score"]), reverse=True)[1]
-    diff = leader["analysis"].get("pro_score", leader["analysis"]["score"]) - runner["analysis"].get("pro_score", runner["analysis"]["score"])
-    why = leader["analysis"]["reasons"][:3]
-    catalyst = leader["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
+
+    scored = []
+    for bundle in bundles:
+        fields = compute_lens_winner_fields(bundle, lens_meta)
+        scored.append((bundle, fields))
+
+    scored.sort(key=lambda item: item[1]["lens_score"], reverse=True)
+    leader, leader_fields = scored[0]
+    runner, runner_fields = scored[1]
+    diff = leader_fields["lens_score"] - runner_fields["lens_score"]
+
+    leader_analysis = leader["analysis"]
+    catalyst = leader_analysis.get("catalyst_engine", {}).get("dominant", "Macro")
     runner_catalyst = runner["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
-    guide = f"Start here when you want one answer first. The winner card gives the strongest current setup among your selected names, then tells you where that edge is coming from."
+    guide = "Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking."
+    why = leader_fields["lens_reasons"][:3] or leader_analysis["reasons"][:3]
+
     st.markdown(
         f"""
         <div class="winner-shell">
@@ -2264,8 +2385,8 @@ def render_winner_card(bundles: list[dict]):
             <div class="winner-hero">
                 <div class="winner-hero-main">
                     <span class="winner-badge">Winner Card</span>
-                    <div class="winner-main-title">{escape(leader['ticker'])} is leading the board today</div>
-                    <div class="winner-main-copy">Compared with {escape(runner['ticker'])}, this setup currently has the cleaner edge. The advantage comes from better trend alignment, a stronger catalyst mix, and a more supportive trading-lab profile.</div>
+                    <div class="winner-main-title">{escape(leader['ticker'])} is leading under {escape(leader_fields['lens_title'])}</div>
+                    <div class="winner-main-copy">Compared with {escape(runner['ticker'])}, this setup currently has the cleaner edge for the active lens. Change the lens and the winner can change too.</div>
                     <ul class="winner-reason-list">{''.join(f'<li>{escape(item)}</li>' for item in why)}</ul>
                 </div>
                 <div class="winner-hero-side">
@@ -2273,22 +2394,22 @@ def render_winner_card(bundles: list[dict]):
                         <div class="winner-mini">
                             <div class="winner-mini-label">Current leader</div>
                             <div class="winner-mini-value">{escape(leader['ticker'])}</div>
-                            <div class="winner-mini-sub">Pro score {leader['analysis'].get('pro_score', leader['analysis']['score']):+d} · {escape(leader['analysis']['signal'])}</div>
+                            <div class="winner-mini-sub">Lens score {leader_fields['lens_score']:+d} · {escape(leader_analysis['signal'])}</div>
                         </div>
                         <div class="winner-mini">
                             <div class="winner-mini-label">Nearest rival</div>
                             <div class="winner-mini-value">{escape(runner['ticker'])}</div>
-                            <div class="winner-mini-sub">Pro score {runner['analysis'].get('pro_score', runner['analysis']['score']):+d} · {escape(runner['analysis']['signal'])}</div>
+                            <div class="winner-mini-sub">Lens score {runner_fields['lens_score']:+d} · {escape(runner['analysis']['signal'])}</div>
                         </div>
                         <div class="winner-mini">
-                            <div class="winner-mini-label">Edge today</div>
-                            <div class="winner-mini-value">{diff:+d}</div>
-                            <div class="winner-mini-sub">This is the current score gap between the top two selected setups.</div>
+                            <div class="winner-mini-label">Lens adjustment</div>
+                            <div class="winner-mini-value">{leader_fields['lens_adjustment']:+d}</div>
+                            <div class="winner-mini-sub">Base score {leader_fields['base_score']:+d} adjusted by the active lens.</div>
                         </div>
                         <div class="winner-mini">
                             <div class="winner-mini-label">Catalyst edge</div>
                             <div class="winner-mini-value">{escape(catalyst)}</div>
-                            <div class="winner-mini-sub">Runner-up focus: {escape(runner_catalyst)}. Compare whether the leader's catalyst is actually stronger or just louder.</div>
+                            <div class="winner-mini-sub">Runner-up focus: {escape(runner_catalyst)} · Current edge {diff:+d}</div>
                         </div>
                     </div>
                 </div>
@@ -2297,7 +2418,6 @@ def render_winner_card(bundles: list[dict]):
         """,
         unsafe_allow_html=True,
     )
-
 
 def analyze_market_sentinel(price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict], ticker: str):
     indicators = build_indicator_frame(price_series)
@@ -2779,7 +2899,7 @@ def collect_ticker_context(daily_data: pd.DataFrame, intraday_data: pd.DataFrame
 
 
 
-def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str]):
+def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
     if len(tickers) < 2:
         return
 
@@ -2788,9 +2908,9 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     if len(bundles) < 2:
         return
 
-    render_winner_card(bundles)
+    render_winner_card(bundles, lens_meta=lens_meta)
 
-    strongest = max(bundles, key=lambda bundle: bundle["analysis"].get("pro_score", bundle["analysis"]["score"]))
+    strongest = max(bundles, key=lambda bundle: compute_lens_winner_fields(bundle, lens_meta)["lens_score"])
     best_return = max(
         bundles,
         key=lambda bundle: bundle["analysis"]["one_year_return"] if pd.notna(bundle["analysis"]["one_year_return"]) else -10**9,
@@ -2811,7 +2931,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
                 <div class="compare-hero-tile">
                     <div class="compare-hero-label">Strongest Pro setup</div>
                     <div class="compare-hero-value">{escape(strongest['ticker'])}</div>
-                    <div class="compare-hero-sub">Pro score {strongest['analysis'].get('pro_score', strongest['analysis']['score']):+d} · {escape(strongest['analysis']['signal'])} · {escape(strongest['analysis']['confidence'])} confidence</div>
+                    <div class="compare-hero-sub">Lens score {compute_lens_winner_fields(strongest, lens_meta)['lens_score']:+d} · {escape(strongest['analysis']['signal'])} · {escape(strongest['analysis']['confidence'])} confidence</div>
                 </div>
                 <div class="compare-hero-tile">
                     <div class="compare-hero-label">Best 1Y price strength</div>
@@ -2854,8 +2974,8 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
                             <div class="compare-stat-value">{escape(analysis['confidence'])}</div>
                         </div>
                         <div class="compare-stat">
-                            <div class="compare-stat-label">Pro Score</div>
-                            <div class="compare-stat-value">{analysis.get('pro_score', analysis['score']):+d}</div>
+                            <div class="compare-stat-label">Lens Score</div>
+                            <div class="compare-stat-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
                         </div>
                         <div class="compare-stat">
                             <div class="compare-stat-label">RSI 14</div>
@@ -2899,8 +3019,8 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         <div class="compare-table-note">{escape(analysis['confidence'])} confidence</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">Momentum</div>
-        <div class="compare-table-value">{analysis.get('pro_score', analysis['score']):+d}</div>
+        <div class="compare-table-sub">Lens score</div>
+        <div class="compare-table-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
         <div class="compare-table-note">RSI {"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
     </div>
     <div class="compare-table-cell">
@@ -2995,7 +3115,7 @@ def generate_dashboard():
     st.markdown('<div class="top-kicker">David Lau Stock Market Vision</div>', unsafe_allow_html=True)
     st.title("David Lau Stock Market Vision")
     st.markdown(
-        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. The trend lookback is now upgraded into purpose-built lenses, so the chart range actually helps you answer different questions instead of feeling like a random dropdown.</div>',
+        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. The trend lookback is now upgraded into purpose-built lenses, and the Winner Card changes with the active lens so comparison feels much more decision-ready.</div>',
         unsafe_allow_html=True,
     )
     render_explore_hero()
@@ -3103,7 +3223,7 @@ def generate_dashboard():
         return
 
     render_active_trend_lens(lens_meta)
-    render_comparison_section(daily_data, intraday_data, tickers)
+    render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
 
     st.markdown("---")
     tabs = st.tabs(tickers)
