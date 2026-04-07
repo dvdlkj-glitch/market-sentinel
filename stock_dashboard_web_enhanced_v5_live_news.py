@@ -1158,6 +1158,107 @@ def inject_css():
             .catalyst-grid, .winner-grid, .lab-grid {grid-template-columns: 1fr;}
             .catalyst-title, .lab-title, .winner-title {font-size: 20px;}
         }
+
+        .editorial-hero {
+            background:
+                radial-gradient(circle at top left, rgba(77,109,255,.18) 0%, rgba(77,109,255,0) 36%),
+                linear-gradient(135deg, #ffffff 0%, #fcfbf7 42%, #f1ede4 100%);
+            border: 1px solid #d9d2c3;
+            border-radius: 28px;
+            padding: 24px 24px 20px 24px;
+            box-shadow: 0 22px 38px rgba(19,28,45,.08);
+            margin: 14px 0 18px 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .editorial-hero::after {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -80px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(77,109,255,.16) 0%, rgba(77,109,255,0) 70%);
+            pointer-events: none;
+        }
+        .hero-kicker {font-size:11px; font-weight:900; letter-spacing:.16em; text-transform:uppercase; color:#6f7684;}
+        .hero-title {font-size:40px; font-weight:900; letter-spacing:-.04em; color:#141a22; line-height:1.0; margin-top:6px; max-width:860px;}
+        .hero-copy {font-size:15px; line-height:1.7; color:#525967; margin-top:10px; max-width:940px;}
+        .hero-chip-row {display:flex; flex-wrap:wrap; gap:10px; margin-top:14px;}
+        .hero-chip {
+            display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:999px;
+            background:#fff; border:1px solid #ddd6c8; box-shadow:0 8px 20px rgba(19,28,45,.06);
+            font-size:12px; font-weight:800; color:#222a35;
+        }
+        .guide-shell, .reference-shell {
+            background: linear-gradient(135deg, #ffffff 0%, #fcfbf7 100%);
+            border: 1px solid #d8d2c6;
+            border-radius: 24px;
+            padding: 18px 18px 16px 18px;
+            box-shadow: var(--shadow);
+            margin: 12px 0 16px 0;
+        }
+        .guide-title, .reference-title {font-size:22px; font-weight:900; color:#171d25; line-height:1.08;}
+        .guide-copy, .reference-copy {font-size:13px; line-height:1.6; color:#59606d; margin-top:6px;}
+        .guide-grid, .reference-grid {display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top:14px;}
+        .guide-card, .reference-card {
+            background: linear-gradient(135deg, #f8f5ee 0%, #ffffff 100%);
+            border: 1px solid #e3dccd; border-radius:18px; padding:14px 14px 12px 14px;
+        }
+        .guide-label, .reference-label {font-size:11px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; color:#727986;}
+        .guide-head, .reference-head {font-size:18px; font-weight:900; color:#161b22; margin-top:8px; line-height:1.15;}
+        .guide-sub, .reference-sub {font-size:12.5px; line-height:1.55; color:#5c6472; margin-top:6px;}
+        .winner-shell {
+            background:
+                radial-gradient(circle at top left, rgba(77,109,255,.22) 0%, rgba(77,109,255,0) 34%),
+                linear-gradient(180deg, #10192c 0%, #091120 100%);
+            border:1px solid rgba(255,255,255,.08);
+            border-radius:28px; padding:20px 20px 18px 20px; box-shadow:0 22px 40px rgba(19,28,45,.16); margin: 0 0 16px 0;
+        }
+        .winner-hero {
+            display:grid; grid-template-columns: 1.4fr .9fr; gap:14px; margin-top:14px;
+        }
+        .winner-hero-main, .winner-hero-side {
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.04) 100%);
+            border:1px solid rgba(255,255,255,.10); border-radius:22px; padding:16px 16px 14px 16px;
+        }
+        .winner-badge {
+            display:inline-flex; align-items:center; justify-content:center; padding:8px 12px; border-radius:999px;
+            background: rgba(25,195,125,.16); color:#9cf0cc; font-size:11px; font-weight:900; letter-spacing:.08em; text-transform:uppercase;
+        }
+        .winner-main-title {font-size:32px; font-weight:900; color:#fff; line-height:1.0; margin-top:10px;}
+        .winner-main-copy {font-size:14px; line-height:1.65; color:rgba(238,244,255,.78); margin-top:10px;}
+        .winner-reason-list {margin:12px 0 0 0; padding-left:18px; color:rgba(238,244,255,.84);} 
+        .winner-reason-list li {margin-bottom:8px;}
+        .winner-rail-grid {display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; margin-top:12px;}
+        .winner-mini {
+            background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:12px 12px 10px 12px;
+        }
+        .winner-mini-label {font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:rgba(238,244,255,.58); font-weight:900;}
+        .winner-mini-value {font-size:20px; font-weight:900; color:#fff; margin-top:6px;}
+        .winner-mini-sub {font-size:12px; line-height:1.5; color:rgba(238,244,255,.72); margin-top:6px;}
+        .highlight-shell {
+            background: linear-gradient(135deg, #fff 0%, #fbf7ee 100%); border:1px solid #ddd6c8; border-radius:22px; padding:16px 16px 14px 16px; box-shadow: var(--shadow); margin-bottom: 14px;
+        }
+        .highlight-row {display:grid; grid-template-columns: 1.1fr 2.2fr .9fr; gap: 12px; align-items:center; padding:10px 0; border-bottom:1px solid #ece5d7;}
+        .highlight-row:last-child {border-bottom:none;}
+        .highlight-tag {display:inline-flex; align-items:center; width:fit-content; padding:7px 10px; border-radius:999px; font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.06em;}
+        .highlight-up {background:#def6ec; color:#0c8d61;}
+        .highlight-down {background:#f9dfdf; color:#9d2b2f;}
+        .highlight-mixed {background:#ece8de; color:#5c6472;}
+        .soft-note {font-size:12.5px; line-height:1.6; color:#5d6471;}
+        @media (max-width: 900px) {
+            .hero-title {font-size:32px;}
+            .winner-hero {grid-template-columns: 1fr;}
+            .winner-rail-grid {grid-template-columns: 1fr 1fr;}
+        }
+        @media (max-width: 768px) {
+            .editorial-hero, .guide-shell, .reference-shell, .winner-shell {padding:16px 16px 14px 16px; border-radius:22px;}
+            .hero-title {font-size:28px;}
+            .guide-grid, .reference-grid, .winner-rail-grid {grid-template-columns: 1fr;}
+            .highlight-row {grid-template-columns: 1fr; gap:6px;}
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -1902,39 +2003,176 @@ def render_trading_lab_panel(analysis: dict):
     )
 
 
+def render_explore_hero():
+    st.markdown(
+        """
+        <div class="editorial-hero">
+            <div class="hero-kicker">Experience Layer</div>
+            <div class="hero-title">Stay longer, explore deeper, and know what each section is trying to tell you.</div>
+            <div class="hero-copy">This upgraded layout keeps your existing theme, but makes the dashboard feel more editorial and sticky. News explains why a stock may move, the winner card tells you which setup looks strongest right now, and each section now acts like a guided reference panel instead of just raw output.</div>
+            <div class="hero-chip-row">
+                <span class="hero-chip">News-first reading flow</span>
+                <span class="hero-chip">Winner card with context</span>
+                <span class="hero-chip">Catalyst Engine reference guide</span>
+                <span class="hero-chip">Trading Lab interpretation</span>
+                <span class="hero-chip">Same theme, richer journey</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_section_guide():
+    st.markdown(
+        """
+        <div class="guide-shell">
+            <div class="guide-title">How to read the dashboard like a pro</div>
+            <div class="guide-copy">Use this page as a guided sequence. Start with context, then conviction, then confirmation. That flow helps you avoid reacting to one headline or one chart in isolation.</div>
+            <div class="guide-grid">
+                <div class="guide-card">
+                    <div class="guide-label">Step 1</div>
+                    <div class="guide-head">Comparison Arena</div>
+                    <div class="guide-sub">Scan the watchlist fast. This is the shortlist stage where you decide which names deserve attention first.</div>
+                </div>
+                <div class="guide-card">
+                    <div class="guide-label">Step 2</div>
+                    <div class="guide-head">Winner Card</div>
+                    <div class="guide-sub">See which selected stock currently has the strongest setup and why the edge exists versus the next name.</div>
+                </div>
+                <div class="guide-card">
+                    <div class="guide-label">Step 3</div>
+                    <div class="guide-head">Catalyst + News</div>
+                    <div class="guide-sub">Find out what is actually driving the narrative: earnings, AI demand, regulation, macro, analysts, or supply chain.</div>
+                </div>
+                <div class="guide-card">
+                    <div class="guide-label">Step 4</div>
+                    <div class="guide-head">Trading Lab + Candles</div>
+                    <div class="guide-sub">Only after the narrative makes sense should you confirm the structure with MACD, Bollinger context, support, resistance, and candles.</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_reference_guide(analysis: dict, ticker: str, news_items: list[dict]):
+    lead = news_items[0] if news_items else {}
+    catalyst = analysis.get('catalyst_engine', {})
+    lab = analysis.get('trading_lab', {})
+    st.markdown(
+        f"""
+        <div class="reference-shell">
+            <div class="reference-title">Reference guide for {escape(ticker)}</div>
+            <div class="reference-copy">This panel explains what matters most in the current setup, so readers understand why each section exists instead of just seeing another chart or score.</div>
+            <div class="reference-grid">
+                <div class="reference-card">
+                    <div class="reference-label">What to watch in news</div>
+                    <div class="reference-head">{escape(catalyst.get('dominant', 'Macro'))}</div>
+                    <div class="reference-sub">This is the most active catalyst bucket right now. If new headlines keep leaning the same way, they can strengthen or weaken the current signal faster than technicals alone.</div>
+                </div>
+                <div class="reference-card">
+                    <div class="reference-label">What gives conviction</div>
+                    <div class="reference-head">{escape(analysis.get('confidence', 'Moderate'))} confidence</div>
+                    <div class="reference-sub">Confidence comes from trend structure, news pulse, and trade setup aligning. When those disagree, the dashboard tends to fall back to HOLD.</div>
+                </div>
+                <div class="reference-card">
+                    <div class="reference-label">Trading lens</div>
+                    <div class="reference-head">{escape(lab.get('setup', 'Balanced'))}</div>
+                    <div class="reference-sub">Use this as the action style: momentum-led means continuation is cleaner, pullback watch means patience matters, and risk-off means price can stay fragile.</div>
+                </div>
+                <div class="reference-card">
+                    <div class="reference-label">Lead story context</div>
+                    <div class="reference-head">{escape((lead.get('title') or 'No strong lead story')[:56])}</div>
+                    <div class="reference-sub">The lead story is the fastest narrative snapshot. Check whether its direction agrees with the Catalyst Engine before trusting it too much.</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_news_highlights(ticker: str, news_items: list[dict]):
+    if not news_items:
+        return
+    rows = []
+    for item in news_items[:3]:
+        label = item.get('impact_label', 'Neutral / mixed')
+        cls = 'highlight-up' if 'bullish' in label.lower() else 'highlight-down' if 'bearish' in label.lower() else 'highlight-mixed'
+        provider = escape(str(item.get('provider', 'Unknown source')))
+        title = escape(item.get('title', 'Untitled'))
+        reason = escape(item.get('impact_reason', ''))
+        probability = article_probability(item)
+        rows.append(f"""
+        <div class="highlight-row">
+            <div><span class="highlight-tag {cls}">{escape(label)}</span></div>
+            <div>
+                <div class="reference-head" style="font-size:16px; margin-top:0;">{title}</div>
+                <div class="soft-note">{provider} · Why it matters to {escape(ticker)}: {reason}</div>
+            </div>
+            <div class="soft-note" style="text-align:right;"><strong>{probability}%</strong><br>estimated effect</div>
+        </div>
+        """)
+    st.markdown(
+        f"""
+        <div class="highlight-shell">
+            <div class="section-header" style="margin:0;">News highlights worth exploring</div>
+            <div class="soft-note">These are the most immediately relevant stories for the selected stock. Treat them as directional clues, then confirm them in the Catalyst Engine and Trading Lab.</div>
+            <div style="margin-top:10px;">{''.join(rows)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_winner_card(bundles: list[dict]):
     if len(bundles) < 2:
         return
     leader = max(bundles, key=lambda b: b["analysis"].get("pro_score", b["analysis"]["score"]))
     runner = sorted(bundles, key=lambda b: b["analysis"].get("pro_score", b["analysis"]["score"]), reverse=True)[1]
     diff = leader["analysis"].get("pro_score", leader["analysis"]["score"]) - runner["analysis"].get("pro_score", runner["analysis"]["score"])
-    why = leader["analysis"]["reasons"][:2]
+    why = leader["analysis"]["reasons"][:3]
     catalyst = leader["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
+    runner_catalyst = runner["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
+    guide = f"Start here when you want one answer first. The winner card gives the strongest current setup among your selected names, then tells you where that edge is coming from."
     st.markdown(
         f"""
         <div class="winner-shell">
             <div class="section-header" style="margin:0; color:#eef4ff;">Smart Compare</div>
-            <div class="winner-title">{escape(leader['ticker'])} is the stronger setup right now</div>
-            <div class="winner-copy">Compared with {escape(runner['ticker'])}, the current edge is driven by a cleaner trend score, stronger catalyst tone, and better trading-lab structure.</div>
-            <div class="winner-grid">
-                <div class="winner-box">
-                    <div class="winner-label">Winner card</div>
-                    <div class="winner-value">{escape(leader['ticker'])}</div>
-                    <div class="winner-sub">Pro score {leader['analysis'].get('pro_score', leader['analysis']['score']):+d} versus {runner['analysis'].get('pro_score', runner['analysis']['score']):+d}</div>
+            <div class="winner-copy">{escape(guide)}</div>
+            <div class="winner-hero">
+                <div class="winner-hero-main">
+                    <span class="winner-badge">Winner Card</span>
+                    <div class="winner-main-title">{escape(leader['ticker'])} is leading the board today</div>
+                    <div class="winner-main-copy">Compared with {escape(runner['ticker'])}, this setup currently has the cleaner edge. The advantage comes from better trend alignment, a stronger catalyst mix, and a more supportive trading-lab profile.</div>
+                    <ul class="winner-reason-list">{''.join(f'<li>{escape(item)}</li>' for item in why)}</ul>
                 </div>
-                <div class="winner-box">
-                    <div class="winner-label">Edge today</div>
-                    <div class="winner-value">{diff:+d}</div>
-                    <div class="winner-sub">The score gap versus the next strongest selected setup.</div>
+                <div class="winner-hero-side">
+                    <div class="winner-rail-grid">
+                        <div class="winner-mini">
+                            <div class="winner-mini-label">Current leader</div>
+                            <div class="winner-mini-value">{escape(leader['ticker'])}</div>
+                            <div class="winner-mini-sub">Pro score {leader['analysis'].get('pro_score', leader['analysis']['score']):+d} · {escape(leader['analysis']['signal'])}</div>
+                        </div>
+                        <div class="winner-mini">
+                            <div class="winner-mini-label">Nearest rival</div>
+                            <div class="winner-mini-value">{escape(runner['ticker'])}</div>
+                            <div class="winner-mini-sub">Pro score {runner['analysis'].get('pro_score', runner['analysis']['score']):+d} · {escape(runner['analysis']['signal'])}</div>
+                        </div>
+                        <div class="winner-mini">
+                            <div class="winner-mini-label">Edge today</div>
+                            <div class="winner-mini-value">{diff:+d}</div>
+                            <div class="winner-mini-sub">This is the current score gap between the top two selected setups.</div>
+                        </div>
+                        <div class="winner-mini">
+                            <div class="winner-mini-label">Catalyst edge</div>
+                            <div class="winner-mini-value">{escape(catalyst)}</div>
+                            <div class="winner-mini-sub">Runner-up focus: {escape(runner_catalyst)}. Compare whether the leader's catalyst is actually stronger or just louder.</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="winner-box">
-                    <div class="winner-label">Lead catalyst</div>
-                    <div class="winner-value">{escape(catalyst)}</div>
-                    <div class="winner-sub">{escape(leader['analysis'].get('catalyst_engine', {}).get('headline', ''))}</div>
-                </div>
-            </div>
-            <div class="tag-row">
-                {''.join(f'<span class="pro-tag pro-tag-neutral">{escape(item)}</span>' for item in why)}
             </div>
         </div>
         """,
@@ -2311,10 +2549,11 @@ def render_story_row(item: dict, ticker: str, idx: int):
 
 def render_news_stream(ticker: str, news_items: list[dict]):
     st.markdown('<div class="section-header">Top News Stories</div>', unsafe_allow_html=True)
-    st.caption("Selected-stock stories first. The estimated effect is a reference score from headline tone, ticker relevance, and recency, not certainty.")
+    st.caption("Selected-stock stories first. Use the highlight box to spot what matters most, then open the full story rows for detail and context.")
     if not news_items:
         st.info(f"No recent stock-specific news was returned for {ticker}.")
         return
+    render_news_highlights(ticker, news_items)
     for idx, item in enumerate(news_items, start=1):
         render_story_row(item, ticker, idx)
 
@@ -2623,6 +2862,7 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     daily_ohlc = bundle.get("daily_ohlc", pd.DataFrame())
     intraday_ohlc = bundle.get("intraday_ohlc", pd.DataFrame())
     render_news_first_section(ticker, analysis, intraday, news_items)
+    render_reference_guide(analysis, ticker, news_items)
     st.markdown('<div class="story-stream-shell"></div>', unsafe_allow_html=True)
     render_news_stream(ticker, news_items)
     render_trend_section(analysis, intraday, daily_ohlc=daily_ohlc, intraday_ohlc=intraday_ohlc)
@@ -2639,6 +2879,8 @@ def generate_dashboard():
         '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. Readers see stock-specific news and grouped catalysts first, then a crypto-style signal deck, then candlestick confirmation with deeper trade structure.</div>',
         unsafe_allow_html=True,
     )
+    render_explore_hero()
+    render_section_guide()
 
     with st.sidebar:
         st.markdown(
