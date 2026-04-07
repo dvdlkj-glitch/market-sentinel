@@ -1103,6 +1103,61 @@ def inject_css():
             }
         }
 
+
+        .catalyst-shell, .lab-shell, .winner-shell {
+            background:
+                radial-gradient(circle at top left, rgba(77,109,255,.18) 0%, rgba(77,109,255,0) 34%),
+                linear-gradient(180deg, #10192c 0%, #091120 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 24px;
+            padding: 18px 18px 16px 18px;
+            box-shadow: 0 18px 36px rgba(19, 28, 45, 0.12);
+            margin: 14px 0 16px 0;
+            color: #eef4ff;
+        }
+        .catalyst-title, .lab-title, .winner-title {font-size: 22px; font-weight: 900; color:#fff; line-height:1.08;}
+        .catalyst-copy, .lab-copy, .winner-copy {font-size: 13px; line-height:1.55; color: rgba(238,244,255,.72); margin-top:6px;}
+        .catalyst-grid, .winner-grid {
+            display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top:14px;
+        }
+        .catalyst-box, .winner-box {
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.04) 100%);
+            border: 1px solid rgba(255,255,255,.10);
+            border-radius: 18px; padding: 14px 14px 12px 14px; backdrop-filter: blur(12px);
+        }
+        .catalyst-label, .winner-label {font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: rgba(238,244,255,.62); font-weight:900;}
+        .catalyst-value, .winner-value {font-size: 22px; font-weight: 900; color:#fff; margin-top: 6px; line-height:1.05;}
+        .catalyst-sub, .winner-sub {font-size: 12.5px; line-height:1.5; color: rgba(238,244,255,.72); margin-top:6px;}
+        .catalyst-row {
+            display:grid; grid-template-columns: 1.15fr 3fr .9fr; gap: 10px; align-items:center;
+            padding: 9px 0; border-bottom:1px solid rgba(255,255,255,.07);
+        }
+        .catalyst-row:last-child {border-bottom:none;}
+        .catalyst-meter {height: 10px; background: rgba(255,255,255,.10); border-radius:999px; overflow:hidden;}
+        .catalyst-meter-fill {height:10px; background: linear-gradient(90deg, #60a5fa, #a78bfa);}
+        .lab-grid {display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top:14px;}
+        .lab-box {
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.04) 100%);
+            border: 1px solid rgba(255,255,255,.10);
+            border-radius: 18px; padding: 14px 14px 12px 14px;
+        }
+        .lab-label {font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: rgba(238,244,255,.62); font-weight:900;}
+        .lab-value {font-size: 18px; font-weight: 900; color:#fff; margin-top: 6px; line-height:1.08;}
+        .lab-sub {font-size: 12.5px; color: rgba(238,244,255,.72); margin-top:6px; line-height:1.5;}
+        .tag-row {display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;}
+        .pro-tag {
+            display:inline-flex; align-items:center; justify-content:center; padding: 7px 11px; border-radius:999px;
+            font-size:11px; font-weight:900; letter-spacing:.05em; text-transform:uppercase;
+            border:1px solid rgba(255,255,255,.10);
+        }
+        .pro-tag-up {background: rgba(25,195,125,.16); color:#8bf0c8;}
+        .pro-tag-down {background: rgba(255,91,91,.14); color:#ffb4b4;}
+        .pro-tag-neutral {background: rgba(255,255,255,.08); color:#eef4ff;}
+        @media (max-width: 768px) {
+            .catalyst-row {grid-template-columns: 1fr; gap: 6px;}
+            .catalyst-grid, .winner-grid, .lab-grid {grid-template-columns: 1fr;}
+            .catalyst-title, .lab-title, .winner-title {font-size: 20px;}
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1568,6 +1623,325 @@ def build_news_pulse(news_items: list[dict]):
     return {"score": avg, "label": label, "up": up, "down": down, "neutral": neutral}
 
 
+
+
+CATALYST_KEYWORDS = {
+    "Earnings": {"earnings", "revenue", "guidance", "eps", "beat", "miss", "forecast", "quarter", "margin"},
+    "AI Demand": {"ai", "gpu", "data center", "chips", "accelerator", "server", "inference", "training", "demand"},
+    "Regulation": {"regulation", "regulator", "antitrust", "probe", "ban", "export", "tariff", "lawsuit", "fine"},
+    "Macro": {"inflation", "rates", "fed", "economy", "macro", "cpi", "ppi", "jobs", "treasury", "recession"},
+    "Analyst Action": {"upgrade", "downgrade", "price target", "outperform", "underperform", "buy rating", "sell rating"},
+    "Supply Chain": {"supply", "shipment", "capacity", "factory", "shortage", "inventory", "lead time", "wafer", "production"},
+}
+
+
+def classify_catalyst(item: dict) -> str:
+    text = f"{item.get('title','')} {item.get('summary','')} {item.get('impact_reason','')}".lower()
+    scores = {}
+    for category, keywords in CATALYST_KEYWORDS.items():
+        scores[category] = sum(1 for kw in keywords if kw in text)
+    best = max(scores, key=scores.get) if scores else "Macro"
+    return best if scores.get(best, 0) > 0 else "Macro"
+
+
+def build_catalyst_engine(news_items: list[dict]) -> dict:
+    categories = {name: {"count": 0, "score": 0.0} for name in CATALYST_KEYWORDS}
+    if not news_items:
+        return {
+            "dominant": "Macro",
+            "net_score": 0.0,
+            "rows": [],
+            "headline": "Catalysts are light and mixed.",
+            "turning_point": "No strong category is dominating current news flow.",
+        }
+
+    for item in news_items:
+        category = classify_catalyst(item)
+        weight = 1 + min(int(item.get("relevance", 0)), 4) * 0.25
+        impact = float(item.get("impact_score", 0))
+        categories[category]["count"] += 1
+        categories[category]["score"] += impact * weight
+
+    rows = []
+    for category, values in categories.items():
+        count = values["count"]
+        score = values["score"]
+        bias = "Bullish" if score > 0.4 else "Bearish" if score < -0.4 else "Mixed"
+        intensity = min(100, int(abs(score) * 18 + count * 10)) if count else 8
+        rows.append({
+            "category": category,
+            "count": count,
+            "score": score,
+            "bias": bias,
+            "intensity": intensity,
+        })
+
+    rows.sort(key=lambda row: (row["count"], abs(row["score"])), reverse=True)
+    dominant = rows[0]["category"] if rows else "Macro"
+    net_score = sum(row["score"] for row in rows)
+
+    if net_score >= 2:
+        headline = f"{dominant} is the main upside catalyst right now."
+    elif net_score <= -2:
+        headline = f"{dominant} is the main pressure point right now."
+    else:
+        headline = f"{dominant} is active, but the broader catalyst mix is still balanced."
+
+    turning_point = {
+        "Earnings": "Watch whether the next report confirms or breaks the current narrative.",
+        "AI Demand": "Demand commentary can quickly accelerate momentum in semis and infrastructure names.",
+        "Regulation": "Policy or legal headlines can shift valuation fast even without a change in operations.",
+        "Macro": "Rate and inflation sensitivity can overpower stock-specific news in the short term.",
+        "Analyst Action": "Analyst revisions often act as short, sharp catalyst bursts rather than long trends.",
+        "Supply Chain": "Shipment, inventory, and capacity updates often show up in margins before price follows.",
+    }.get(dominant, "The catalyst picture is mixed.")
+
+    return {
+        "dominant": dominant,
+        "net_score": net_score,
+        "rows": rows,
+        "headline": headline,
+        "turning_point": turning_point,
+    }
+
+
+def calculate_macd(series: pd.Series):
+    ema12 = series.ewm(span=12, adjust=False).mean()
+    ema26 = series.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    hist = macd_line - signal_line
+    return macd_line, signal_line, hist
+
+
+def build_trading_lab(price_series: pd.Series, volume_series: pd.Series | None) -> dict:
+    series = ensure_datetime_index(price_series).dropna()
+    if series.empty:
+        return {}
+    macd_line, signal_line, hist = calculate_macd(series)
+    sma20 = series.rolling(20).mean()
+    std20 = series.rolling(20).std()
+    upper = sma20 + 2 * std20
+    lower = sma20 - 2 * std20
+
+    last_price = series.iloc[-1]
+    recent_high = series.tail(20).max()
+    recent_low = series.tail(20).min()
+    support = series.tail(20).nsmallest(min(3, len(series.tail(20)))).mean()
+    resistance = series.tail(20).nlargest(min(3, len(series.tail(20)))).mean()
+
+    tags = []
+    if pd.notna(upper.iloc[-1]) and last_price > upper.iloc[-1]:
+        tags.append("Breakout stretch")
+    elif pd.notna(lower.iloc[-1]) and last_price < lower.iloc[-1]:
+        tags.append("Breakdown risk")
+    elif pd.notna(sma20.iloc[-1]) and last_price < sma20.iloc[-1] and last_price > support:
+        tags.append("Pullback zone")
+    else:
+        tags.append("Trend continuation")
+
+    if hist.iloc[-1] > 0 and hist.iloc[-1] > hist.iloc[-2]:
+        tags.append("MACD improving")
+    elif hist.iloc[-1] < 0 and hist.iloc[-1] < hist.iloc[-2]:
+        tags.append("MACD weakening")
+
+    volume_ratio = pd.NA
+    if volume_series is not None and not volume_series.empty:
+        vol = ensure_datetime_index(volume_series).dropna()
+        if not vol.empty:
+            avg50 = vol.tail(50).mean()
+            if pd.notna(avg50) and avg50 != 0:
+                volume_ratio = vol.iloc[-1] / avg50
+                if volume_ratio >= 1.3:
+                    tags.append("Volume confirmation")
+                elif volume_ratio <= 0.8:
+                    tags.append("Light volume")
+
+    setup = "Balanced"
+    if len([t for t in tags if t in ("Trend continuation", "MACD improving", "Volume confirmation")]) >= 2:
+        setup = "Momentum-led"
+    elif "Pullback zone" in tags:
+        setup = "Pullback watch"
+    elif "Breakdown risk" in tags or "MACD weakening" in tags:
+        setup = "Risk-off"
+
+    return {
+        "macd": macd_line.iloc[-1],
+        "macd_signal": signal_line.iloc[-1],
+        "macd_hist": hist.iloc[-1],
+        "bb_upper": upper.iloc[-1],
+        "bb_mid": sma20.iloc[-1],
+        "bb_lower": lower.iloc[-1],
+        "support": support,
+        "resistance": resistance,
+        "volume_ratio": volume_ratio,
+        "setup": setup,
+        "tags": tags,
+    }
+
+
+def enrich_pro_analysis(analysis: dict, price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict]) -> dict:
+    catalyst = build_catalyst_engine(news_items)
+    trading_lab = build_trading_lab(price_series, volume_series)
+
+    pro_score = analysis["score"]
+    if catalyst["net_score"] >= 2:
+        pro_score += 1
+    elif catalyst["net_score"] <= -2:
+        pro_score -= 1
+
+    tags = []
+    for tag in trading_lab.get("tags", []):
+        if "Breakout" in tag or "improving" in tag or "confirmation" in tag:
+            tags.append(("up", tag))
+        elif "Breakdown" in tag or "weakening" in tag:
+            tags.append(("down", tag))
+        else:
+            tags.append(("neutral", tag))
+
+    alerts = []
+    if analysis["signal"] == "HOLD" and pro_score >= 4:
+        alerts.append("Setup is close to flipping from HOLD to BUY.")
+    if analysis["signal"] == "BUY" and catalyst["net_score"] < -1.5:
+        alerts.append("News pulse is deteriorating against the bullish trend.")
+    if analysis["signal"] == "SELL" and trading_lab.get("setup") == "Pullback watch":
+        alerts.append("Selling pressure is still present, but a reactive bounce zone is forming.")
+    if abs(catalyst["net_score"]) >= 3:
+        alerts.append(f"{catalyst['dominant']} headlines are now a major directional driver.")
+
+    analysis["catalyst_engine"] = catalyst
+    analysis["trading_lab"] = trading_lab
+    analysis["pro_tags"] = tags
+    analysis["alerts"] = alerts
+    analysis["pro_score"] = pro_score
+    return analysis
+
+
+def render_catalyst_engine(analysis: dict, ticker: str):
+    catalyst = analysis.get("catalyst_engine", {})
+    rows = catalyst.get("rows", [])[:6]
+    if not rows:
+        return
+    rows_html = ""
+    for row in rows:
+        rows_html += f"""
+        <div class="catalyst-row">
+            <div>
+                <div class="catalyst-label">{escape(row['category'])}</div>
+                <div class="catalyst-sub">{escape(row['bias'])} · {row['count']} stories</div>
+            </div>
+            <div class="catalyst-meter"><div class="catalyst-meter-fill" style="width:{row['intensity']}%;"></div></div>
+            <div class="catalyst-sub" style="text-align:right;">{row['score']:+.1f}</div>
+        </div>
+        """
+    st.markdown(
+        f"""
+        <div class="catalyst-shell">
+            <div class="section-header" style="margin:0; color:#eef4ff;">Catalyst Engine</div>
+            <div class="catalyst-title">{escape(catalyst.get('headline', 'Catalysts are mixed.'))}</div>
+            <div class="catalyst-copy">{escape(catalyst.get('turning_point', ''))}</div>
+            <div class="catalyst-grid">
+                <div class="catalyst-box">
+                    <div class="catalyst-label">Dominant category</div>
+                    <div class="catalyst-value">{escape(catalyst.get('dominant', 'Macro'))}</div>
+                    <div class="catalyst-sub">Net catalyst score {catalyst.get('net_score', 0):+.1f}</div>
+                </div>
+                <div class="catalyst-box">
+                    <div class="catalyst-label">Current pulse</div>
+                    <div class="catalyst-value">{escape(analysis['news_pulse']['label'])}</div>
+                    <div class="catalyst-sub">Grouped into earnings, AI demand, regulation, macro, analyst action, and supply chain.</div>
+                </div>
+            </div>
+            <div style="margin-top:14px;">{rows_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_trading_lab_panel(analysis: dict):
+    lab = analysis.get("trading_lab", {})
+    if not lab:
+        return
+    tag_html = ""
+    for kind, tag in analysis.get("pro_tags", []):
+        cls = "pro-tag-up" if kind == "up" else "pro-tag-down" if kind == "down" else "pro-tag-neutral"
+        tag_html += f'<span class="pro-tag {cls}">{escape(tag)}</span>'
+    st.markdown(
+        f"""
+        <div class="lab-shell">
+            <div class="section-header" style="margin:0; color:#eef4ff;">Trading Lab</div>
+            <div class="lab-title">{escape(lab.get('setup', 'Balanced'))} setup</div>
+            <div class="lab-copy">MACD, Bollinger Bands, volume confirmation, and support/resistance are combined here to frame the current trade structure.</div>
+            <div class="lab-grid">
+                <div class="lab-box">
+                    <div class="lab-label">MACD</div>
+                    <div class="lab-value">{lab.get('macd', 0):+.2f}</div>
+                    <div class="lab-sub">Signal {lab.get('macd_signal', 0):+.2f} · Hist {lab.get('macd_hist', 0):+.2f}</div>
+                </div>
+                <div class="lab-box">
+                    <div class="lab-label">Bollinger Bands</div>
+                    <div class="lab-value">{format_price(lab.get('bb_mid', pd.NA))}</div>
+                    <div class="lab-sub">Upper {format_price(lab.get('bb_upper', pd.NA))} · Lower {format_price(lab.get('bb_lower', pd.NA))}</div>
+                </div>
+                <div class="lab-box">
+                    <div class="lab-label">Support / Resistance</div>
+                    <div class="lab-value">{format_price(lab.get('support', pd.NA))}</div>
+                    <div class="lab-sub">Resistance {format_price(lab.get('resistance', pd.NA))}</div>
+                </div>
+                <div class="lab-box">
+                    <div class="lab-label">Volume ratio</div>
+                    <div class="lab-value">{"N/A" if pd.isna(lab.get('volume_ratio', pd.NA)) else f"{lab.get('volume_ratio'):.2f}x"}</div>
+                    <div class="lab-sub">Latest volume versus the 50-period average.</div>
+                </div>
+            </div>
+            <div class="tag-row">{tag_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_winner_card(bundles: list[dict]):
+    if len(bundles) < 2:
+        return
+    leader = max(bundles, key=lambda b: b["analysis"].get("pro_score", b["analysis"]["score"]))
+    runner = sorted(bundles, key=lambda b: b["analysis"].get("pro_score", b["analysis"]["score"]), reverse=True)[1]
+    diff = leader["analysis"].get("pro_score", leader["analysis"]["score"]) - runner["analysis"].get("pro_score", runner["analysis"]["score"])
+    why = leader["analysis"]["reasons"][:2]
+    catalyst = leader["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
+    st.markdown(
+        f"""
+        <div class="winner-shell">
+            <div class="section-header" style="margin:0; color:#eef4ff;">Smart Compare</div>
+            <div class="winner-title">{escape(leader['ticker'])} is the stronger setup right now</div>
+            <div class="winner-copy">Compared with {escape(runner['ticker'])}, the current edge is driven by a cleaner trend score, stronger catalyst tone, and better trading-lab structure.</div>
+            <div class="winner-grid">
+                <div class="winner-box">
+                    <div class="winner-label">Winner card</div>
+                    <div class="winner-value">{escape(leader['ticker'])}</div>
+                    <div class="winner-sub">Pro score {leader['analysis'].get('pro_score', leader['analysis']['score']):+d} versus {runner['analysis'].get('pro_score', runner['analysis']['score']):+d}</div>
+                </div>
+                <div class="winner-box">
+                    <div class="winner-label">Edge today</div>
+                    <div class="winner-value">{diff:+d}</div>
+                    <div class="winner-sub">The score gap versus the next strongest selected setup.</div>
+                </div>
+                <div class="winner-box">
+                    <div class="winner-label">Lead catalyst</div>
+                    <div class="winner-value">{escape(catalyst)}</div>
+                    <div class="winner-sub">{escape(leader['analysis'].get('catalyst_engine', {}).get('headline', ''))}</div>
+                </div>
+            </div>
+            <div class="tag-row">
+                {''.join(f'<span class="pro-tag pro-tag-neutral">{escape(item)}</span>' for item in why)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def analyze_market_sentinel(price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict], ticker: str):
     indicators = build_indicator_frame(price_series)
     latest = indicators.iloc[-1]
@@ -1840,12 +2214,13 @@ def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items:
     intraday_change = format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A"
     latest_trend_date = format_us_timestamp(analysis["latest_daily_ts"])
     top_reasons = "".join(f"<li>{escape(r)}</li>" for r in analysis["reasons"][:3])
+    alert_html = "".join(f"<li>{escape(a)}</li>" for a in analysis.get("alerts", [])[:2]) or "<li>No urgent alert is active.</li>"
     st.markdown(
         f"""
         <div class="crypto-card">
-            <div class="crypto-kicker">Crypto-style signal deck</div>
+            <div class="crypto-kicker">Pro Signal Deck</div>
             <div class="crypto-signal {signal_class}">{escape(signal)}</div>
-            <div class="crypto-main-number">{analysis['score']:+d}</div>
+            <div class="crypto-main-number">{analysis.get('pro_score', analysis['score']):+d}</div>
             <div class="crypto-sub">{escape(analysis['summary'])}</div>
             <div class="crypto-grid">
                 <div class="crypto-mini">
@@ -1864,12 +2239,13 @@ def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items:
                     <div class="crypto-mini-sub">{intraday_price}</div>
                 </div>
                 <div class="crypto-mini">
-                    <div class="crypto-mini-label">Latest Trend Bar</div>
-                    <div class="crypto-mini-value">{format_percent(analysis['one_year_return'])}</div>
+                    <div class="crypto-mini-label">Trading Lab</div>
+                    <div class="crypto-mini-value">{escape(analysis.get('trading_lab', {}).get('setup', 'Balanced'))}</div>
                     <div class="crypto-mini-sub">{latest_trend_date}</div>
                 </div>
             </div>
             <ul class="crypto-reasons">{top_reasons}</ul>
+            <ul class="crypto-reasons">{alert_html}</ul>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1884,6 +2260,7 @@ def render_news_first_section(ticker: str, analysis: dict, intraday: dict, news_
         render_feature_story(ticker, analysis, news_items)
     with right:
         render_signal_panel(ticker, analysis, intraday, news_items)
+    render_catalyst_engine(analysis, ticker)
 
 
 def render_story_row(item: dict, ticker: str, idx: int):
@@ -1964,6 +2341,8 @@ def render_trend_section(analysis: dict, intraday: dict, daily_ohlc: pd.DataFram
     c3.metric("RSI 14", "N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}")
     c4.metric("Intraday move", format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
 
+    render_trading_lab_panel(analysis)
+
     render_candlestick_chart(
         daily_ohlc.tail(252) if daily_ohlc is not None else pd.DataFrame(),
         "1-year candlestick structure",
@@ -2006,6 +2385,7 @@ def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
         }
 
     analysis = analyze_market_sentinel(price_series, volume_series, news_items, ticker)
+    analysis = enrich_pro_analysis(analysis, price_series, volume_series, news_items)
     return {
         "Ticker": ticker,
         "Signal": analysis["signal"],
@@ -2050,7 +2430,9 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     if len(bundles) < 2:
         return
 
-    strongest = max(bundles, key=lambda bundle: bundle["analysis"]["score"])
+    render_winner_card(bundles)
+
+    strongest = max(bundles, key=lambda bundle: bundle["analysis"].get("pro_score", bundle["analysis"]["score"]))
     best_return = max(
         bundles,
         key=lambda bundle: bundle["analysis"]["one_year_return"] if pd.notna(bundle["analysis"]["one_year_return"]) else -10**9,
@@ -2069,9 +2451,9 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
             </div>
             <div class="compare-hero-grid">
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">Strongest Sentinel setup</div>
+                    <div class="compare-hero-label">Strongest Pro setup</div>
                     <div class="compare-hero-value">{escape(strongest['ticker'])}</div>
-                    <div class="compare-hero-sub">Score {strongest['analysis']['score']:+d} · {escape(strongest['analysis']['signal'])} · {escape(strongest['analysis']['confidence'])} confidence</div>
+                    <div class="compare-hero-sub">Pro score {strongest['analysis'].get('pro_score', strongest['analysis']['score']):+d} · {escape(strongest['analysis']['signal'])} · {escape(strongest['analysis']['confidence'])} confidence</div>
                 </div>
                 <div class="compare-hero-tile">
                     <div class="compare-hero-label">Best 1Y price strength</div>
@@ -2114,8 +2496,8 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
                             <div class="compare-stat-value">{escape(analysis['confidence'])}</div>
                         </div>
                         <div class="compare-stat">
-                            <div class="compare-stat-label">Sentinel Score</div>
-                            <div class="compare-stat-value">{analysis['score']:+d}</div>
+                            <div class="compare-stat-label">Pro Score</div>
+                            <div class="compare-stat-value">{analysis.get('pro_score', analysis['score']):+d}</div>
                         </div>
                         <div class="compare-stat">
                             <div class="compare-stat-label">RSI 14</div>
@@ -2160,7 +2542,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     </div>
     <div class="compare-table-cell">
         <div class="compare-table-sub">Momentum</div>
-        <div class="compare-table-value">{analysis['score']:+d}</div>
+        <div class="compare-table-value">{analysis.get('pro_score', analysis['score']):+d}</div>
         <div class="compare-table-note">RSI {"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
     </div>
     <div class="compare-table-cell">
@@ -2254,7 +2636,7 @@ def generate_dashboard():
     st.markdown('<div class="top-kicker">David Lau Stock Market Vision</div>', unsafe_allow_html=True)
     st.title("David Lau Stock Market Vision")
     st.markdown(
-        '<div class="top-intro">Ground News–inspired reading flow: readers see stock-specific news and estimated directional impact first, then confirm the setup with a modern crypto-style buy/hold/sell signal deck, and only then move into the 1-year trend section.</div>',
+        '<div class="top-intro">Pro v12: Catalyst Engine + Trading Lab + Smart Compare. Readers see stock-specific news and grouped catalysts first, then a crypto-style signal deck, then candlestick confirmation with deeper trade structure.</div>',
         unsafe_allow_html=True,
     )
 
