@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import json
 from html import escape, unescape
 import re
 import textwrap
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
@@ -94,7 +96,7 @@ WATCHLIST_PRESETS = {
     "Transportation": ["UBER", "FDX", "DAL", "UAL", "LUV", "CSX", "NSC", "ODFL", "JBHT", "EXPD"],
     "Market ETFs": ["SPY", "QQQ", "DIA", "IWM", "XLF", "XLK", "XLE", "XLV", "SMH", "SOXX"],
     "Taiwan Semiconductors": ["2330.TW", "2454.TW", "2303.TW", "3711.TW", "3034.TW", "2379.TW", "2408.TW"],
-    "Taiwan AI Supply Chain": ["2317.TW", "2382.TW", "3231.TW", "6669.TW", "2308.TW", "2357.TW", "2376.TW", "2345.TW"],
+    "Taiwan AI Supply Chain": ["2317.TW", "2382.TW", "3231.TW", "6669.TW", "2308.TW", "2357.TW", "2376.TW", "2345.TW", "3715.TW"],
     "Taiwan Financials": ["2881.TW", "2882.TW", "2891.TW", "2886.TW", "2884.TW", "2885.TW"],
     "Taiwan Shipping & Cyclicals": ["2603.TW", "2609.TW", "2615.TW", "1301.TW", "2002.TW"],
     "Taiwan ETFs": ["0050.TW", "0056.TW", "00878.TW", "006208.TW"],
@@ -116,7 +118,8 @@ TAIWAN_TICKER_METADATA = {
     "2330.TW": {"code": "2330", "zh": "台積電", "en": "TSMC"},
     "2454.TW": {"code": "2454", "zh": "聯發科", "en": "MediaTek"},
     "2303.TW": {"code": "2303", "zh": "聯電", "en": "UMC"},
-    "3711.TW": {"code": "3711", "zh": "日月光投控", "en": "ASE"},
+    "3711.TW": {"code": "3711", "zh": "日月光投控", "en": "ASE", "aliases": ["ASE", "日月光", "日月光控股", "Advanced Semiconductor Engineering"]},
+    "3715.TW": {"code": "3715", "zh": "定穎投控", "en": "Dynamic Holding", "aliases": ["定穎投資控股", "Dynamic Holding Co., Ltd.", "Dynamic Holding"]},
     "3034.TW": {"code": "3034", "zh": "聯詠", "en": "Novatek"},
     "2379.TW": {"code": "2379", "zh": "瑞昱", "en": "Realtek"},
     "2408.TW": {"code": "2408", "zh": "南亞科", "en": "Nanya"},
@@ -169,6 +172,14 @@ NEGATIVE_NEWS_KEYWORDS = {
 
 st.set_page_config(page_title="David Lau Stock Market Vision", page_icon="📈", layout="wide")
 
+
+
+GLOBAL_REFERENCE_INDICES = [
+    {"ticker": "^IXIC", "label_key": "global_market_nasdaq"},
+    {"ticker": "^GSPC", "label_key": "global_market_sp500"},
+    {"ticker": "^DJI", "label_key": "global_market_dow"},
+    {"ticker": "^TWII", "label_key": "global_market_taiex"},
+]
 
 LANGUAGE_OPTIONS = {
     "English": "English",
@@ -266,7 +277,7 @@ TRANSLATIONS = {
         "pick_watchlist_symbols": "Pick any watchlist symbols...",
         "custom_symbols": "Custom symbols",
         "custom_symbols_placeholder": "Add any U.S. or Taiwan symbol, e.g. HOOD, NET, 2330, 2454, 0050",
-        "watchlist_caption": "Build a broader U.S. and Taiwan watchlist by group, then add any extra symbol manually. Taiwan numeric codes like 2330 or 0050 auto-convert to Yahoo Finance format.",
+        "watchlist_caption": "Build a broader U.S. and Taiwan watchlist by group, then add any extra symbol manually. Custom entries are injected into the picker immediately, and Taiwan numeric codes like 2330, 3715, or 0050 auto-convert to Yahoo Finance format.",
         "manual_period_override": "Manual period override",
         "custom_lookback": "Custom lookback",
         "custom_interval": "Custom interval",
@@ -464,6 +475,49 @@ TRANSLATIONS = {
     },
 }
 
+
+TRANSLATIONS["English"].update({
+    "global_market_indicator": "Global Market Indicator",
+    "global_market_copy": "A cross-market reference layer for the active lens. Use this to see whether U.S. and Taiwan benchmark trends are broadly supportive, mixed, or under pressure before drilling further into individual names.",
+    "global_market_window": "Active window",
+    "global_market_last": "Last price",
+    "global_market_window_return": "Window return",
+    "global_market_recent": "Recent 20-bar",
+    "global_market_signal": "Trend state",
+    "global_market_breadth": "Reference breadth",
+    "global_market_breadth_risk_on": "{up} of {total} benchmarks are in positive trend alignment. Broad tone is leaning risk-on.",
+    "global_market_breadth_risk_off": "{down} of {total} benchmarks are in negative trend alignment. Broad tone is leaning defensive.",
+    "global_market_breadth_mixed": "Benchmarks are mixed across the active lens. Leadership is selective rather than broad.",
+    "global_market_uptrend": "Uptrend",
+    "global_market_pullback": "Pullback / mixed",
+    "global_market_downtrend": "Downtrend",
+    "global_market_nasdaq": "NASDAQ",
+    "global_market_sp500": "S&P 500",
+    "global_market_dow": "Dow Jones",
+    "global_market_taiex": "TAIEX",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "global_market_indicator": "全球市場指標",
+    "global_market_copy": "這是配合目前趨勢鏡頭的跨市場參考層。先看美國與台灣主要指數現在是同步偏多、分歧，還是整體承壓，再深入研究個股會更有脈絡。",
+    "global_market_window": "目前視窗",
+    "global_market_last": "最新價格",
+    "global_market_window_return": "視窗報酬",
+    "global_market_recent": "近 20 根走勢",
+    "global_market_signal": "趨勢狀態",
+    "global_market_breadth": "基準廣度",
+    "global_market_breadth_risk_on": "{up} / {total} 個基準指數呈現偏多對齊，整體風險偏好較佳。",
+    "global_market_breadth_risk_off": "{down} / {total} 個基準指數呈現偏空對齊，整體氣氛較偏防守。",
+    "global_market_breadth_mixed": "主要基準在目前鏡頭下呈現分歧，市場不是全面擴散，而是選股型盤勢。",
+    "global_market_uptrend": "上升趨勢",
+    "global_market_pullback": "拉回／分歧",
+    "global_market_downtrend": "下降趨勢",
+    "global_market_nasdaq": "NASDAQ 指數",
+    "global_market_sp500": "標普 500",
+    "global_market_dow": "道瓊工業指數",
+    "global_market_taiex": "加權指數",
+})
+
 TERM_TRANSLATIONS = {
     "繁體中文": {
         "BUY": "買進",
@@ -601,6 +655,57 @@ TERM_TRANSLATIONS = {
     }
 }
 
+TRANSLATIONS["English"].update(
+    {
+        "symbol_search": "Smart search",
+        "symbol_search_placeholder": "Try NVDA, Apple, 台積電, 定穎, 3715, 6488, 富喬",
+        "search_results": "Search results",
+        "search_results_help": "Search by symbol, company name, or Taiwan code. Pick any result to add it into the watchlist picker immediately.",
+        "search_results_empty": "No matching symbols were found. You can still type a raw ticker in Custom symbols.",
+        "watchlist_caption": "Build a broader U.S. and Taiwan watchlist by group, then add any extra symbol manually. Smart search now matches symbols and company names, and Taiwan numeric codes auto-detect .TW / .TWO when possible.",
+        "opportunity_radar": "Opportunity Radar",
+        "opportunity_radar_copy": "Ranks the selected list by lens score, news support, and intraday pressure so you can spot where the strongest alignment is building first.",
+        "radar_score": "Radar score",
+        "fastest_intraday": "Fastest intraday",
+        "news_backing": "News backing",
+        "execution_note": "Execution note",
+        "search_remote_note": "Search combines your current universe with live symbol lookup, so missing names can still be found quickly.",
+    }
+)
+TRANSLATIONS["繁體中文"].update(
+    {
+        "symbol_search": "智慧搜尋",
+        "symbol_search_placeholder": "可試試 NVDA、Apple、台積電、定穎、3715、6488、富喬",
+        "search_results": "搜尋結果",
+        "search_results_help": "可用代號、公司名稱或台股數字代碼搜尋。選取結果後會立刻加入下方清單。",
+        "search_results_empty": "目前找不到符合的代號，你仍可在自訂代號直接輸入原始 ticker。",
+        "watchlist_caption": "可先用群組建立更廣的美股與台股觀察清單，再手動加入額外代號。智慧搜尋已支援代號與公司名稱比對，台股純數字代碼也會盡量自動判斷 .TW / .TWO。",
+        "opportunity_radar": "機會雷達",
+        "opportunity_radar_copy": "依鏡頭分數、新聞助力與盤中壓力排序，讓你先看到哪一檔的條件最一致。",
+        "radar_score": "雷達分數",
+        "fastest_intraday": "盤中最強",
+        "news_backing": "新聞助力",
+        "execution_note": "執行提示",
+        "search_remote_note": "搜尋會結合目前觀察池與即時代號查找，缺少的股票也能更快被找到。",
+    }
+)
+
+
+TERM_TRANSLATIONS["繁體中文"].update(
+    {
+        "主導催化": "主導催化",
+        "Constructive intraday pressure": "盤中買盤有利",
+        "Mild intraday tailwind": "盤中略偏順風",
+        "Intraday pressure is mixed": "盤中力道偏混合",
+        "Intraday sellers are in control": "盤中賣壓主導",
+        "Momentum + news are aligned. Keep this near the top of the watchlist.": "動能與新聞方向一致，建議放在觀察清單前段。",
+        "Constructive, but not fully confirmed. Watch for cleaner price confirmation.": "條件不錯，但還未完全確認，觀察價格是否進一步轉強。",
+        "Mixed setup. Let the next catalyst decide whether this climbs the list.": "條件仍混合，等待下一個催化劑決定是否往前排。",
+        "Conditions are weak. Treat this as a defensive watch item until momentum improves.": "目前條件偏弱，先以防守觀察為主，等待動能改善。",
+    }
+)
+
+
 GROUP_TRANSLATIONS = {
     "繁體中文": {
         "Tech & AI": "科技與 AI",
@@ -666,6 +771,60 @@ LENS_TRANSLATIONS = {
     }
 }
 
+
+TRANSLATIONS["English"].update({
+    "saved_preferences_note": "Selections are now saved in the URL, so reload keeps the same language, news mode, market scope, watchlist, and lens.",
+    "tw_benchmark_layer": "Taiwan Benchmark Layer",
+    "tw_benchmark_copy": "Local context for Taiwan names. This layer compares the active ticker against TAIEX, 0050, and its closest sector peers over the active lens window.",
+    "tw_benchmark_window": "Active window",
+    "tw_sector_group": "Sector group",
+    "tw_vs_taiex": "vs TAIEX",
+    "tw_vs_0050": "vs 0050 ETF",
+    "tw_peer_rank": "Sector peer rank",
+    "tw_peer_median": "Peer median",
+    "tw_best_peer": "Top peer",
+    "tw_relative_state": "Relative strength state",
+    "tw_outperforming": "Outperforming",
+    "tw_lagging": "Lagging",
+    "tw_in_line": "In line",
+    "tw_strong_leader": "Strong leader",
+    "tw_mild_leader": "Mild leader",
+    "tw_mild_laggard": "Mild laggard",
+    "tw_clear_laggard": "Clear laggard",
+    "tw_benchmark_note_strong_leader": "The stock is leading both Taiwan benchmarks and its sector peers over the active lens window.",
+    "tw_benchmark_note_mild_leader": "The stock is ahead of local benchmarks, but leadership is not yet dominant across every reference point.",
+    "tw_benchmark_note_in_line": "The stock is trading broadly in line with Taiwan benchmarks and nearby peers.",
+    "tw_benchmark_note_mild_laggard": "The stock is lagging local benchmarks enough that selectivity and entry timing matter more.",
+    "tw_benchmark_note_clear_laggard": "The stock is clearly trailing Taiwan benchmarks and sector peers, so relative strength is a headwind.",
+    "tw_rank_of": "#{rank} of {total}",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "saved_preferences_note": "目前的設定會同步寫進網址，因此重新整理後也會保留相同的語言、新聞模式、市場範圍、觀察清單與趨勢鏡頭。",
+    "tw_benchmark_layer": "台股基準層",
+    "tw_benchmark_copy": "給台股的本地化脈絡。這一層會用目前鏡頭視窗，把個股拿去和加權指數、0050，以及最接近的同產業同儕比較。",
+    "tw_benchmark_window": "目前視窗",
+    "tw_sector_group": "產業群組",
+    "tw_vs_taiex": "相對加權指數",
+    "tw_vs_0050": "相對 0050 ETF",
+    "tw_peer_rank": "同業排名",
+    "tw_peer_median": "同業中位數",
+    "tw_best_peer": "目前最強同業",
+    "tw_relative_state": "相對強弱狀態",
+    "tw_outperforming": "跑贏",
+    "tw_lagging": "落後",
+    "tw_in_line": "同步",
+    "tw_strong_leader": "明顯領先",
+    "tw_mild_leader": "溫和領先",
+    "tw_mild_laggard": "溫和落後",
+    "tw_clear_laggard": "明顯落後",
+    "tw_benchmark_note_strong_leader": "這檔股票在目前鏡頭視窗下，同時領先台股基準與同產業同儕。",
+    "tw_benchmark_note_mild_leader": "這檔股票領先本地基準，但領先優勢還沒有在所有參考點都完全擴大。",
+    "tw_benchmark_note_in_line": "這檔股票目前大致與台股基準和附近同業同步。",
+    "tw_benchmark_note_mild_laggard": "這檔股票已明顯落後本地基準，進場節奏與挑選點位會更重要。",
+    "tw_benchmark_note_clear_laggard": "這檔股票明顯跑輸台股基準與同業，相對強弱目前是逆風。",
+    "tw_rank_of": "第 {rank} / {total} 名",
+})
 def get_lang() -> str:
     return st.session_state.get("dashboard_language", "English")
 
@@ -936,14 +1095,256 @@ def is_taiwan_ticker(ticker: str) -> bool:
     return ticker_upper.endswith(".TW") or ticker_upper.endswith(".TWO") or ticker_upper in TAIWAN_TICKER_METADATA
 
 
+def _normalize_symbol_lookup_token(value: str) -> str:
+    return "".join(str(value or "").upper().split())
+
+
+def build_taiwan_alias_index() -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    for ticker, meta in TAIWAN_TICKER_METADATA.items():
+        normalized_ticker = str(ticker).upper()
+        alias_candidates = {
+            normalized_ticker,
+            ticker_base_code(normalized_ticker),
+            meta.get("zh", ""),
+            meta.get("en", ""),
+        }
+        alias_candidates.update(meta.get("aliases", []))
+        for alias in alias_candidates:
+            token = _normalize_symbol_lookup_token(alias)
+            if token:
+                alias_map[token] = normalized_ticker
+    return alias_map
+
+
+TAIWAN_ALIAS_INDEX = build_taiwan_alias_index()
+
+
+RUNTIME_SYMBOL_METADATA_KEY = "dashboard_runtime_symbol_metadata"
+
+
+def runtime_symbol_metadata() -> dict[str, dict]:
+    return st.session_state.setdefault(RUNTIME_SYMBOL_METADATA_KEY, {})
+
+
+def register_runtime_symbol_metadata(symbol: str, *, name: str = "", exchange: str = "", market: str = "") -> None:
+    normalized_symbol = str(symbol or "").upper().strip()
+    if not normalized_symbol:
+        return
+    metadata = runtime_symbol_metadata()
+    current = dict(metadata.get(normalized_symbol, {}))
+    if name:
+        current["name"] = str(name).strip()
+    if exchange:
+        current["exchange"] = str(exchange).strip()
+    if market:
+        current["market"] = str(market).strip()
+    metadata[normalized_symbol] = current
+    st.session_state[RUNTIME_SYMBOL_METADATA_KEY] = metadata
+
+
+def get_runtime_symbol_metadata(symbol: str) -> dict:
+    return runtime_symbol_metadata().get(str(symbol or "").upper().strip(), {})
+
+
+def scope_allows_ticker(scope: str, ticker: str) -> bool:
+    normalized_ticker = str(ticker or "").upper().strip()
+    if not normalized_ticker:
+        return False
+    if scope == "Taiwan only":
+        return is_taiwan_ticker(normalized_ticker)
+    if scope == "U.S. only":
+        return not is_taiwan_ticker(normalized_ticker)
+    return True
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def yahoo_symbol_has_history(symbol: str) -> bool:
+    try:
+        history = yf.Ticker(symbol).history(period="1mo", interval="1d", auto_adjust=False)
+        return history is not None and not history.empty
+    except Exception:
+        return False
+
+
+def resolve_taiwan_numeric_symbol(symbol: str) -> str:
+    numeric_code = str(symbol or "").strip()
+    if not numeric_code:
+        return ""
+    for suffix in (".TW", ".TWO"):
+        candidate = f"{numeric_code}{suffix}"
+        if candidate in TAIWAN_TICKER_METADATA:
+            return candidate
+    for suffix in (".TW", ".TWO"):
+        candidate = f"{numeric_code}{suffix}"
+        if yahoo_symbol_has_history(candidate):
+            return candidate
+    return f"{numeric_code}.TW"
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_remote_symbol_search(query: str, max_results: int = 12) -> list[dict]:
+    search_query = str(query or "").strip()
+    if len(search_query) < 1:
+        return []
+
+    url = (
+        "https://query1.finance.yahoo.com/v1/finance/search"
+        f"?q={quote_plus(search_query)}&quotesCount={max_results * 3}&newsCount=0&listsCount=0&enableFuzzyQuery=true"
+    )
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json, text/plain, */*",
+        },
+    )
+    try:
+        with urlopen(request, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        return []
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for quote in payload.get("quotes", []):
+        raw_symbol = str(quote.get("symbol", "") or "").upper().strip()
+        if not raw_symbol:
+            continue
+
+        quote_type = str(quote.get("quoteType", "") or quote.get("typeDisp", "")).upper()
+        if quote_type and not any(token in quote_type for token in ("EQUITY", "ETF", "FUND")):
+            continue
+
+        display_name = (
+            quote.get("shortname")
+            or quote.get("longname")
+            or quote.get("dispSecIndFlag")
+            or raw_symbol
+        )
+        exchange = " / ".join(
+            str(value).strip()
+            for value in (
+                quote.get("exchange"),
+                quote.get("exchDisp"),
+            )
+            if str(value or "").strip()
+        )
+
+        normalized_symbol = normalize_dashboard_ticker(raw_symbol)
+        if not normalized_symbol:
+            continue
+
+        results.append(
+            {
+                "symbol": normalized_symbol,
+                "name": str(display_name).strip(),
+                "exchange": exchange,
+            }
+        )
+
+    return results
+
+
+def build_symbol_search_text(symbol: str) -> str:
+    normalized_symbol = str(symbol or "").upper().strip()
+    meta = TAIWAN_TICKER_METADATA.get(normalized_symbol, {})
+    runtime_meta = get_runtime_symbol_metadata(normalized_symbol)
+    parts = [
+        normalized_symbol,
+        ticker_base_code(normalized_symbol),
+        meta.get("zh", ""),
+        meta.get("en", ""),
+        runtime_meta.get("name", ""),
+        runtime_meta.get("exchange", ""),
+    ]
+    parts.extend(meta.get("aliases", []))
+    return " ".join(str(part) for part in parts if str(part).strip())
+
+
+def _search_match_score(query_token: str, symbol: str, haystack: str) -> int:
+    normalized_symbol = _normalize_symbol_lookup_token(symbol)
+    normalized_text = _normalize_symbol_lookup_token(haystack)
+    if not query_token or not normalized_text:
+        return 0
+    if query_token == normalized_symbol:
+        return 140
+    if query_token == normalized_text:
+        return 120
+    if normalized_symbol.startswith(query_token):
+        return 100
+    if query_token in normalized_symbol:
+        return 80
+    if query_token in normalized_text:
+        return 60
+    return 0
+
+
+def build_scope_search_universe(scope: str) -> list[str]:
+    symbols = set(DEFAULT_WATCHLIST_UNIVERSE)
+    symbols.update(TAIWAN_TICKER_METADATA.keys())
+    symbols.update(runtime_symbol_metadata().keys())
+    return sorted(symbol for symbol in symbols if scope_allows_ticker(scope, symbol))
+
+
+def build_symbol_search_results(query: str, scope: str, max_results: int = 12) -> list[str]:
+    query_text = str(query or "").strip()
+    if not query_text:
+        return []
+
+    query_token = _normalize_symbol_lookup_token(query_text)
+    scored: list[tuple[int, str]] = []
+    seen: set[str] = set()
+
+    local_universe = build_scope_search_universe(scope)
+    for symbol in local_universe:
+        score = _search_match_score(query_token, symbol, build_symbol_search_text(symbol))
+        if score > 0:
+            scored.append((score, symbol))
+            seen.add(symbol)
+
+    for item in fetch_remote_symbol_search(query_text, max_results=max_results):
+        symbol = normalize_dashboard_ticker(item.get("symbol", ""))
+        if not symbol or not scope_allows_ticker(scope, symbol):
+            continue
+        register_runtime_symbol_metadata(symbol, name=item.get("name", ""), exchange=item.get("exchange", ""))
+        haystack = " ".join([symbol, item.get("name", ""), item.get("exchange", "")])
+        score = _search_match_score(query_token, symbol, haystack) + 10
+        scored.append((score, symbol))
+        seen.add(symbol)
+
+    if query_text.isdigit() and len(query_text) in {4, 5, 6}:
+        numeric_symbol = resolve_taiwan_numeric_symbol(query_text)
+        if numeric_symbol and scope_allows_ticker(scope, numeric_symbol):
+            scored.append((160, numeric_symbol))
+            seen.add(numeric_symbol)
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+    results: list[str] = []
+    for _, symbol in scored:
+        if symbol not in results:
+            results.append(symbol)
+        if len(results) >= max_results:
+            break
+    return results
+
+
 def normalize_dashboard_ticker(raw_symbol: str) -> str:
-    symbol = str(raw_symbol).strip().upper().replace(" ", "")
+    symbol_raw = str(raw_symbol).strip()
+    symbol = symbol_raw.upper().replace(" ", "")
     if not symbol:
         return ""
+    alias_hit = TAIWAN_ALIAS_INDEX.get(_normalize_symbol_lookup_token(symbol_raw))
+    if alias_hit:
+        return alias_hit
     if symbol in TAIWAN_TICKER_METADATA:
         return symbol
+    if symbol.endswith(".TW") or symbol.endswith(".TWO"):
+        return symbol
     if symbol.isdigit() and len(symbol) in {4, 5, 6}:
-        return f"{symbol}.TW"
+        return resolve_taiwan_numeric_symbol(symbol)
     return symbol
 
 
@@ -958,9 +1359,18 @@ def market_scope_group_options(scope: str) -> list[str]:
 def display_ticker_label(ticker: str) -> str:
     ticker_upper = str(ticker).upper()
     meta = TAIWAN_TICKER_METADATA.get(ticker_upper)
+    runtime_meta = get_runtime_symbol_metadata(ticker_upper)
+
     if meta:
         company = meta["zh"] if get_lang() == "繁體中文" else meta["en"]
         return f"{meta['code']} {company}"
+
+    runtime_name = str(runtime_meta.get("name", "")).strip()
+    if runtime_name:
+        if is_taiwan_ticker(ticker_upper):
+            return f"{ticker_base_code(ticker_upper)} {runtime_name}"
+        return f"{ticker_upper} {runtime_name}"
+
     if is_taiwan_ticker(ticker_upper):
         base = ticker_base_code(ticker_upper)
         return f"{base} 台股" if get_lang() == "繁體中文" else f"{base} Taiwan"
@@ -973,6 +1383,418 @@ def market_scope_label(scope: str) -> str:
         "U.S. only": t("market_scope_us"),
         "Taiwan only": t("market_scope_tw"),
     }.get(scope, scope)
+
+
+
+def _csv_encode(values: list[str]) -> str:
+    return ",".join(str(value).strip() for value in values if str(value).strip())
+
+
+def _csv_decode(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def _query_param_first(key: str) -> str:
+    try:
+        query_params = st.query_params
+        if hasattr(query_params, "get_all"):
+            values = query_params.get_all(key)
+            if values:
+                return str(values[0])
+        value = query_params.get(key)
+        if isinstance(value, list):
+            return str(value[0]) if value else ""
+        return str(value) if value is not None else ""
+    except Exception:
+        pass
+    try:
+        params = st.experimental_get_query_params()
+        value = params.get(key, [""])
+        if isinstance(value, list):
+            return str(value[0]) if value else ""
+        return str(value) if value is not None else ""
+    except Exception:
+        return ""
+
+
+def _current_query_param_map() -> dict[str, str]:
+    keys = ["lang", "news", "scope", "groups", "picks", "custom", "search", "lens", "manual", "period", "interval"]
+    return {key: _query_param_first(key) for key in keys if _query_param_first(key)}
+
+
+def save_dashboard_preferences(params: dict[str, str]) -> None:
+    clean = {key: str(value) for key, value in params.items() if value not in (None, "")}
+    if clean == _current_query_param_map():
+        return
+    try:
+        query_params = st.query_params
+        if hasattr(query_params, "clear"):
+            query_params.clear()
+        for key, value in clean.items():
+            query_params[key] = value
+        return
+    except Exception:
+        pass
+    try:
+        st.experimental_set_query_params(**clean)
+    except Exception:
+        return
+
+
+def load_dashboard_preferences() -> None:
+    if st.session_state.get("_dashboard_prefs_loaded"):
+        return
+
+    language = _query_param_first("lang") or st.session_state.get("dashboard_language", "English")
+    if language not in LANGUAGE_OPTIONS:
+        language = "English"
+
+    news_mode = _query_param_first("news") or st.session_state.get("dashboard_news_mode", "Original source")
+    if news_mode not in NEWS_DISPLAY_OPTIONS:
+        news_mode = "Original source"
+
+    market_scope = _query_param_first("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    if market_scope not in MARKET_SCOPE_OPTIONS:
+        market_scope = "Mixed (U.S. + Taiwan)"
+
+    groups = _csv_decode(_query_param_first("groups"))
+    groups = [group for group in groups if group in market_scope_group_options(market_scope)]
+    if not groups:
+        groups = list(MARKET_SCOPE_DEFAULT_GROUPS[market_scope])
+
+    picks = [normalize_dashboard_ticker(value) for value in _csv_decode(_query_param_first("picks"))]
+    custom_symbols = _query_param_first("custom") or st.session_state.get("dashboard_custom_symbols", "")
+    symbol_search = _query_param_first("search") or st.session_state.get("dashboard_symbol_search", "")
+
+    lens_name = _query_param_first("lens") or st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
+    if lens_name not in TREND_LENSES:
+        lens_name = DEFAULT_TREND_LENS
+
+    manual_override = (_query_param_first("manual") or "0") == "1"
+    manual_period = _query_param_first("period") or st.session_state.get("dashboard_manual_period", DEFAULT_PERIOD)
+    if manual_period not in SUPPORTED_PERIODS:
+        manual_period = DEFAULT_PERIOD
+    manual_interval = _query_param_first("interval") or st.session_state.get("dashboard_manual_interval", DEFAULT_INTERVAL)
+    if manual_interval not in SUPPORTED_INTERVALS:
+        manual_interval = DEFAULT_INTERVAL
+
+    st.session_state["dashboard_language"] = language
+    st.session_state["dashboard_news_mode"] = news_mode
+    st.session_state["dashboard_market_scope"] = market_scope
+    st.session_state["dashboard_selected_groups"] = groups
+    st.session_state["dashboard_selected_tickers"] = picks
+    st.session_state["dashboard_custom_symbols"] = custom_symbols
+    st.session_state["dashboard_symbol_search"] = symbol_search
+    st.session_state["dashboard_lens_name"] = lens_name
+    st.session_state["dashboard_manual_override"] = manual_override
+    st.session_state["dashboard_manual_period"] = manual_period
+    st.session_state["dashboard_manual_interval"] = manual_interval
+    st.session_state["_dashboard_prefs_loaded"] = True
+
+
+def taiwan_sector_group(ticker: str) -> str:
+    ticker_upper = str(ticker).upper()
+    for group in TAIWAN_WATCHLIST_GROUPS:
+        if ticker_upper in {symbol.upper() for symbol in WATCHLIST_PRESETS.get(group, [])}:
+            return group
+    return "Taiwan Semiconductors"
+
+
+def taiwan_sector_peers(ticker: str, limit: int = 6) -> list[str]:
+    group = taiwan_sector_group(ticker)
+    ticker_upper = str(ticker).upper()
+    peers = [symbol for symbol in WATCHLIST_PRESETS.get(group, []) if str(symbol).upper() != ticker_upper]
+    return peers[:limit]
+
+
+def compute_window_return_pct(series: pd.Series | None) -> float:
+    if series is None:
+        return float("nan")
+    clean = ensure_datetime_index(series).dropna()
+    if len(clean) < 2:
+        return float("nan")
+    start = clean.iloc[0]
+    end = clean.iloc[-1]
+    if pd.isna(start) or pd.isna(end) or start == 0:
+        return float("nan")
+    return float(((end / start) - 1) * 100)
+
+
+def compute_recent_return_pct(series: pd.Series | None, window: int = 20) -> float:
+    if series is None:
+        return float("nan")
+    clean = ensure_datetime_index(series).dropna()
+    if len(clean) < 2:
+        return float("nan")
+    tail = clean.tail(min(window, len(clean)))
+    return compute_window_return_pct(tail)
+
+
+def percent_spread(left: float, right: float) -> float:
+    if pd.isna(left) or pd.isna(right):
+        return float("nan")
+    return float(left - right)
+
+
+def taiwan_relative_state_label(score: float) -> str:
+    if pd.isna(score):
+        return t("tw_in_line")
+    if score >= 12:
+        return t("tw_strong_leader")
+    if score >= 4:
+        return t("tw_mild_leader")
+    if score <= -12:
+        return t("tw_clear_laggard")
+    if score <= -4:
+        return t("tw_mild_laggard")
+    return t("tw_in_line")
+
+
+def taiwan_relative_state_note(score: float) -> str:
+    if pd.isna(score):
+        return t("tw_benchmark_note_in_line")
+    if score >= 12:
+        return t("tw_benchmark_note_strong_leader")
+    if score >= 4:
+        return t("tw_benchmark_note_mild_leader")
+    if score <= -12:
+        return t("tw_benchmark_note_clear_laggard")
+    if score <= -4:
+        return t("tw_benchmark_note_mild_laggard")
+    return t("tw_benchmark_note_in_line")
+
+
+def benchmark_delta_label(value: float) -> str:
+    if pd.isna(value):
+        return "N/A"
+    direction = t("tw_outperforming") if value >= 0 else t("tw_lagging")
+    return f"{direction} {format_percent(value)}"
+
+
+
+@st.cache_data(ttl=300)
+def fetch_global_reference_data(period: str, interval: str):
+    return fetch_daily_data([item["ticker"] for item in GLOBAL_REFERENCE_INDICES], period, interval)
+
+
+def global_market_trend_state(window_return: float, recent_return: float) -> str:
+    if pd.isna(window_return) or pd.isna(recent_return):
+        return t("global_market_pullback")
+    if window_return >= 4 and recent_return >= 0:
+        return t("global_market_uptrend")
+    if window_return <= -4 and recent_return <= 0:
+        return t("global_market_downtrend")
+    return t("global_market_pullback")
+
+
+def build_global_market_indicator(reference_data: pd.DataFrame | None, lens_meta: dict | None = None) -> dict:
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+
+    cards = []
+    up = down = 0
+    for item in GLOBAL_REFERENCE_INDICES:
+        ticker = item["ticker"]
+        series, _ = get_price_series(reference_data, ticker)
+        window_return = compute_window_return_pct(series)
+        recent_return = compute_recent_return_pct(series, 20)
+        last_price = series.iloc[-1] if series is not None and not series.empty else float("nan")
+        state = global_market_trend_state(window_return, recent_return)
+        if state == t("global_market_uptrend"):
+            up += 1
+        elif state == t("global_market_downtrend"):
+            down += 1
+        cards.append({
+            "ticker": ticker,
+            "label": t(item["label_key"]),
+            "last_price": last_price,
+            "window_return": window_return,
+            "recent_return": recent_return,
+            "state": state,
+        })
+
+    total = len(cards)
+    if up >= 3:
+        breadth_copy = t("global_market_breadth_risk_on", up=up, total=total)
+    elif down >= 3:
+        breadth_copy = t("global_market_breadth_risk_off", down=down, total=total)
+    else:
+        breadth_copy = t("global_market_breadth_mixed")
+
+    return {
+        "period": period,
+        "interval": interval,
+        "cards": cards,
+        "up_count": up,
+        "down_count": down,
+        "breadth_copy": breadth_copy,
+    }
+
+
+def render_global_market_indicator(indicator: dict):
+    cards = indicator.get("cards", [])
+    if not cards:
+        return
+
+    card_html = "".join(
+        textwrap.dedent(
+            f"""
+            <div class="global-indicator-card">
+                <div class="global-indicator-label">{escape(card['label'])}</div>
+                <div class="global-indicator-value">{format_price(card['last_price'])}</div>
+                <div class="global-indicator-grid">
+                    <div>
+                        <div class="global-indicator-mini-label">{t("global_market_window_return")}</div>
+                        <div class="global-indicator-mini-value">{format_percent(card['window_return'])}</div>
+                    </div>
+                    <div>
+                        <div class="global-indicator-mini-label">{t("global_market_recent")}</div>
+                        <div class="global-indicator-mini-value">{format_percent(card['recent_return'])}</div>
+                    </div>
+                </div>
+                <div class="global-indicator-state">{t("global_market_signal")}: {escape(card['state'])}</div>
+            </div>
+            """
+        ).strip()
+        for card in cards
+    )
+
+    shell_html = textwrap.dedent(
+        f"""
+        <div class="global-indicator-shell">
+            <div class="section-header" style="margin:0; color:#f5ead8;">{t("global_market_indicator")}</div>
+            <div class="global-indicator-title">{t("global_market_breadth")}</div>
+            <div class="global-indicator-copy">{escape(indicator.get("breadth_copy", ""))}</div>
+            <div class="global-indicator-pill-row">
+                <span class="global-indicator-pill">{t("global_market_window")}: {escape(indicator["period"])} / {escape(indicator["interval"])}</span>
+                <span class="global-indicator-pill">{t("global_market_indicator")}: NASDAQ · S&P 500 · Dow · TAIEX</span>
+            </div>
+            <div class="global-indicator-card-grid">
+                {card_html}
+            </div>
+        </div>
+        """
+    ).strip()
+
+    st.markdown(shell_html, unsafe_allow_html=True)
+
+
+def build_taiwan_benchmark_context(ticker: str, price_series: pd.Series, lens_meta: dict | None = None) -> dict:
+    if not is_taiwan_ticker(ticker):
+        return {}
+
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    peers = taiwan_sector_peers(ticker)
+    benchmark_symbols = sorted(set(["^TWII", "0050.TW"] + peers))
+    benchmark_data = fetch_daily_data(benchmark_symbols, period, interval)
+
+    ticker_return = compute_window_return_pct(price_series)
+    taiex_series, _ = get_price_series(benchmark_data, "^TWII")
+    etf_series, _ = get_price_series(benchmark_data, "0050.TW")
+    taiex_return = compute_window_return_pct(taiex_series)
+    etf_return = compute_window_return_pct(etf_series)
+
+    peer_rows = []
+    for peer in peers:
+        peer_series, _ = get_price_series(benchmark_data, peer)
+        peer_return = compute_window_return_pct(peer_series)
+        if pd.notna(peer_return):
+            peer_rows.append({"ticker": peer, "label": display_ticker_label(peer), "return": peer_return})
+
+    peer_returns = [row["return"] for row in peer_rows if pd.notna(row["return"])]
+    peer_median = float(pd.Series(peer_returns).median()) if peer_returns else float("nan")
+    peer_rank = (1 + sum(value > ticker_return for value in peer_returns)) if pd.notna(ticker_return) else None
+    peer_total = len(peer_returns) + (1 if pd.notna(ticker_return) else 0)
+    best_peer = max(peer_rows, key=lambda row: row["return"]) if peer_rows else None
+
+    recent_relative = percent_spread(compute_recent_return_pct(price_series, 20), compute_recent_return_pct(taiex_series, 20))
+    blended_score = pd.Series(
+        [
+            percent_spread(ticker_return, taiex_return),
+            percent_spread(ticker_return, etf_return),
+            percent_spread(ticker_return, peer_median),
+            recent_relative,
+        ],
+        dtype="float64",
+    ).dropna()
+    relative_score = float(blended_score.mean()) if not blended_score.empty else float("nan")
+
+    return {
+        "group": taiwan_sector_group(ticker),
+        "period": period,
+        "interval": interval,
+        "ticker_return": ticker_return,
+        "taiex_return": taiex_return,
+        "etf_return": etf_return,
+        "vs_taiex": percent_spread(ticker_return, taiex_return),
+        "vs_0050": percent_spread(ticker_return, etf_return),
+        "peer_median": peer_median,
+        "peer_rank": peer_rank,
+        "peer_total": peer_total,
+        "best_peer": best_peer,
+        "recent_relative": recent_relative,
+        "relative_score": relative_score,
+        "state": taiwan_relative_state_label(relative_score),
+        "note": taiwan_relative_state_note(relative_score),
+    }
+
+
+def render_taiwan_benchmark_layer(ticker: str, benchmark: dict):
+    if not benchmark:
+        return
+
+    rank_text = "N/A"
+    if benchmark.get("peer_rank") and benchmark.get("peer_total"):
+        rank_text = t("tw_rank_of", rank=int(benchmark["peer_rank"]), total=int(benchmark["peer_total"]))
+
+    best_peer_label = benchmark["best_peer"]["label"] if benchmark.get("best_peer") else "N/A"
+    best_peer_return = format_percent(benchmark["best_peer"]["return"]) if benchmark.get("best_peer") else "N/A"
+
+    st.markdown(
+        f"""
+        <div class="benchmark-shell">
+            <div class="section-header" style="margin:0; color:#f5ead8;">{t("tw_benchmark_layer")}</div>
+            <div class="benchmark-title">{escape(display_ticker_label(ticker))} · {escape(benchmark['state'])}</div>
+            <div class="benchmark-copy">{t("tw_benchmark_copy")}</div>
+            <div class="benchmark-grid">
+                <div class="benchmark-box">
+                    <div class="benchmark-label">{t("tw_benchmark_window")}</div>
+                    <div class="benchmark-value">{escape(benchmark["period"])} / {escape(benchmark["interval"])}</div>
+                    <div class="benchmark-sub">{t("tw_sector_group")}: {escape(tr_group(benchmark["group"]))}</div>
+                </div>
+                <div class="benchmark-box">
+                    <div class="benchmark-label">{t("tw_vs_taiex")}</div>
+                    <div class="benchmark-value">{format_percent(benchmark["vs_taiex"])}</div>
+                    <div class="benchmark-sub">{benchmark_delta_label(benchmark["vs_taiex"])}</div>
+                </div>
+                <div class="benchmark-box">
+                    <div class="benchmark-label">{t("tw_vs_0050")}</div>
+                    <div class="benchmark-value">{format_percent(benchmark["vs_0050"])}</div>
+                    <div class="benchmark-sub">{benchmark_delta_label(benchmark["vs_0050"])}</div>
+                </div>
+                <div class="benchmark-box">
+                    <div class="benchmark-label">{t("tw_peer_rank")}</div>
+                    <div class="benchmark-value">{escape(rank_text)}</div>
+                    <div class="benchmark-sub">{t("tw_peer_median")}: {format_percent(benchmark["peer_median"])}</div>
+                </div>
+            </div>
+            <div class="benchmark-table">
+                <div class="benchmark-row">
+                    <div class="benchmark-row-label">{t("tw_relative_state")}</div>
+                    <div class="benchmark-row-value">{escape(benchmark["state"])}</div>
+                    <div class="benchmark-row-note">{escape(benchmark["note"])}</div>
+                </div>
+                <div class="benchmark-row">
+                    <div class="benchmark-row-label">{t("tw_best_peer")}</div>
+                    <div class="benchmark-row-value">{escape(best_peer_label)}</div>
+                    <div class="benchmark-row-note">{best_peer_return}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------
@@ -4300,6 +5122,152 @@ def collect_ticker_context(daily_data: pd.DataFrame, intraday_data: pd.DataFrame
 
 
 
+
+
+def opportunity_radar_score(bundle: dict, lens_meta: dict | None = None) -> float:
+    analysis = bundle["analysis"]
+    intraday = bundle.get("intraday", {})
+    lens_fields = compute_lens_winner_fields(bundle, lens_meta)
+    score = float(lens_fields["lens_score"])
+    news_score = float(analysis.get("news_pulse", {}).get("score", 0))
+    score += max(min(news_score, 2.5), -2.5)
+
+    intraday_change = intraday.get("change_pct", pd.NA)
+    if pd.notna(intraday_change):
+        if intraday_change >= 1.2:
+            score += 1.5
+        elif intraday_change > 0:
+            score += 0.7
+        elif intraday_change <= -1.2:
+            score -= 1.5
+        else:
+            score -= 0.7
+
+    signal = analysis.get("signal", "HOLD")
+    if signal == "BUY":
+        score += 0.8
+    elif signal == "SELL":
+        score -= 0.8
+    return score
+
+
+def opportunity_execution_note(bundle: dict) -> str:
+    analysis = bundle["analysis"]
+    setup = analysis.get("trading_lab", {}).get("setup", "Balanced")
+    signal = analysis.get("signal", "HOLD")
+    news_score = float(analysis.get("news_pulse", {}).get("score", 0))
+
+    if signal == "BUY" and setup == "Momentum-led" and news_score >= 0:
+        return "Momentum + news are aligned. Keep this near the top of the watchlist."
+    if signal == "BUY":
+        return "Constructive, but not fully confirmed. Watch for cleaner price confirmation."
+    if signal == "HOLD":
+        return "Mixed setup. Let the next catalyst decide whether this climbs the list."
+    return "Conditions are weak. Treat this as a defensive watch item until momentum improves."
+
+
+def intraday_pressure_note(bundle: dict) -> str:
+    change_pct = bundle.get("intraday", {}).get("change_pct", pd.NA)
+    if pd.isna(change_pct):
+        return tr_term("Intraday pressure is mixed")
+    if change_pct >= 1.0:
+        return tr_term("Constructive intraday pressure")
+    if change_pct > 0:
+        return tr_term("Mild intraday tailwind")
+    if change_pct <= -1.0:
+        return tr_term("Intraday sellers are in control")
+    return tr_term("Intraday pressure is mixed")
+
+
+def render_opportunity_radar(bundles: list[dict], lens_meta: dict | None = None):
+    if not bundles:
+        return
+
+    scored = []
+    for bundle in bundles:
+        scored.append((bundle, opportunity_radar_score(bundle, lens_meta)))
+    scored.sort(key=lambda item: item[1], reverse=True)
+
+    leader, leader_score = scored[0]
+    fastest = max(
+        bundles,
+        key=lambda item: item.get("intraday", {}).get("change_pct", -10**9)
+        if pd.notna(item.get("intraday", {}).get("change_pct", pd.NA))
+        else -10**9,
+    )
+    news_backing = max(bundles, key=lambda item: item["analysis"].get("news_pulse", {}).get("score", -10**9))
+
+    row_html = []
+    for rank, (bundle, radar_score) in enumerate(scored[:6], start=1):
+        analysis = bundle["analysis"]
+        catalyst = analysis.get("catalyst_engine", {}).get("dominant", "Macro")
+        intraday_note = intraday_pressure_note(bundle)
+        execution_note = tr_term(opportunity_execution_note(bundle))
+        row_html.append(
+            textwrap.dedent(
+                f"""
+                <div class="compare-table-row">
+                    <div class="compare-table-cell">
+                        <div class="compare-table-sub">#{rank}</div>
+                        <div class="compare-table-ticker">{escape(display_ticker_label(bundle['ticker']))}</div>
+                        <div class="compare-table-note">{escape(tr_signal(analysis.get('signal', 'HOLD')))} · {escape(tr_confidence(analysis.get('confidence', 'Moderate')))}</div>
+                    </div>
+                    <div class="compare-table-cell">
+                        <div class="compare-table-sub">{t('radar_score')}</div>
+                        <div class="compare-table-value">{radar_score:+.1f}</div>
+                        <div class="compare-table-note">{escape(intraday_note)}</div>
+                    </div>
+                    <div class="compare-table-cell">
+                        <div class="compare-table-sub">{t('news_backing')}</div>
+                        <div class="compare-table-value">{escape(tr_news_label(analysis.get('news_pulse', {}).get('label', 'News tilt: mixed')))}</div>
+                        <div class="compare-table-note">{analysis.get('news_pulse', {}).get('score', 0):+.1f}</div>
+                    </div>
+                    <div class="compare-table-cell">
+                        <div class="compare-table-sub">{escape(tr_term('Dominant catalyst' if get_lang() == 'English' else '主導催化'))}</div>
+                        <div class="compare-table-value">{escape(tr_term(catalyst))}</div>
+                        <div class="compare-table-note">{escape(tr_setup(analysis.get('trading_lab', {}).get('setup', 'Balanced')))}</div>
+                    </div>
+                    <div class="compare-table-cell">
+                        <div class="compare-table-sub">{t('execution_note')}</div>
+                        <div class="compare-table-note">{escape(execution_note)}</div>
+                    </div>
+                </div>
+                """
+            ).strip()
+        )
+
+    radar_html = textwrap.dedent(
+        f"""
+        <div class="compare-table-shell">
+            <div class="compare-table-title">{t('opportunity_radar')}</div>
+            <div class="compare-table-copy">{t('opportunity_radar_copy')}</div>
+            <div class="compare-hero-grid">
+                <div class="compare-hero-tile">
+                    <div class="compare-hero-label">{t('current_stance')}</div>
+                    <div class="compare-hero-value">{escape(display_ticker_label(leader['ticker']))}</div>
+                    <div class="compare-hero-sub">{t('radar_score')} {leader_score:+.1f} · {escape(tr_signal(leader['analysis'].get('signal', 'HOLD')))}</div>
+                </div>
+                <div class="compare-hero-tile">
+                    <div class="compare-hero-label">{t('fastest_intraday')}</div>
+                    <div class="compare-hero-value">{escape(display_ticker_label(fastest['ticker']))}</div>
+                    <div class="compare-hero-sub">{format_percent(fastest.get('intraday', {}).get('change_pct', pd.NA))} · {escape(intraday_pressure_note(fastest))}</div>
+                </div>
+                <div class="compare-hero-tile">
+                    <div class="compare-hero-label">{t('news_backing')}</div>
+                    <div class="compare-hero-value">{escape(display_ticker_label(news_backing['ticker']))}</div>
+                    <div class="compare-hero-sub">{escape(tr_news_label(news_backing['analysis'].get('news_pulse', {}).get('label', 'News tilt: mixed')))}</div>
+                </div>
+            </div>
+            <div class="compare-table-body">
+                {"".join(row_html)}
+            </div>
+        </div>
+        """
+    ).strip()
+
+    st.markdown(radar_html, unsafe_allow_html=True)
+
+
 def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
     if len(tickers) < 2:
         return
@@ -4310,6 +5278,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         return
 
     render_winner_card(bundles, lens_meta=lens_meta)
+    render_opportunity_radar(bundles, lens_meta=lens_meta)
 
     strongest = max(bundles, key=lambda bundle: compute_lens_winner_fields(bundle, lens_meta)["lens_score"])
     best_return = max(
@@ -4460,7 +5429,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         )
         render_candlestick_chart(
             bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
-            f"{t("recent_structure", ticker=display_ticker_label(bundle["ticker"]))}",
+            t("recent_structure", ticker=display_ticker_label(bundle["ticker"])),
             "Recent daily candles in the shared dashboard theme.",
             height=220,
             show_ma=False,
@@ -4501,8 +5470,14 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     news_items = bundle["news_items"]
     daily_ohlc = bundle.get("daily_ohlc", pd.DataFrame())
     intraday_ohlc = bundle.get("intraday_ohlc", pd.DataFrame())
+
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
+
+    if is_taiwan_ticker(ticker):
+        benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
+        render_taiwan_benchmark_layer(ticker, benchmark)
+
     render_alert_layer(analysis, intraday)
     render_reference_guide(analysis, ticker, news_items)
     render_news_stream(ticker, news_items)
@@ -4560,6 +5535,216 @@ def inject_localization_overrides():
             letter-spacing: .05em;
             text-transform: uppercase;
         }
+        
+        .global-indicator-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 34%),
+                linear-gradient(180deg, rgba(31, 24, 18, 0.96) 0%, rgba(17, 14, 11, 0.98) 100%);
+            border: 1px solid rgba(244, 197, 106, 0.14);
+            border-radius: 26px;
+            padding: 20px 20px 18px 20px;
+            box-shadow: 0 22px 48px rgba(0,0,0,.26);
+            margin: 14px 0 16px 0;
+            color: #f8f1e5;
+        }
+        .global-indicator-shell::after {
+            content: "";
+            position: absolute;
+            right: -84px;
+            top: -72px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 72%);
+            pointer-events: none;
+        }
+        .global-indicator-title {
+            font-size: 26px;
+            font-weight: 900;
+            line-height: 1.05;
+            color: #fff8ee;
+            margin-top: 8px;
+        }
+        .global-indicator-copy {
+            font-size: 14px;
+            line-height: 1.65;
+            color: rgba(248, 241, 229, 0.78);
+            margin-top: 8px;
+            max-width: 920px;
+        }
+        .global-indicator-pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+        .global-indicator-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            border: 1px solid rgba(244, 197, 106, 0.18);
+            color: #f8e7c2;
+            background: rgba(255,255,255,.04);
+        }
+        .global-indicator-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+        .global-indicator-card {
+            background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 20px;
+            padding: 14px 14px 12px 14px;
+        }
+        .global-indicator-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            color: rgba(248, 241, 229, 0.62);
+        }
+        .global-indicator-value {
+            font-size: 28px;
+            font-weight: 900;
+            color: #fff8ee;
+            margin-top: 8px;
+            line-height: 1.05;
+        }
+        .global-indicator-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .global-indicator-mini-label {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: rgba(248, 241, 229, 0.56);
+        }
+        .global-indicator-mini-value {
+            font-size: 16px;
+            font-weight: 900;
+            color: #fff8ee;
+            margin-top: 4px;
+        }
+        .global-indicator-state {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255,255,255,.08);
+            font-size: 13px;
+            color: rgba(248, 241, 229, 0.82);
+        }
+
+.benchmark-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 34%),
+                linear-gradient(180deg, rgba(31, 24, 18, 0.96) 0%, rgba(17, 14, 11, 0.98) 100%);
+            border: 1px solid rgba(244, 197, 106, 0.14);
+            border-radius: 26px;
+            padding: 20px 20px 18px 20px;
+            box-shadow: 0 22px 48px rgba(0,0,0,.26);
+            margin: 14px 0 16px 0;
+            color: #f8f1e5;
+        }
+        .benchmark-shell::after {
+            content: "";
+            position: absolute;
+            right: -84px;
+            top: -72px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 72%);
+            pointer-events: none;
+        }
+        .benchmark-title {
+            font-size: 26px;
+            font-weight: 900;
+            line-height: 1.05;
+            color: #fff8ee;
+            margin-top: 8px;
+        }
+        .benchmark-copy {
+            font-size: 14px;
+            line-height: 1.65;
+            color: rgba(248, 241, 229, 0.78);
+            margin-top: 8px;
+            max-width: 920px;
+        }
+        .benchmark-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+        .benchmark-box, .benchmark-row {
+            background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 20px;
+            padding: 14px 14px 12px 14px;
+        }
+        .benchmark-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            color: rgba(248, 241, 229, 0.60);
+        }
+        .benchmark-value {
+            font-size: 22px;
+            font-weight: 900;
+            color: #fff8ee;
+            line-height: 1.08;
+            margin-top: 8px;
+        }
+        .benchmark-sub, .benchmark-row-note {
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(248, 241, 229, 0.74);
+            margin-top: 6px;
+        }
+        .benchmark-table {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .benchmark-row {
+            display: grid;
+            grid-template-columns: 160px 1fr 1.4fr;
+            gap: 12px;
+            align-items: center;
+        }
+        .benchmark-row-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: rgba(248, 241, 229, 0.60);
+            font-weight: 800;
+        }
+        .benchmark-row-value {
+            font-size: 17px;
+            font-weight: 900;
+            color: #fff8ee;
+        }
+        @media (max-width: 768px) {
+            .benchmark-row {
+                grid-template-columns: 1fr;
+            }
+            .benchmark-title {
+                font-size: 22px;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -4567,6 +5752,7 @@ def inject_localization_overrides():
 
 
 def generate_dashboard():
+    load_dashboard_preferences()
     inject_css()
     inject_premium_overrides()
     inject_localization_overrides()
@@ -4594,6 +5780,8 @@ def generate_dashboard():
         st.session_state["dashboard_news_mode"] = selected_news_mode
         st.caption(t("headline_note"))
         st.caption(t("news_display_note"))
+        st.caption(t("saved_preferences_note"))
+
         st.markdown(
             f"""
             <div class="side-hero">
@@ -4604,6 +5792,7 @@ def generate_dashboard():
             """,
             unsafe_allow_html=True,
         )
+
         st.markdown(f'<div class="side-group-label">{t("watchlist_universe")}</div>', unsafe_allow_html=True)
         current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
         selected_market_scope = st.selectbox(
@@ -4616,14 +5805,64 @@ def generate_dashboard():
         st.caption(t("market_scope_note"))
 
         scope_group_options = market_scope_group_options(selected_market_scope)
+        stored_groups = st.session_state.get("dashboard_selected_groups", [])
+        valid_default_groups = [group for group in stored_groups if group in scope_group_options]
+        if not valid_default_groups:
+            valid_default_groups = [group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope] if group in scope_group_options]
+
         selected_groups = st.multiselect(
             t("preset_groups"),
             options=scope_group_options,
             format_func=tr_group,
-            default=[group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope] if group in scope_group_options],
+            default=valid_default_groups,
             placeholder=t("expand_by_sector"),
             label_visibility="collapsed",
         )
+        st.session_state["dashboard_selected_groups"] = selected_groups
+
+        custom_ticker_text = st.text_input(
+            t("custom_symbols"),
+            value=st.session_state.get("dashboard_custom_symbols", ""),
+            placeholder=t("custom_symbols_placeholder"),
+        )
+        st.session_state["dashboard_custom_symbols"] = custom_ticker_text
+
+        custom_tickers = [
+            normalize_dashboard_ticker(ticker)
+            for ticker in custom_ticker_text.replace("\\n", ",").split(",")
+            if ticker.strip()
+        ]
+
+        symbol_search_query = st.text_input(
+            t("symbol_search"),
+            value=st.session_state.get("dashboard_symbol_search", ""),
+            placeholder=t("symbol_search_placeholder"),
+        )
+        st.session_state["dashboard_symbol_search"] = symbol_search_query
+
+        symbol_search_matches: list[str] = []
+        if symbol_search_query.strip():
+            search_results = build_symbol_search_results(symbol_search_query, selected_market_scope, max_results=12)
+            st.caption(t("search_results_help"))
+            if search_results:
+                stored_search_matches = [
+                    normalize_dashboard_ticker(value)
+                    for value in st.session_state.get("dashboard_symbol_search_matches", [])
+                ]
+                default_search_matches = [value for value in stored_search_matches if value in search_results]
+                symbol_search_matches = st.multiselect(
+                    t("search_results"),
+                    options=search_results,
+                    default=default_search_matches,
+                    format_func=display_ticker_label,
+                    help=t("search_results_help"),
+                    key="dashboard_symbol_search_matches",
+                )
+            else:
+                st.session_state["dashboard_symbol_search_matches"] = []
+                st.caption(t("search_results_empty"))
+        else:
+            st.session_state["dashboard_symbol_search_matches"] = []
 
         available_universe = set()
         source_groups = selected_groups or scope_group_options
@@ -4633,33 +5872,39 @@ def generate_dashboard():
             ticker for ticker in DEFAULT_TICKERS
             if selected_market_scope != "Taiwan only" or is_taiwan_ticker(ticker)
         )
+        for ticker in custom_tickers + symbol_search_matches:
+            if not ticker:
+                continue
+            if selected_market_scope == "Taiwan only" and not is_taiwan_ticker(ticker):
+                continue
+            if selected_market_scope == "U.S. only" and is_taiwan_ticker(ticker):
+                continue
+            available_universe.add(ticker)
         available_universe = sorted(available_universe)
 
         default_ticker_pool = DEFAULT_TICKERS if selected_market_scope == "Mixed (U.S. + Taiwan)" else [
             ticker for ticker in DEFAULT_TICKERS
             if (selected_market_scope == "Taiwan only" and is_taiwan_ticker(ticker)) or (selected_market_scope == "U.S. only" and not is_taiwan_ticker(ticker))
         ]
-        tickers = st.multiselect(
+        stored_ticker_picks = st.session_state.get("dashboard_selected_tickers", [])
+        valid_default_tickers = [ticker for ticker in stored_ticker_picks if ticker in available_universe]
+        if not valid_default_tickers:
+            valid_default_tickers = [ticker for ticker in default_ticker_pool if ticker in available_universe]
+        for ticker in custom_tickers + symbol_search_matches:
+            if ticker in available_universe and ticker not in valid_default_tickers:
+                valid_default_tickers.append(ticker)
+
+        selected_ticker_picks = st.multiselect(
             t("tickers"),
             options=available_universe,
-            default=[ticker for ticker in default_ticker_pool if ticker in available_universe],
+            default=valid_default_tickers,
             placeholder=t("pick_watchlist_symbols"),
             format_func=display_ticker_label,
         )
-
-        custom_ticker_text = st.text_input(
-            t("custom_symbols"),
-            value="",
-            placeholder=t("custom_symbols_placeholder"),
-        )
-        custom_tickers = [
-            normalize_dashboard_ticker(ticker)
-            for ticker in custom_ticker_text.replace("\n", ",").split(",")
-            if ticker.strip()
-        ]
+        st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
 
         final_tickers = []
-        for ticker in tickers + custom_tickers:
+        for ticker in selected_ticker_picks + custom_tickers + symbol_search_matches:
             normalized = normalize_dashboard_ticker(ticker)
             if not normalized:
                 continue
@@ -4670,23 +5915,41 @@ def generate_dashboard():
             if normalized not in final_tickers:
                 final_tickers.append(normalized)
         tickers = final_tickers
+        st.session_state["dashboard_final_tickers"] = tickers
 
         st.caption(t("watchlist_caption"))
         st.markdown(f'<div class="side-group-label">{t("trend_lens")}</div>', unsafe_allow_html=True)
+
+        stored_lens_name = st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
+        if stored_lens_name not in TREND_LENSES:
+            stored_lens_name = DEFAULT_TREND_LENS
         lens_name = st.select_slider(
             t("trend_lens"),
             options=list(TREND_LENSES.keys()),
-            value=DEFAULT_TREND_LENS,
+            value=stored_lens_name,
             format_func=tr_lens_name,
             help="Swap between purpose-built chart lenses instead of raw lookback periods." if get_lang() == "English" else "在不同的用途鏡頭間切換，而不是只看原始期間。",
         )
-        manual_override = st.toggle(t("manual_period_override"), value=False)
+        st.session_state["dashboard_lens_name"] = lens_name
+
+        manual_override = st.toggle(t("manual_period_override"), value=st.session_state.get("dashboard_manual_override", False))
+        st.session_state["dashboard_manual_override"] = manual_override
         if manual_override:
-            manual_period = st.selectbox(t("custom_lookback"), SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
-            manual_interval = st.selectbox(t("custom_interval"), SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
+            manual_period = st.selectbox(
+                t("custom_lookback"),
+                SUPPORTED_PERIODS,
+                index=SUPPORTED_PERIODS.index(st.session_state.get("dashboard_manual_period", DEFAULT_PERIOD)),
+            )
+            manual_interval = st.selectbox(
+                t("custom_interval"),
+                SUPPORTED_INTERVALS,
+                index=SUPPORTED_INTERVALS.index(st.session_state.get("dashboard_manual_interval", DEFAULT_INTERVAL)),
+            )
         else:
-            manual_period = DEFAULT_PERIOD
-            manual_interval = DEFAULT_INTERVAL
+            manual_period = st.session_state.get("dashboard_manual_period", DEFAULT_PERIOD)
+            manual_interval = st.session_state.get("dashboard_manual_interval", DEFAULT_INTERVAL)
+        st.session_state["dashboard_manual_period"] = manual_period
+        st.session_state["dashboard_manual_interval"] = manual_interval
 
         lens_meta = resolve_trend_lens(lens_name, manual_override, manual_period, manual_interval)
         period = lens_meta["period"]
@@ -4708,6 +5971,22 @@ def generate_dashboard():
             unsafe_allow_html=True,
         )
 
+        save_dashboard_preferences(
+            {
+                "lang": selected_lang,
+                "news": selected_news_mode,
+                "scope": selected_market_scope,
+                "groups": _csv_encode(selected_groups),
+                "picks": _csv_encode(selected_ticker_picks),
+                "custom": custom_ticker_text.strip(),
+                "search": symbol_search_query.strip(),
+                "lens": lens_name,
+                "manual": "1" if manual_override else "0",
+                "period": manual_period,
+                "interval": manual_interval,
+            }
+        )
+
         st.markdown(f'<div class="side-group-label">{t("live_refresh")}</div>', unsafe_allow_html=True)
         if st.button(t("refresh_live_data"), use_container_width=True):
             st.cache_data.clear()
@@ -4719,8 +5998,6 @@ def generate_dashboard():
         f'<div class="top-intro">{t("top_intro")}</div>',
         unsafe_allow_html=True,
     )
-    render_explore_hero()
-    render_section_guide()
 
     if not tickers:
         st.warning(t("please_select_ticker"))
@@ -4729,11 +6006,15 @@ def generate_dashboard():
     with st.spinner(t("loading_data")):
         daily_data = fetch_daily_data(tickers, period, interval)
         intraday_data = fetch_intraday_data(tickers)
+        global_reference_data = fetch_global_reference_data(period, interval)
 
     if daily_data is None or daily_data.empty:
         st.error(t("no_market_data"))
         return
 
+    global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta)
+    render_global_market_indicator(global_indicator)
+    render_section_guide()
     render_active_trend_lens(lens_meta)
     render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
 
