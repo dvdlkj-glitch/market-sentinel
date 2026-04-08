@@ -170,6 +170,12 @@ NEGATIVE_NEWS_KEYWORDS = {
     "下修", "調降", "衰退", "疲弱", "利空", "調查", "罰款", "延後", "出口限制", "裁員", "下滑",
 }
 
+TARGET_REFERENCE_KEYWORDS = {
+    "price target", "target price", "target raised", "target cut", "target lowered",
+    "analyst", "upgrade", "downgrade", "rating", "outperform", "underperform",
+    "目標價", "調高", "調降", "上修", "下修", "外資", "法人", "買進", "中立", "賣出",
+}
+
 st.set_page_config(page_title="David Lau Stock Market Vision", page_icon="📈", layout="wide")
 
 
@@ -825,6 +831,51 @@ TRANSLATIONS["繁體中文"].update({
     "tw_benchmark_note_clear_laggard": "這檔股票明顯跑輸台股基準與同業，相對強弱目前是逆風。",
     "tw_rank_of": "第 {rank} / {total} 名",
 })
+
+TRANSLATIONS["English"].update({
+    "target_watch": "Target Watch",
+    "target_watch_copy": "Consensus target-price references and recent target-change signals that can help frame upside, downside, and revision risk.",
+    "consensus_target": "Consensus target",
+    "target_gap": "Target gap",
+    "current_price": "Current price",
+    "high_low_band": "High / low band",
+    "analyst_view": "Analyst view",
+    "analyst_count": "Analyst count",
+    "latest_revision": "Latest revision",
+    "target_headlines": "Target-change headlines",
+    "no_structured_target": "No structured analyst target-price data was returned for this ticker right now.",
+    "target_reference_note": "Use analyst targets as a live reference layer, not as a prediction. They work best when target direction, catalysts, and price structure are aligned.",
+    "upside_to_mean": "Upside to mean",
+    "downside_to_low": "Downside to low",
+    "target_reference_source": "Yahoo Finance analyst consensus + target-related headlines",
+    "sticky_global_note": "Pinned macro tape",
+    "bias_bullish": "Bullish",
+    "bias_bearish": "Bearish",
+    "bias_mixed": "Mixed",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "target_watch": "目標價觀測",
+    "target_watch_copy": "把共識目標價、近期調升/調降線索與上下行空間整理成同一層，方便快速判讀。",
+    "consensus_target": "共識目標價",
+    "target_gap": "目標價差",
+    "current_price": "目前股價",
+    "high_low_band": "高低區間",
+    "analyst_view": "分析師看法",
+    "analyst_count": "分析師數量",
+    "latest_revision": "最新調整",
+    "target_headlines": "目標價相關新聞",
+    "no_structured_target": "目前沒有回傳這檔股票的結構化分析師目標價資料。",
+    "target_reference_note": "把目標價當成即時參考層，不要當成保證預測。當目標價方向、催化與價格結構一致時，參考價值最高。",
+    "upside_to_mean": "距均值上行空間",
+    "downside_to_low": "距低值下行空間",
+    "target_reference_source": "資料來源：Yahoo Finance 分析師共識 + 目標價相關新聞",
+    "sticky_global_note": "置頂宏觀指標",
+    "bias_bullish": "偏多",
+    "bias_bearish": "偏空",
+    "bias_mixed": "中性混合",
+})
+
 def get_lang() -> str:
     return st.session_state.get("dashboard_language", "English")
 
@@ -885,6 +936,179 @@ def tr_direction(value):
 
 def tr_reason_text(value):
     return tr_term(value)
+
+def coerce_float(value):
+    if value is None or value is pd.NA:
+        return pd.NA
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return pd.NA
+    return pd.NA if pd.isna(number) else number
+
+def format_local_price(value, ticker: str | None = None):
+    value = coerce_float(value)
+    if pd.isna(value):
+        return "N/A"
+    prefix = "NT$" if ticker and is_taiwan_ticker(ticker) else "$"
+    return f"{prefix}{value:,.2f}"
+
+def analyst_bias_label(summary: dict) -> str:
+    buy_votes = int(summary.get("strong_buy", 0)) + int(summary.get("buy", 0))
+    hold_votes = int(summary.get("hold", 0))
+    sell_votes = int(summary.get("sell", 0)) + int(summary.get("strong_sell", 0))
+    total = buy_votes + hold_votes + sell_votes
+    if total <= 0:
+        return t("bias_mixed")
+    if buy_votes >= max(hold_votes, sell_votes) and buy_votes >= sell_votes + 2:
+        return t("bias_bullish")
+    if sell_votes >= max(hold_votes, buy_votes) and sell_votes >= buy_votes + 2:
+        return t("bias_bearish")
+    return t("bias_mixed")
+
+def extract_target_headlines(news_items: list[dict], max_items: int = 3) -> list[dict]:
+    ranked = []
+    for item in news_items:
+        title = str(item.get("title", "") or "")
+        summary = str(item.get("summary", "") or "")
+        text = f"{title} {summary}".lower()
+        score = sum(1 for keyword in TARGET_REFERENCE_KEYWORDS if keyword.lower() in text)
+        if score <= 0:
+            continue
+        score += min(int(item.get("relevance", 0)), 4)
+        ranked.append({
+            "title": title,
+            "url": item.get("url"),
+            "provider": item.get("provider", ""),
+            "score": score,
+            "published": item.get("published", pd.NaT),
+        })
+    ranked.sort(
+        key=lambda row: (
+            row["score"],
+            pd.Timestamp.min.tz_localize("UTC") if pd.isna(row["published"]) else row["published"],
+        ),
+        reverse=True,
+    )
+    return ranked[:max_items]
+
+@st.cache_data(ttl=1800)
+def fetch_analyst_target_snapshot(ticker: str) -> dict:
+    snapshot = {
+        "mean_target": pd.NA,
+        "high_target": pd.NA,
+        "low_target": pd.NA,
+        "current_price": pd.NA,
+        "analyst_count": None,
+        "bias": t("bias_mixed"),
+        "latest_revision": "",
+        "error": None,
+    }
+    try:
+        tk = yf.Ticker(ticker)
+    except Exception as exc:
+        snapshot["error"] = str(exc)
+        return snapshot
+
+    try:
+        raw_targets = getattr(tk, "analyst_price_targets", {}) or {}
+        if hasattr(raw_targets, "to_dict"):
+            raw_targets = raw_targets.to_dict()
+        if isinstance(raw_targets, dict):
+            snapshot["mean_target"] = coerce_float(raw_targets.get("mean") or raw_targets.get("targetMeanPrice"))
+            snapshot["high_target"] = coerce_float(raw_targets.get("high") or raw_targets.get("targetHighPrice"))
+            snapshot["low_target"] = coerce_float(raw_targets.get("low") or raw_targets.get("targetLowPrice"))
+            snapshot["current_price"] = coerce_float(raw_targets.get("current") or raw_targets.get("currentPrice"))
+    except Exception:
+        pass
+
+    try:
+        summary = getattr(tk, "recommendations_summary", None)
+        if summary is not None and hasattr(summary, "empty") and not summary.empty:
+            row = summary.iloc[-1]
+            recommendation_summary = {
+                "strong_buy": int(row.get("strongBuy", 0) or 0),
+                "buy": int(row.get("buy", 0) or 0),
+                "hold": int(row.get("hold", 0) or 0),
+                "sell": int(row.get("sell", 0) or 0),
+                "strong_sell": int(row.get("strongSell", 0) or 0),
+            }
+            snapshot["analyst_count"] = sum(recommendation_summary.values()) or snapshot["analyst_count"]
+            snapshot["bias"] = analyst_bias_label(recommendation_summary)
+    except Exception:
+        pass
+
+    try:
+        upgrades = getattr(tk, "upgrades_downgrades", None)
+        if upgrades is not None and hasattr(upgrades, "empty") and not upgrades.empty:
+            latest = upgrades.dropna(how="all").tail(1)
+            if not latest.empty:
+                row = latest.iloc[0]
+                action_bits = [str(row.get("Firm", "") or "").strip()]
+                action = str(row.get("Action", "") or "").strip()
+                to_grade = str(row.get("ToGrade", "") or "").strip()
+                if action:
+                    action_bits.append(action)
+                if to_grade:
+                    action_bits.append(to_grade)
+                snapshot["latest_revision"] = " · ".join(bit for bit in action_bits if bit)
+    except Exception:
+        pass
+
+    if pd.isna(snapshot["current_price"]):
+        try:
+            fast_info = getattr(tk, "fast_info", {}) or {}
+            if hasattr(fast_info, "get"):
+                snapshot["current_price"] = coerce_float(
+                    fast_info.get("lastPrice") or fast_info.get("regularMarketPrice") or fast_info.get("previousClose")
+                )
+        except Exception:
+            pass
+
+    return snapshot
+
+def build_target_watch_context(ticker: str, price_series: pd.Series, news_items: list[dict]) -> dict:
+    snapshot = fetch_analyst_target_snapshot(ticker)
+    current_price = coerce_float(snapshot.get("current_price"))
+    if pd.isna(current_price) and price_series is not None and not price_series.empty:
+        current_price = coerce_float(price_series.iloc[-1])
+
+    mean_target = coerce_float(snapshot.get("mean_target"))
+    high_target = coerce_float(snapshot.get("high_target"))
+    low_target = coerce_float(snapshot.get("low_target"))
+    analyst_count = snapshot.get("analyst_count")
+    target_headlines = extract_target_headlines(news_items)
+
+    upside_to_mean = pd.NA
+    downside_to_low = pd.NA
+    if pd.notna(current_price) and current_price != 0:
+        if pd.notna(mean_target):
+            upside_to_mean = ((mean_target / current_price) - 1) * 100
+        if pd.notna(low_target):
+            downside_to_low = ((low_target / current_price) - 1) * 100
+
+    band_text = (
+        f"{format_local_price(low_target, ticker)} → {format_local_price(high_target, ticker)}"
+        if pd.notna(low_target) or pd.notna(high_target)
+        else "N/A"
+    )
+
+    return {
+        "available": pd.notna(mean_target) or bool(target_headlines) or bool(snapshot.get("latest_revision")),
+        "current_price": current_price,
+        "mean_target": mean_target,
+        "high_target": high_target,
+        "low_target": low_target,
+        "upside_to_mean": upside_to_mean,
+        "downside_to_low": downside_to_low,
+        "band_text": band_text,
+        "bias": snapshot.get("bias", t("bias_mixed")),
+        "analyst_count_text": str(int(analyst_count)) if analyst_count else "N/A",
+        "latest_revision": str(snapshot.get("latest_revision", "") or "").strip(),
+        "target_headlines": target_headlines,
+        "source_note": t("target_reference_source"),
+        "warning": t("no_structured_target") if not pd.notna(mean_target) else "",
+    }
 
 def build_news_helper_text(item: dict, ticker: str, probability: int) -> str:
     direction_text, _, _ = article_direction_meta(item)
@@ -1640,7 +1864,10 @@ def render_global_market_indicator(indicator: dict):
         textwrap.dedent(
             f"""
             <div class="global-indicator-card">
-                <div class="global-indicator-label">{escape(card['label'])}</div>
+                <div class="global-indicator-card-top">
+                    <div class="global-indicator-label">{escape(card['label'])}</div>
+                    <div class="global-indicator-state-chip">{escape(card['state'])}</div>
+                </div>
                 <div class="global-indicator-value">{format_price(card['last_price'])}</div>
                 <div class="global-indicator-grid">
                     <div>
@@ -1652,7 +1879,6 @@ def render_global_market_indicator(indicator: dict):
                         <div class="global-indicator-mini-value">{format_percent(card['recent_return'])}</div>
                     </div>
                 </div>
-                <div class="global-indicator-state">{t("global_market_signal")}: {escape(card['state'])}</div>
             </div>
             """
         ).strip()
@@ -1661,13 +1887,22 @@ def render_global_market_indicator(indicator: dict):
 
     shell_html = textwrap.dedent(
         f"""
-        <div class="global-indicator-shell">
-            <div class="section-header" style="margin:0; color:#f5ead8;">{t("global_market_indicator")}</div>
-            <div class="global-indicator-title">{t("global_market_breadth")}</div>
-            <div class="global-indicator-copy">{escape(indicator.get("breadth_copy", ""))}</div>
-            <div class="global-indicator-pill-row">
-                <span class="global-indicator-pill">{t("global_market_window")}: {escape(indicator["period"])} / {escape(indicator["interval"])}</span>
-                <span class="global-indicator-pill">{t("global_market_indicator")}: NASDAQ · S&P 500 · Dow · TAIEX</span>
+        <div class="global-indicator-shell global-indicator-shell-compact">
+            <div class="global-indicator-header">
+                <div>
+                    <div class="section-header" style="margin:0; color:#f5ead8;">{t("global_market_indicator")}</div>
+                    <div class="global-indicator-title">{t("global_market_breadth")}</div>
+                    <div class="global-indicator-copy">{escape(indicator.get("breadth_copy", ""))}</div>
+                </div>
+                <div class="global-indicator-side">
+                    <div class="global-indicator-pill-row">
+                        <span class="global-indicator-pill">{t("sticky_global_note")}</span>
+                        <span class="global-indicator-pill">{t("global_market_window")}: {escape(indicator["period"])} / {escape(indicator["interval"])}</span>
+                    </div>
+                    <div class="global-indicator-pill-row global-indicator-pill-row-tight">
+                        <span class="global-indicator-pill">{t("global_market_indicator")}: NASDAQ · S&P 500 · Dow · TAIEX</span>
+                    </div>
+                </div>
             </div>
             <div class="global-indicator-card-grid">
                 {card_html}
@@ -1677,7 +1912,6 @@ def render_global_market_indicator(indicator: dict):
     ).strip()
 
     st.markdown(shell_html, unsafe_allow_html=True)
-
 
 def build_taiwan_benchmark_context(ticker: str, price_series: pd.Series, lens_meta: dict | None = None) -> dict:
     if not is_taiwan_ticker(ticker):
@@ -2527,7 +2761,8 @@ def inject_css():
         .compare-table-body {
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 12px;
+            margin-top: 14px;
         }
 
         .compare-table-row {
@@ -5203,67 +5438,100 @@ def render_opportunity_radar(bundles: list[dict], lens_meta: dict | None = None)
         catalyst = analysis.get("catalyst_engine", {}).get("dominant", "Macro")
         intraday_note = intraday_pressure_note(bundle)
         execution_note = tr_term(opportunity_execution_note(bundle))
-        row_html.append(
-            textwrap.dedent(
-                f"""
-                <div class="compare-table-row">
-                    <div class="compare-table-cell">
-                        <div class="compare-table-sub">#{rank}</div>
-                        <div class="compare-table-ticker">{escape(display_ticker_label(bundle['ticker']))}</div>
-                        <div class="compare-table-note">{escape(tr_signal(analysis.get('signal', 'HOLD')))} · {escape(tr_confidence(analysis.get('confidence', 'Moderate')))}</div>
-                    </div>
-                    <div class="compare-table-cell">
-                        <div class="compare-table-sub">{t('radar_score')}</div>
-                        <div class="compare-table-value">{radar_score:+.1f}</div>
-                        <div class="compare-table-note">{escape(intraday_note)}</div>
-                    </div>
-                    <div class="compare-table-cell">
-                        <div class="compare-table-sub">{t('news_backing')}</div>
-                        <div class="compare-table-value">{escape(tr_news_label(analysis.get('news_pulse', {}).get('label', 'News tilt: mixed')))}</div>
-                        <div class="compare-table-note">{analysis.get('news_pulse', {}).get('score', 0):+.1f}</div>
-                    </div>
-                    <div class="compare-table-cell">
-                        <div class="compare-table-sub">{escape(tr_term('Dominant catalyst' if get_lang() == 'English' else '主導催化'))}</div>
-                        <div class="compare-table-value">{escape(tr_term(catalyst))}</div>
-                        <div class="compare-table-note">{escape(tr_setup(analysis.get('trading_lab', {}).get('setup', 'Balanced')))}</div>
-                    </div>
-                    <div class="compare-table-cell">
-                        <div class="compare-table-sub">{t('execution_note')}</div>
-                        <div class="compare-table-note">{escape(execution_note)}</div>
-                    </div>
+        row_template = textwrap.dedent(
+            """
+            <div class="compare-table-row">
+                <div class="compare-table-cell">
+                    <div class="compare-table-sub">#{rank}</div>
+                    <div class="compare-table-ticker">{ticker_label}</div>
+                    <div class="compare-table-note">{signal_label} · {confidence_label}</div>
                 </div>
-                """
-            ).strip()
+                <div class="compare-table-cell">
+                    <div class="compare-table-sub">{radar_score_label}</div>
+                    <div class="compare-table-value">{radar_score_value}</div>
+                    <div class="compare-table-note">{intraday_note}</div>
+                </div>
+                <div class="compare-table-cell">
+                    <div class="compare-table-sub">{news_backing_label}</div>
+                    <div class="compare-table-value">{news_label}</div>
+                    <div class="compare-table-note">{news_score}</div>
+                </div>
+                <div class="compare-table-cell">
+                    <div class="compare-table-sub">{dominant_catalyst_label}</div>
+                    <div class="compare-table-value">{catalyst_value}</div>
+                    <div class="compare-table-note">{setup_value}</div>
+                </div>
+                <div class="compare-table-cell">
+                    <div class="compare-table-sub">{execution_note_label}</div>
+                    <div class="compare-table-note">{execution_note}</div>
+                </div>
+            </div>
+            """
+        ).strip()
+        row_html.append(
+            row_template.format(
+                rank=rank,
+                ticker_label=escape(display_ticker_label(bundle["ticker"])),
+                signal_label=escape(tr_signal(analysis.get("signal", "HOLD"))),
+                confidence_label=escape(tr_confidence(analysis.get("confidence", "Moderate"))),
+                radar_score_label=t("radar_score"),
+                radar_score_value=f"{radar_score:+.1f}",
+                intraday_note=escape(intraday_note),
+                news_backing_label=t("news_backing"),
+                news_label=escape(tr_news_label(analysis.get("news_pulse", {}).get("label", "News tilt: mixed"))),
+                news_score=f'{analysis.get("news_pulse", {}).get("score", 0):+.1f}',
+                dominant_catalyst_label=escape(tr_term("Dominant catalyst" if get_lang() == "English" else "主導催化")),
+                catalyst_value=escape(tr_term(catalyst)),
+                setup_value=escape(tr_setup(analysis.get("trading_lab", {}).get("setup", "Balanced"))),
+                execution_note_label=t("execution_note"),
+                execution_note=escape(execution_note),
+            )
         )
 
-    radar_html = textwrap.dedent(
-        f"""
+    radar_template = textwrap.dedent(
+        """
         <div class="compare-table-shell">
-            <div class="compare-table-title">{t('opportunity_radar')}</div>
-            <div class="compare-table-copy">{t('opportunity_radar_copy')}</div>
+            <div class="compare-table-title">{title}</div>
+            <div class="compare-table-copy">{copy}</div>
             <div class="compare-hero-grid">
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">{t('current_stance')}</div>
-                    <div class="compare-hero-value">{escape(display_ticker_label(leader['ticker']))}</div>
-                    <div class="compare-hero-sub">{t('radar_score')} {leader_score:+.1f} · {escape(tr_signal(leader['analysis'].get('signal', 'HOLD')))}</div>
+                    <div class="compare-hero-label">{current_stance_label}</div>
+                    <div class="compare-hero-value">{leader_label}</div>
+                    <div class="compare-hero-sub">{radar_score_label} {leader_score} · {leader_signal}</div>
                 </div>
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">{t('fastest_intraday')}</div>
-                    <div class="compare-hero-value">{escape(display_ticker_label(fastest['ticker']))}</div>
-                    <div class="compare-hero-sub">{format_percent(fastest.get('intraday', {}).get('change_pct', pd.NA))} · {escape(intraday_pressure_note(fastest))}</div>
+                    <div class="compare-hero-label">{fastest_intraday_label}</div>
+                    <div class="compare-hero-value">{fastest_label}</div>
+                    <div class="compare-hero-sub">{fastest_change} · {fastest_note}</div>
                 </div>
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">{t('news_backing')}</div>
-                    <div class="compare-hero-value">{escape(display_ticker_label(news_backing['ticker']))}</div>
-                    <div class="compare-hero-sub">{escape(tr_news_label(news_backing['analysis'].get('news_pulse', {}).get('label', 'News tilt: mixed')))}</div>
+                    <div class="compare-hero-label">{news_backing_label}</div>
+                    <div class="compare-hero-value">{news_backing_ticker}</div>
+                    <div class="compare-hero-sub">{news_backing_summary}</div>
                 </div>
             </div>
-            <div class="compare-table-body">
-                {"".join(row_html)}
-            </div>
+            <div class="compare-table-body">{rows_html}</div>
         </div>
         """
     ).strip()
+
+    radar_html = radar_template.format(
+        title=t("opportunity_radar"),
+        copy=t("opportunity_radar_copy"),
+        current_stance_label=t("current_stance"),
+        leader_label=escape(display_ticker_label(leader["ticker"])),
+        radar_score_label=t("radar_score"),
+        leader_score=f"{leader_score:+.1f}",
+        leader_signal=escape(tr_signal(leader["analysis"].get("signal", "HOLD"))),
+        fastest_intraday_label=t("fastest_intraday"),
+        fastest_label=escape(display_ticker_label(fastest["ticker"])),
+        fastest_change=format_percent(fastest.get("intraday", {}).get("change_pct", pd.NA)),
+        fastest_note=escape(intraday_pressure_note(fastest)),
+        news_backing_label=t("news_backing"),
+        news_backing_ticker=escape(display_ticker_label(news_backing["ticker"])),
+        news_backing_summary=escape(tr_news_label(news_backing["analysis"].get("news_pulse", {}).get("label", "News tilt: mixed"))),
+        rows_html="".join(row_html),
+    )
 
     st.markdown(radar_html, unsafe_allow_html=True)
 
@@ -5456,6 +5724,88 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     )
     st.markdown(board_html, unsafe_allow_html=True)
 
+
+def render_target_watch_section(ticker: str, context: dict):
+    if not context:
+        return
+
+    headline_blocks: list[str] = []
+    for item in context.get("target_headlines", [])[:3]:
+        title = escape(str(item.get("title", "") or ""))
+        provider = escape(str(item.get("provider", "") or ""))
+        url = str(item.get("url", "") or "").strip()
+        link_html = (
+            f'<a class="brief-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{title}</a>'
+            if url
+            else title
+        )
+        headline_blocks.append(
+            "".join(
+                [
+                    '<div class="target-watch-headline">',
+                    f'<div class="target-watch-headline-title">{link_html}</div>',
+                    f'<div class="target-watch-headline-meta">{provider}</div>',
+                    '</div>',
+                ]
+            )
+        )
+
+    headlines_html = (
+        "".join(headline_blocks)
+        if headline_blocks
+        else f'<div class="target-watch-empty">{escape(t("no_structured_target"))}</div>'
+    )
+
+    warning_html = ""
+    if context.get("warning"):
+        warning_html = f'<div class="target-watch-warning">{escape(context["warning"])}</div>'
+
+    shell_html = "".join(
+        [
+            '<div class="target-watch-shell">',
+            '<div class="target-watch-head">',
+            '<div>',
+            f'<div class="section-header" style="margin:0; color:#f5ead8;">{t("target_watch")}</div>',
+            f'<div class="target-watch-title">{t("target_watch")}</div>',
+            f'<div class="target-watch-copy">{t("target_watch_copy")}</div>',
+            '</div>',
+            f'<div class="target-watch-pill">{escape(context.get("source_note", t("target_reference_source")))}</div>',
+            '</div>',
+            '<div class="target-watch-grid">',
+            '<div class="target-watch-card">',
+            f'<div class="target-watch-label">{t("consensus_target")}</div>',
+            f'<div class="target-watch-value">{format_local_price(context.get("mean_target"), ticker)}</div>',
+            f'<div class="target-watch-sub">{t("current_price")}: {format_local_price(context.get("current_price"), ticker)}</div>',
+            '</div>',
+            '<div class="target-watch-card">',
+            f'<div class="target-watch-label">{t("target_gap")}</div>',
+            f'<div class="target-watch-value">{format_percent(context.get("upside_to_mean", pd.NA))}</div>',
+            f'<div class="target-watch-sub">{t("upside_to_mean")} · {t("downside_to_low")}: {format_percent(context.get("downside_to_low", pd.NA))}</div>',
+            '</div>',
+            '<div class="target-watch-card">',
+            f'<div class="target-watch-label">{t("high_low_band")}</div>',
+            f'<div class="target-watch-value">{escape(context.get("band_text", "N/A"))}</div>',
+            f'<div class="target-watch-sub">{t("analyst_count")}: {escape(context.get("analyst_count_text", "N/A"))}</div>',
+            '</div>',
+            '<div class="target-watch-card">',
+            f'<div class="target-watch-label">{t("analyst_view")}</div>',
+            f'<div class="target-watch-value">{escape(str(context.get("bias", "N/A")))}</div>',
+            f'<div class="target-watch-sub">{t("latest_revision")}: {escape(context.get("latest_revision") or "N/A")}</div>',
+            '</div>',
+            '</div>',
+            warning_html,
+            '<div class="target-watch-board">',
+            f'<div class="target-watch-board-label">{t("target_headlines")}</div>',
+            headlines_html,
+            '</div>',
+            f'<div class="target-watch-note">{t("target_reference_note")}</div>',
+            '</div>',
+        ]
+    )
+
+    st.markdown(shell_html, unsafe_allow_html=True)
+
+
 def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
     bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
     if bundle is None:
@@ -5473,6 +5823,7 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
 
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
+    render_target_watch_section(ticker, build_target_watch_context(ticker, bundle["price_series"], news_items))
 
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
@@ -5537,17 +5888,20 @@ def inject_localization_overrides():
         }
         
         .global-indicator-shell {
-            position: relative;
+            position: sticky;
+            top: 0.7rem;
+            z-index: 30;
             overflow: hidden;
             background:
-                radial-gradient(circle at top left, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 34%),
-                linear-gradient(180deg, rgba(31, 24, 18, 0.96) 0%, rgba(17, 14, 11, 0.98) 100%);
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.11) 0%, rgba(244, 197, 106, 0) 34%),
+                linear-gradient(180deg, rgba(31, 24, 18, 0.94) 0%, rgba(17, 14, 11, 0.98) 100%);
             border: 1px solid rgba(244, 197, 106, 0.14);
-            border-radius: 26px;
-            padding: 20px 20px 18px 20px;
-            box-shadow: 0 22px 48px rgba(0,0,0,.26);
-            margin: 14px 0 16px 0;
+            border-radius: 24px;
+            padding: 16px 18px 14px 18px;
+            box-shadow: 0 18px 36px rgba(0,0,0,.28);
+            margin: 12px 0 14px 0;
             color: #f8f1e5;
+            backdrop-filter: blur(14px);
         }
         .global-indicator-shell::after {
             content: "";
@@ -5556,93 +5910,245 @@ def inject_localization_overrides():
             top: -72px;
             width: 220px;
             height: 220px;
-            background: radial-gradient(circle, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 72%);
+            background: radial-gradient(circle, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 72%);
             pointer-events: none;
         }
+        .global-indicator-header {
+            display: grid;
+            grid-template-columns: 1.25fr auto;
+            gap: 12px;
+            align-items: end;
+        }
+        .global-indicator-side {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: end;
+            gap: 8px;
+        }
         .global-indicator-title {
-            font-size: 26px;
+            font-size: 23px;
             font-weight: 900;
-            line-height: 1.05;
+            line-height: 1.02;
             color: #fff8ee;
-            margin-top: 8px;
+            margin-top: 6px;
         }
         .global-indicator-copy {
-            font-size: 14px;
-            line-height: 1.65;
-            color: rgba(248, 241, 229, 0.78);
-            margin-top: 8px;
-            max-width: 920px;
+            font-size: 13px;
+            line-height: 1.55;
+            color: rgba(248, 241, 229, 0.76);
+            margin-top: 6px;
+            max-width: 760px;
         }
         .global-indicator-pill-row {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
-            margin-top: 14px;
+            margin-top: 10px;
+        }
+        .global-indicator-pill-row-tight {
+            margin-top: 0;
         }
         .global-indicator-pill {
             display: inline-flex;
             align-items: center;
-            padding: 8px 12px;
+            padding: 7px 11px;
             border-radius: 999px;
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 900;
             letter-spacing: .05em;
             text-transform: uppercase;
             border: 1px solid rgba(244, 197, 106, 0.18);
             color: #f8e7c2;
             background: rgba(255,255,255,.04);
+            white-space: nowrap;
         }
         .global-indicator-card-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 12px;
-            margin-top: 14px;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 12px;
         }
         .global-indicator-card {
             background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
             border: 1px solid rgba(255,255,255,.08);
-            border-radius: 20px;
-            padding: 14px 14px 12px 14px;
+            border-radius: 18px;
+            padding: 12px 12px 11px 12px;
+            min-width: 0;
+        }
+        .global-indicator-card-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
         }
         .global-indicator-label {
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 900;
             letter-spacing: .10em;
             text-transform: uppercase;
             color: rgba(248, 241, 229, 0.62);
         }
+        .global-indicator-state-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 5px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 800;
+            color: rgba(248, 241, 229, 0.82);
+            border: 1px solid rgba(244, 197, 106, 0.16);
+            background: rgba(255,255,255,.04);
+            text-align: right;
+        }
         .global-indicator-value {
-            font-size: 28px;
+            font-size: 22px;
             font-weight: 900;
             color: #fff8ee;
             margin-top: 8px;
-            line-height: 1.05;
+            line-height: 1.02;
         }
         .global-indicator-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-            margin-top: 12px;
+            gap: 8px;
+            margin-top: 10px;
         }
         .global-indicator-mini-label {
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 800;
             letter-spacing: .08em;
             text-transform: uppercase;
             color: rgba(248, 241, 229, 0.56);
         }
         .global-indicator-mini-value {
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 900;
             color: #fff8ee;
             margin-top: 4px;
         }
-        .global-indicator-state {
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid rgba(255,255,255,.08);
+        .target-watch-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 34%),
+                linear-gradient(180deg, rgba(31, 24, 18, 0.96) 0%, rgba(17, 14, 11, 0.98) 100%);
+            border: 1px solid rgba(244, 197, 106, 0.14);
+            border-radius: 24px;
+            padding: 18px 18px 16px 18px;
+            box-shadow: 0 20px 44px rgba(0,0,0,.26);
+            margin: 14px 0 16px 0;
+            color: #f8f1e5;
+        }
+        .target-watch-shell::after {
+            content: "";
+            position: absolute;
+            right: -84px;
+            top: -72px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 72%);
+            pointer-events: none;
+        }
+        .target-watch-head {
+            display: grid;
+            grid-template-columns: 1.2fr auto;
+            gap: 12px;
+            align-items: start;
+        }
+        .target-watch-title {
+            font-size: 24px;
+            font-weight: 900;
+            line-height: 1.04;
+            color: #fff8ee;
+            margin-top: 8px;
+        }
+        .target-watch-copy {
             font-size: 13px;
-            color: rgba(248, 241, 229, 0.82);
+            line-height: 1.6;
+            color: rgba(248, 241, 229, 0.78);
+            margin-top: 6px;
+            max-width: 860px;
+        }
+        .target-watch-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 10.5px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            border: 1px solid rgba(244, 197, 106, 0.18);
+            color: #f8e7c2;
+            background: rgba(255,255,255,.04);
+            text-align: right;
+        }
+        .target-watch-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .target-watch-card {
+            background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 18px;
+            padding: 13px 13px 12px 13px;
+            min-width: 0;
+        }
+        .target-watch-label, .target-watch-board-label {
+            font-size: 10.5px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            color: rgba(248, 241, 229, 0.60);
+        }
+        .target-watch-value {
+            font-size: 22px;
+            font-weight: 900;
+            color: #fff8ee;
+            line-height: 1.08;
+            margin-top: 8px;
+            word-break: break-word;
+        }
+        .target-watch-sub, .target-watch-note, .target-watch-warning, .target-watch-headline-meta, .target-watch-empty {
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(248, 241, 229, 0.76);
+            margin-top: 6px;
+        }
+        .target-watch-warning {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(244, 197, 106, 0.12);
+            background: rgba(255,255,255,.04);
+        }
+        .target-watch-board {
+            margin-top: 14px;
+            display: grid;
+            gap: 10px;
+        }
+        .target-watch-headline {
+            padding: 12px 13px;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,.08);
+            background: linear-gradient(135deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.03) 100%);
+        }
+        .target-watch-headline-title, .target-watch-headline-title a {
+            color: #fff8ee;
+            font-size: 15px;
+            line-height: 1.42;
+            font-weight: 800;
+            text-decoration: none;
+        }
+        .target-watch-headline-title a:hover {
+            text-decoration: underline;
+        }
+        .target-watch-note {
+            margin-top: 12px;
         }
 
 .benchmark-shell {
@@ -5737,11 +6243,34 @@ def inject_localization_overrides():
             font-weight: 900;
             color: #fff8ee;
         }
+        @media (max-width: 980px) {
+            .global-indicator-header,
+            .target-watch-head {
+                grid-template-columns: 1fr;
+            }
+            .global-indicator-side {
+                align-items: flex-start;
+            }
+            .global-indicator-card-grid,
+            .target-watch-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
         @media (max-width: 768px) {
+            .global-indicator-shell {
+                position: relative;
+                top: auto;
+            }
+            .global-indicator-card-grid,
+            .target-watch-grid {
+                grid-template-columns: 1fr;
+            }
             .benchmark-row {
                 grid-template-columns: 1fr;
             }
-            .benchmark-title {
+            .benchmark-title,
+            .global-indicator-title,
+            .target-watch-title {
                 font-size: 22px;
             }
         }
