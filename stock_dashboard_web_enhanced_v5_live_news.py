@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-from html import escape
+from html import escape, unescape
+import re
 import textwrap
+from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
+from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 import altair as alt
@@ -13,7 +17,7 @@ import yfinance as yf
 # ---------------------------
 # Configuration
 # ---------------------------
-DEFAULT_TICKERS = ["NVDA", "TSM"]
+DEFAULT_TICKERS = ["NVDA", "2330.TW", "2454.TW"]
 DEFAULT_PERIOD = "1y"
 DEFAULT_INTERVAL = "1d"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
@@ -55,6 +59,28 @@ TREND_LENSES = {
 }
 DEFAULT_TREND_LENS = "Position View"
 
+US_WATCHLIST_GROUPS = [
+    "Tech & AI",
+    "Semiconductors",
+    "Financials",
+    "Healthcare",
+    "Consumer",
+    "Industrials",
+    "Energy",
+    "Communication",
+    "Utilities & REITs",
+    "Transportation",
+    "Market ETFs",
+]
+
+TAIWAN_WATCHLIST_GROUPS = [
+    "Taiwan Semiconductors",
+    "Taiwan AI Supply Chain",
+    "Taiwan Financials",
+    "Taiwan Shipping & Cyclicals",
+    "Taiwan ETFs",
+]
+
 WATCHLIST_PRESETS = {
     "Tech & AI": ["NVDA", "AMD", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA", "AVGO", "QCOM", "CRM", "ADBE", "PLTR", "SMCI"],
     "Semiconductors": ["NVDA", "AMD", "AVGO", "QCOM", "INTC", "MU", "TXN", "AMAT", "LRCX", "KLAC", "MRVL", "ON"],
@@ -67,7 +93,58 @@ WATCHLIST_PRESETS = {
     "Utilities & REITs": ["NEE", "DUK", "SO", "AEP", "EXC", "PLD", "AMT", "EQIX", "O", "SPG"],
     "Transportation": ["UBER", "FDX", "DAL", "UAL", "LUV", "CSX", "NSC", "ODFL", "JBHT", "EXPD"],
     "Market ETFs": ["SPY", "QQQ", "DIA", "IWM", "XLF", "XLK", "XLE", "XLV", "SMH", "SOXX"],
+    "Taiwan Semiconductors": ["2330.TW", "2454.TW", "2303.TW", "3711.TW", "3034.TW", "2379.TW", "2408.TW"],
+    "Taiwan AI Supply Chain": ["2317.TW", "2382.TW", "3231.TW", "6669.TW", "2308.TW", "2357.TW", "2376.TW", "2345.TW"],
+    "Taiwan Financials": ["2881.TW", "2882.TW", "2891.TW", "2886.TW", "2884.TW", "2885.TW"],
+    "Taiwan Shipping & Cyclicals": ["2603.TW", "2609.TW", "2615.TW", "1301.TW", "2002.TW"],
+    "Taiwan ETFs": ["0050.TW", "0056.TW", "00878.TW", "006208.TW"],
 }
+
+MARKET_SCOPE_OPTIONS = {
+    "Mixed (U.S. + Taiwan)": "Mixed (U.S. + Taiwan)",
+    "U.S. only": "U.S. only",
+    "Taiwan only": "Taiwan only",
+}
+
+MARKET_SCOPE_DEFAULT_GROUPS = {
+    "Mixed (U.S. + Taiwan)": ["Tech & AI", "Semiconductors", "Market ETFs", "Taiwan Semiconductors", "Taiwan AI Supply Chain", "Taiwan ETFs"],
+    "U.S. only": ["Tech & AI", "Semiconductors", "Financials", "Healthcare", "Consumer", "Industrials", "Energy", "Market ETFs"],
+    "Taiwan only": ["Taiwan Semiconductors", "Taiwan AI Supply Chain", "Taiwan Financials", "Taiwan ETFs"],
+}
+
+TAIWAN_TICKER_METADATA = {
+    "2330.TW": {"code": "2330", "zh": "台積電", "en": "TSMC"},
+    "2454.TW": {"code": "2454", "zh": "聯發科", "en": "MediaTek"},
+    "2303.TW": {"code": "2303", "zh": "聯電", "en": "UMC"},
+    "3711.TW": {"code": "3711", "zh": "日月光投控", "en": "ASE"},
+    "3034.TW": {"code": "3034", "zh": "聯詠", "en": "Novatek"},
+    "2379.TW": {"code": "2379", "zh": "瑞昱", "en": "Realtek"},
+    "2408.TW": {"code": "2408", "zh": "南亞科", "en": "Nanya"},
+    "2317.TW": {"code": "2317", "zh": "鴻海", "en": "Foxconn"},
+    "2382.TW": {"code": "2382", "zh": "廣達", "en": "Quanta"},
+    "3231.TW": {"code": "3231", "zh": "緯創", "en": "Wistron"},
+    "6669.TW": {"code": "6669", "zh": "緯穎", "en": "Wiwynn"},
+    "2308.TW": {"code": "2308", "zh": "台達電", "en": "Delta"},
+    "2357.TW": {"code": "2357", "zh": "華碩", "en": "ASUS"},
+    "2376.TW": {"code": "2376", "zh": "技嘉", "en": "GIGABYTE"},
+    "2345.TW": {"code": "2345", "zh": "智邦", "en": "Accton"},
+    "2881.TW": {"code": "2881", "zh": "富邦金", "en": "Fubon Financial"},
+    "2882.TW": {"code": "2882", "zh": "國泰金", "en": "Cathay Financial"},
+    "2891.TW": {"code": "2891", "zh": "中信金", "en": "CTBC Financial"},
+    "2886.TW": {"code": "2886", "zh": "兆豐金", "en": "Mega Financial"},
+    "2884.TW": {"code": "2884", "zh": "玉山金", "en": "E.Sun Financial"},
+    "2885.TW": {"code": "2885", "zh": "元大金", "en": "Yuanta Financial"},
+    "2603.TW": {"code": "2603", "zh": "長榮", "en": "Evergreen Marine"},
+    "2609.TW": {"code": "2609", "zh": "陽明", "en": "Yang Ming"},
+    "2615.TW": {"code": "2615", "zh": "萬海", "en": "Wan Hai"},
+    "1301.TW": {"code": "1301", "zh": "台塑", "en": "Formosa Plastics"},
+    "2002.TW": {"code": "2002", "zh": "中鋼", "en": "China Steel"},
+    "0050.TW": {"code": "0050", "zh": "元大台灣50", "en": "Yuanta Taiwan 50"},
+    "0056.TW": {"code": "0056", "zh": "元大高股息", "en": "Yuanta High Dividend"},
+    "00878.TW": {"code": "00878", "zh": "國泰永續高股息", "en": "Cathay ESG High Dividend"},
+    "006208.TW": {"code": "006208", "zh": "富邦台50", "en": "Fubon Taiwan 50"},
+}
+
 DEFAULT_WATCHLIST_UNIVERSE = sorted({ticker for group in WATCHLIST_PRESETS.values() for ticker in group} | {"TSM"})
 INTRADAY_PERIOD = "5d"
 INTRADAY_INTERVAL = "5m"
@@ -80,17 +157,822 @@ POSITIVE_NEWS_KEYWORDS = {
     "growth", "record", "strong", "raises", "raise", "buyback", "partnership",
     "expansion", "expands", "wins", "outperform", "bullish", "rebound", "jump",
     "orders", "demand", "guidance raised", "margin expands", "breakthrough", "approval",
+    "成長", "擴產", "上修", "調升", "看好", "受惠", "訂單", "需求強勁", "合作", "創高", "利多", "獲利成長",
 }
 NEGATIVE_NEWS_KEYWORDS = {
     "miss", "misses", "downgrade", "downgrades", "fall", "falls", "drop", "drops",
     "slump", "slumps", "cuts", "cut", "weak", "warning", "lawsuit", "probe",
     "investigation", "delay", "delays", "decline", "declines", "bearish", "selloff",
     "recall", "ban", "tariff", "fine", "antitrust", "layoff", "margin pressure",
+    "下修", "調降", "衰退", "疲弱", "利空", "調查", "罰款", "延後", "出口限制", "裁員", "下滑",
 }
 
 st.set_page_config(page_title="David Lau Stock Market Vision", page_icon="📈", layout="wide")
 
 
+LANGUAGE_OPTIONS = {
+    "English": "English",
+    "繁體中文": "繁體中文",
+}
+
+NEWS_DISPLAY_OPTIONS = {
+    "Original source": "Original source",
+    "Bilingual assist": "Bilingual assist",
+    "Chinese-first assist": "Chinese-first assist",
+}
+
+TRANSLATIONS = {
+    "English": {
+        "app_name": "David Lau Stock Market Vision",
+        "top_intro": "A calmer, more premium market workspace focused on clarity, hierarchy, and deeper exploration across comparison, catalysts, news, and chart structure.",
+        "language": "Language",
+        "headline_note": "Interface language changes the dashboard chrome. Taiwan tickers now prefer Taiwan/Traditional Chinese news sources when available.",
+        "command_layer": "Command Layer",
+        "hero_title": "Institutional-style market research, redesigned with a calmer premium theme.",
+        "hero_copy": "The new direction is cleaner, darker, and more focused. It reduces visual noise, strengthens hierarchy, and makes the journey from watchlist scan to deep ticker research feel more intentional.",
+        "chip_news_flow": "News-first reading flow",
+        "chip_winner": "Winner card with context",
+        "chip_catalyst_guide": "Catalyst Engine reference guide",
+        "chip_trading_lab": "Trading Lab interpretation",
+        "chip_richer_journey": "Same theme, richer journey",
+        "guide_title": "A more focused flow for deeper exploration",
+        "guide_copy": "Each section now behaves like part of a deliberate workflow: scan, compare, understand the driver, then validate the setup.",
+        "step_1": "Step 1",
+        "step_2": "Step 2",
+        "step_3": "Step 3",
+        "step_4": "Step 4",
+        "comparison_arena": "Comparison Arena",
+        "comparison_arena_copy": "Scan the watchlist fast. This is the shortlist stage where you decide which names deserve attention first.",
+        "winner_card": "Winner Card",
+        "winner_card_copy": "See which selected stock currently has the strongest setup and why the edge exists versus the next name.",
+        "catalyst_news_alerts": "Catalyst + News + Alerts",
+        "catalyst_news_alerts_copy": "Find out what is actually driving the narrative, then check how each lens sees the setup: earnings, AI demand, regulation, macro, analysts, or supply chain can shift different lenses in different ways.",
+        "trading_lab_candles": "Trading Lab + Candles",
+        "trading_lab_candles_copy": "Only after the narrative makes sense should you confirm the structure with the active trend lens, MACD, Bollinger context, support, resistance, and candles.",
+        "trend_lens": "Trend Lens",
+        "best_use": "Best use",
+        "how_to_read_it": "How to read it",
+        "what_this_lens_good_at": "What this lens is good at",
+        "watch_for": "Watch for",
+        "most_useful_reference_points": "Most useful reference points",
+        "winner_card_adapts": "The Winner Card and comparison scores now adapt to this active lens, so the strongest stock can change depending on whether you care about fresh reaction, swing structure, position strength, or cycle leadership.",
+        "reference_guide_for": "Reference guide for {ticker}",
+        "reference_copy": "This panel explains what matters most in the current setup, so readers understand why each section exists instead of just seeing another chart or score.",
+        "what_to_watch_in_news": "What to watch in news",
+        "what_gives_conviction": "What gives conviction",
+        "trading_lens": "Trading lens",
+        "decision_brief": "Decision Brief",
+        "what_matters_now_for": "What matters now for {ticker}",
+        "decision_brief_copy": "This is the quick executive read. It pulls the signal, catalyst engine, Trading Lab, and current alerts into one plain-language plan before the deeper research sections.",
+        "current_stance": "Current stance",
+        "dominant_catalyst": "Dominant catalyst",
+        "best_execution_style": "Best execution style",
+        "main_risk_flag": "Main risk flag",
+        "lead_story_label": "Lead story",
+        "next_best_action": "Next best action",
+        "signal_deck": "Pro Signal Deck",
+        "confidence": "Confidence",
+        "news_pulse": "News Pulse",
+        "intraday": "Intraday",
+        "top_story": "Top Story",
+        "estimated_effect_on": "Estimated effect on {ticker}: {probability}%",
+        "why_this_matters_now": "Why this matters now",
+        "setup_context": "{ticker} setup context",
+        "estimated_effect": "Estimated effect",
+        "chance_nudges": "Chance this story materially nudges {ticker} in the shown direction over the near term.",
+        "open_article": "Open article ↗",
+        "story": "Story {idx:02d}",
+        "relevance": "Relevance",
+        "why_this_could_matter": "Why this could matter to {ticker}:",
+        "related_tickers": "Related tickers:",
+        "top_news_stories": "Top News Stories",
+        "news_board_copy": "Selected-stock stories first. Use the highlights board to spot what matters most, then move into the full story rows for detail, relevance, and directional context.",
+        "no_recent_news": "No recent stock-specific news was returned for {ticker}.",
+        "daily_briefing": "Daily Briefing",
+        "alert_layer": "Alert Layer",
+        "alert_layer_copy": "Each lens now has its own alert state, so the same stock can be Fast Read bullish while still being Cycle View mixed or laggard.",
+        "control_center": "Control Center",
+        "vision_deck": "Vision Deck",
+        "vision_deck_copy": "Build a broader U.S. and Taiwan market watchlist, compare selected names side by side, and refresh the live tape in one modern control panel.",
+        "market_scope": "Market scope",
+        "market_scope_note": "Switch between U.S., Taiwan, or a blended cross-market watchlist. Taiwan numeric symbols entered manually will auto-map to Yahoo Finance format.",
+        "market_scope_mixed": "Mixed (U.S. + Taiwan)",
+        "market_scope_us": "U.S. only",
+        "market_scope_tw": "Taiwan only",
+        "watchlist_universe": "Watchlist universe",
+        "preset_groups": "Preset groups",
+        "expand_by_sector": "Expand by sector...",
+        "tickers": "Tickers",
+        "pick_watchlist_symbols": "Pick any watchlist symbols...",
+        "custom_symbols": "Custom symbols",
+        "custom_symbols_placeholder": "Add any U.S. or Taiwan symbol, e.g. HOOD, NET, 2330, 2454, 0050",
+        "watchlist_caption": "Build a broader U.S. and Taiwan watchlist by group, then add any extra symbol manually. Taiwan numeric codes like 2330 or 0050 auto-convert to Yahoo Finance format.",
+        "manual_period_override": "Manual period override",
+        "custom_lookback": "Custom lookback",
+        "custom_interval": "Custom interval",
+        "reference_lens": "Reference lens",
+        "live_refresh": "Live refresh",
+        "refresh_live_data": "Refresh live data",
+        "refresh_caption": "News-first layout. Daily trend drives the Sentinel signal. Taiwan stocks now flow through the same comparison, decision brief, news, and candlestick structure as U.S. names.",
+        "please_select_ticker": "Please select at least one ticker.",
+        "loading_data": "Loading market data and stock-specific news...",
+        "no_market_data": "No market data was returned. Please try again.",
+        "footer_note": "This dashboard is for research and reference. The news effect percentages and directional labels are heuristic estimates, not guarantees or investment advice.",
+        "explorer_navigation": "Explorer Navigation",
+        "choose_ticker_workspace": "Choose a ticker below to enter its full market workspace",
+        "explorer_nav_copy": "This is the transition from screening into deep research. Select any ticker tab below and the dashboard shifts into that stock’s own workspace with related news, catalyst mapping, lens-aware alerts, Trading Lab, and candlestick confirmation.",
+        "what_happens_next": "What happens next",
+        "open_ticker_workspace": "Open a ticker workspace ↓",
+        "open_ticker_workspace_copy": "You’ll move into that stock’s dedicated workspace, where the news, catalysts, alerts, and chart structure are all focused on just that one name.",
+        "news_display_mode": "News display mode",
+        "news_display_note": "Choose whether news sections stay source-first or add a Chinese reading assist for Taiwan users.",
+        "news_mode_original": "Original source",
+        "news_mode_bilingual": "Bilingual assist",
+        "news_mode_chinese_first": "Chinese-first assist",
+        "news_helper_label": "Taiwan quick read",
+        "news_reason_label": "Why it matters",
+        "source_summary_label": "Source summary",
+        "no_source_summary": "No source summary was provided.",
+        "news_helper_template": "{ticker}: {direction}. Estimated short-term effect {probability}%. Confidence {confidence}, relevance {relevance}.",
+        "directional_pressure": "Directional pressure",
+        "directional_pressure_copy": "Reference estimate of how strongly the story could influence the selected stock in the near term.",
+        "up_down_pressure": "Up {pos}% / Down {neg}%",
+        "trend_lab": "Trend Lab",
+        "candlestick_confirmation": "Candlestick confirmation",
+        "trend_lab_copy": "This section stays near the bottom so readers first absorb the story, impact estimate, and signal stack before confirming structure with the active trend lens and live tape.",
+        "last_daily_close": "Last daily close",
+        "trading_lab": "Trading Lab",
+        "trend_1y": "1Y trend",
+        "comparison_title": "Modern side-by-side setup for price strength and signal quality",
+        "comparison_copy": "Use this section to scan which stock has stronger trend structure, cleaner recommendation quality, and better news support before opening the full ticker workspace.",
+        "strongest_pro_setup": "Strongest Pro setup",
+        "best_1y_price_strength": "Best 1Y price strength",
+        "best_current_news_tailwind": "Best current news tailwind",
+        "side_by_side_profile": "Side-by-side profile",
+        "lens_score": "Lens Score",
+        "last_price": "Last price",
+        "signal": "Signal",
+        "intraday_move": "Intraday move",
+        "recent_structure": "{ticker} recent structure",
+        "research_view_only": "Research view only. The signal combines moving averages, RSI, volume confirmation, 1-year trend, and current stock-specific news pulse.",
+        "lead_story_context": "Lead story context",
+        "active_lens_focus": "Active lens focus",
+        "no_extra_alert_context": "No extra alert context is active.",
+        "bullish_count": "Bullish {count}",
+        "neutral_count": "Neutral {count}",
+        "bearish_count": "Bearish {count}",
+    },
+    "繁體中文": {
+        "app_name": "David Lau 股票市場視野",
+        "top_intro": "更沉穩、更高級的市場研究工作台，強調清晰層級、內容探索，以及比較、催化劑、新聞與圖表結構之間的串聯。",
+        "language": "語言",
+        "headline_note": "介面語言會切換儀表板文字與導覽，新聞標題仍保留原始來源語言。",
+        "command_layer": "操作層",
+        "hero_title": "以更沉穩高級的主題，重新設計機構風格的市場研究體驗。",
+        "hero_copy": "新版方向更乾淨、更深色、更聚焦，降低視覺噪音、強化資訊層級，讓使用者從觀察清單掃描走到個股深度研究時更自然。",
+        "chip_news_flow": "新聞優先閱讀流程",
+        "chip_winner": "含脈絡的勝出卡",
+        "chip_catalyst_guide": "Catalyst Engine 參考指南",
+        "chip_trading_lab": "Trading Lab 解讀",
+        "chip_richer_journey": "同一主題，更完整流程",
+        "guide_title": "更聚焦、更適合深度探索的流程",
+        "guide_copy": "每個區塊都像是研究流程的一部分：先掃描、再比較、理解驅動因子，最後確認型態。",
+        "step_1": "步驟 1",
+        "step_2": "步驟 2",
+        "step_3": "步驟 3",
+        "step_4": "步驟 4",
+        "comparison_arena": "比較區",
+        "comparison_arena_copy": "快速掃描觀察清單。這是建立候選名單的階段，先決定哪些標的值得優先關注。",
+        "winner_card": "勝出卡",
+        "winner_card_copy": "看出目前哪一檔最有優勢，並理解它相對其他標的為何更具吸引力。",
+        "catalyst_news_alerts": "催化劑 + 新聞 + 警示",
+        "catalyst_news_alerts_copy": "先找出真正驅動敘事的因素，再觀察不同鏡頭如何看待目前型態：財報、AI 需求、監管、總經、分析師動作或供應鏈，都可能讓不同鏡頭得出不同結論。",
+        "trading_lab_candles": "Trading Lab + K 線",
+        "trading_lab_candles_copy": "只有當敘事合理後，才用目前趨勢鏡頭、MACD、布林帶、支撐、壓力與 K 線來確認結構。",
+        "trend_lens": "趨勢鏡頭",
+        "best_use": "最佳用途",
+        "how_to_read_it": "如何閱讀",
+        "what_this_lens_good_at": "這個鏡頭最擅長什麼",
+        "watch_for": "觀察重點",
+        "most_useful_reference_points": "最有用的參考點",
+        "winner_card_adapts": "Winner Card 與比較分數會依照目前鏡頭自動調整，所以最強標的會隨著你更重視短線反應、波段結構、部位強度或週期領導而改變。",
+        "reference_guide_for": "{ticker} 參考指南",
+        "reference_copy": "這個面板用來說明目前配置下最重要的觀察點，讓使用者理解每個區塊存在的原因，而不只是看到另一張圖或另一個分數。",
+        "what_to_watch_in_news": "新聞觀察重點",
+        "what_gives_conviction": "信心來源",
+        "trading_lens": "交易風格",
+        "decision_brief": "決策摘要",
+        "what_matters_now_for": "{ticker} 當前重點",
+        "decision_brief_copy": "這是快速高層摘要。它會把訊號、Catalyst Engine、Trading Lab 與目前警示整合成一個容易採取行動的說明，再進入更深入的研究區塊。",
+        "current_stance": "目前立場",
+        "dominant_catalyst": "主導催化劑",
+        "best_execution_style": "較佳執行方式",
+        "main_risk_flag": "主要風險",
+        "lead_story_label": "主要新聞",
+        "next_best_action": "下一步建議",
+        "signal_deck": "專業訊號面板",
+        "confidence": "信心",
+        "news_pulse": "新聞脈動",
+        "intraday": "盤中",
+        "top_story": "焦點新聞",
+        "estimated_effect_on": "對 {ticker} 的預估影響：{probability}%",
+        "why_this_matters_now": "現在為什麼重要",
+        "setup_context": "{ticker} 目前型態脈絡",
+        "estimated_effect": "預估影響",
+        "chance_nudges": "這則新聞在短期內，可能讓 {ticker} 朝目前方向產生明顯推動的機率。",
+        "open_article": "開啟文章 ↗",
+        "story": "新聞 {idx:02d}",
+        "relevance": "關聯度",
+        "why_this_could_matter": "這則新聞為何可能影響 {ticker}：",
+        "related_tickers": "相關股票：",
+        "top_news_stories": "重點新聞",
+        "news_board_copy": "先看所選股票的新聞。先用 highlights 區看出重點，再進入完整新聞列查看細節、關聯度與方向脈絡。",
+        "no_recent_news": "{ticker} 目前沒有抓到近期的個股新聞。",
+        "daily_briefing": "每日摘要",
+        "alert_layer": "警示層",
+        "alert_layer_copy": "每個鏡頭都有自己的警示狀態，所以同一檔股票可能在 Fast Read 偏多，但在 Cycle View 仍屬混合或落後。",
+        "control_center": "控制中心",
+        "vision_deck": "Vision Deck",
+        "vision_deck_copy": "建立更完整的美股與台股觀察清單、並排比較所選標的，並在同一個現代化控制面板中刷新即時資料。",
+        "market_scope": "市場範圍",
+        "market_scope_note": "可在美股、台股或混合觀察清單之間切換。手動輸入台股數字代號時，系統會自動轉成 Yahoo Finance 可用格式。",
+        "market_scope_mixed": "混合（美股＋台股）",
+        "market_scope_us": "僅美股",
+        "market_scope_tw": "僅台股",
+        "watchlist_universe": "觀察清單範圍",
+        "preset_groups": "預設群組",
+        "expand_by_sector": "依產業擴充…",
+        "tickers": "股票代號",
+        "pick_watchlist_symbols": "挑選觀察清單股票代號…",
+        "custom_symbols": "自訂代號",
+        "custom_symbols_placeholder": "加入任何美股或台股代號，例如 HOOD、NET、2330、2454、0050",
+        "watchlist_caption": "你可以依群組建立更完整的美股與台股觀察清單，也能手動輸入額外代號。像 2330 或 0050 這種台股數字代號會自動轉成 Yahoo Finance 格式。",
+        "manual_period_override": "手動覆寫期間",
+        "custom_lookback": "自訂回看區間",
+        "custom_interval": "自訂頻率",
+        "reference_lens": "參考鏡頭",
+        "live_refresh": "即時刷新",
+        "refresh_live_data": "刷新即時資料",
+        "refresh_caption": "以新聞為優先的版型。日線趨勢驅動 Sentinel 訊號。台股現在也會套用與美股相同的比較、Decision Brief、新聞與 K 線結構。",
+        "please_select_ticker": "請至少選擇一個股票代號。",
+        "loading_data": "正在載入市場資料與個股新聞…",
+        "no_market_data": "沒有取得市場資料，請再試一次。",
+        "footer_note": "本儀表板僅供研究與參考。新聞影響百分比與方向標籤屬於啟發式估計，並非保證，也不是投資建議。",
+        "explorer_navigation": "探索導覽",
+        "choose_ticker_workspace": "選擇下方股票，進入完整個股研究工作台",
+        "explorer_nav_copy": "這是從初步篩選進入深度研究的轉換點。選擇任一股票分頁後，儀表板會切換成該股票的專屬工作台，集中顯示相關新聞、催化劑映射、鏡頭警示、Trading Lab 與 K 線確認。",
+        "what_happens_next": "接下來會發生什麼",
+        "open_ticker_workspace": "開啟個股工作台 ↓",
+        "open_ticker_workspace_copy": "你會進入該股票的專屬研究頁，新聞、催化劑、警示與圖表結構都只聚焦這一檔。",
+        "news_display_mode": "新聞顯示模式",
+        "news_display_note": "可選擇維持原文新聞，或加入更適合台灣使用者的中文輔助閱讀。",
+        "news_mode_original": "原始來源",
+        "news_mode_bilingual": "雙語輔助",
+        "news_mode_chinese_first": "中文優先輔助",
+        "news_helper_label": "台灣使用者速讀",
+        "news_reason_label": "為何重要",
+        "source_summary_label": "原文摘要",
+        "no_source_summary": "此來源未提供摘要。",
+        "news_helper_template": "{ticker}：{direction}，預估短線影響約 {probability}%。信心 {confidence}，關聯度 {relevance}。",
+        "directional_pressure": "方向壓力",
+        "directional_pressure_copy": "這是新聞在短期內可能影響所選股票方向強度的參考估計。",
+        "up_down_pressure": "上行 {pos}% / 下行 {neg}%",
+        "trend_lab": "Trend Lab",
+        "candlestick_confirmation": "K 線確認",
+        "trend_lab_copy": "這一區放在較後面，讓讀者先吸收新聞、影響估計與訊號層，再用目前趨勢鏡頭與盤中走勢確認結構。",
+        "last_daily_close": "最新日線收盤",
+        "trading_lab": "Trading Lab",
+        "trend_1y": "一年趨勢",
+        "comparison_title": "更現代的並排比較，用來觀察價格強度與訊號品質",
+        "comparison_copy": "用這一區快速掃描哪一檔擁有更強的趨勢結構、更乾淨的建議品質，以及更好的新聞支撐，再決定要深入哪個個股工作台。",
+        "strongest_pro_setup": "最強 Pro 配置",
+        "best_1y_price_strength": "最佳一年價格強度",
+        "best_current_news_tailwind": "最佳當前新聞順風",
+        "side_by_side_profile": "並排輪廓",
+        "lens_score": "鏡頭分數",
+        "last_price": "最新價格",
+        "signal": "訊號",
+        "intraday_move": "盤中變動",
+        "recent_structure": "{ticker} 近期結構",
+        "research_view_only": "僅供研究參考。此訊號綜合了均線、RSI、量能確認、一年趨勢與目前個股新聞脈動。",
+        "lead_story_context": "主導新聞脈絡",
+        "active_lens_focus": "目前鏡頭焦點",
+        "no_extra_alert_context": "目前沒有額外警示脈絡。",
+        "bullish_count": "偏多 {count}",
+        "neutral_count": "中性 {count}",
+        "bearish_count": "偏空 {count}",
+    },
+}
+
+TERM_TRANSLATIONS = {
+    "繁體中文": {
+        "BUY": "買進",
+        "HOLD": "觀望",
+        "SELL": "賣出",
+        "High": "高",
+        "Medium": "中",
+        "Low": "低",
+        "Moderate": "中等",
+        "Strong Uptrend": "強勢上升趨勢",
+        "Moderate Uptrend": "中度上升趨勢",
+        "Strong Downtrend": "強勢下降趨勢",
+        "Mild Downtrend": "溫和下降趨勢",
+        "Flat": "持平",
+        "Momentum-led": "動能主導",
+        "Pullback watch": "拉回觀察",
+        "Risk-off": "風險趨避",
+        "Balanced": "平衡",
+        "Macro": "總經",
+        "Earnings": "財報",
+        "AI Demand": "AI 需求",
+        "Regulation": "監管",
+        "Analyst Action": "分析師動作",
+        "Supply Chain": "供應鏈",
+        "News tilt: bullish": "新聞傾向：偏多",
+        "News tilt: bearish": "新聞傾向：偏空",
+        "News tilt: mixed": "新聞傾向：混合",
+        "Likely bullish": "可能偏多",
+        "Likely bearish": "可能偏空",
+        "Mildly bullish": "略偏多",
+        "Mildly bearish": "略偏空",
+        "Neutral / mixed": "中性／混合",
+        "Fast Read bullish": "Fast Read 偏多",
+        "Fast Read bearish": "Fast Read 偏空",
+        "Fast Read mixed": "Fast Read 混合",
+        "Swing Map improving": "Swing Map 改善中",
+        "Swing Map weakening": "Swing Map 轉弱",
+        "Swing Map balanced": "Swing Map 平衡",
+        "Position View intact": "Position View 結構完整",
+        "Position View broken": "Position View 結構受損",
+        "Position View mixed": "Position View 混合",
+        "Cycle View leader": "Cycle View 領先",
+        "Cycle View laggard": "Cycle View 落後",
+        "Cycle View mixed": "Cycle View 混合",
+        "N/A": "無",
+        "Unknown source": "未知來源",
+        "Not provided": "未提供",
+        "No strong lead story": "目前沒有明確主導新聞",
+        "No urgent alert is active.": "目前沒有緊急警示。",
+        "Direction currently mixed": "目前方向偏混合",
+        "No stock-specific story returned": "目前沒有回傳個股專屬新聞",
+
+        "Favor continuation entries only when price confirms above near-term resistance or re-tests support cleanly.": "只有當價格確認站上短線壓力，或回測支撐乾淨有效時，才偏向順勢進場。",
+        "Stay defensive until price rebuilds above trend support and headline pressure stops worsening.": "在價格重新站回趨勢支撐、且新聞壓力不再惡化前，建議維持防守。",
+        "Wait for the catalyst picture and chart structure to align before pressing directional risk.": "先等催化劑與圖表結構重新一致，再考慮承擔方向性風險。",
+        "Momentum is leading. Breakouts and continuation days deserve more attention than deep dip-buy attempts.": "目前由動能主導。比起深度接刀，更應關注突破與延續日。",
+        "The structure is in pullback mode. Patience matters more than speed, especially near support.": "目前屬於拉回模式，尤其接近支撐時，耐心比速度更重要。",
+        "The tape is fragile. Capital protection matters more than forcing a setup.": "盤勢偏脆弱。與其硬做型態，資本保護更重要。",
+        "The setup is balanced. Let the next strong catalyst or price confirmation set direction.": "目前型態偏平衡，讓下一個強催化劑或價格確認來決定方向。",
+        "Headline tone is leaning negative and can overpower otherwise decent chart structure.": "新聞語氣偏負面，可能蓋過原本還不錯的圖表結構。",
+        "Positive headline tone is helping the setup, but it still needs price confirmation.": "正面的新聞語氣正在幫助型態，但仍需要價格確認。",
+        "No single risk is dominant, so watch whether the next story shifts the narrative.": "目前沒有單一風險主導，重點是觀察下一則新聞是否改變市場敘事。",
+        "Price is above SMA 200, supporting the long-term uptrend.": "價格位於 SMA 200 之上，支撐長期上升趨勢。",
+        "Price is below SMA 200, which weakens the long-term setup.": "價格位於 SMA 200 之下，削弱長期配置。",
+        "SMA 50 is above SMA 200, confirming medium-term strength.": "SMA 50 高於 SMA 200，確認中期強勢。",
+        "SMA 50 is below SMA 200, confirming medium-term weakness.": "SMA 50 低於 SMA 200，確認中期偏弱。",
+        "SMA 20 is above SMA 50, so near-term momentum is supportive.": "SMA 20 高於 SMA 50，短線動能偏正向。",
+        "SMA 20 is below SMA 50, so near-term momentum has cooled.": "SMA 20 低於 SMA 50，短線動能已降溫。",
+        "RSI is in a healthy bullish range.": "RSI 處於健康的偏多區間。",
+        "RSI is stretched, so upside may be more fragile short term.": "RSI 偏延伸，短線上行可能較脆弱。",
+        "RSI is weak, which suggests sellers still have control.": "RSI 偏弱，顯示賣方仍具主導力。",
+        "The stock is up strongly over the past year, which supports the broader trend.": "股票過去一年表現強勁，支撐更大的趨勢方向。",
+        "The stock is down over the past year, which weakens the trend case.": "股票過去一年表現偏弱，削弱趨勢成立的基礎。",
+        "Recent volume is above the 50-day average, giving the move more confirmation.": "近期量能高於 50 日平均，讓這波走勢更具確認性。",
+        "Recent volume is light, so conviction behind the move is weaker.": "近期量能偏輕，代表這波走勢背後的信心較弱。",
+        "Recent news flow has skewed bullish.": "近期新聞流偏向正面。",
+        "Recent news flow has skewed bearish.": "近期新聞流偏向負面。",
+        "Recent news flow is mixed and does not materially change the core trend picture.": "近期新聞流偏混合，尚未實質改變核心趨勢判讀。",
+        "Trend structure and recent context are supportive for accumulation.": "趨勢結構與近期脈絡支持分批布局。",
+        "Trend structure is weak or deteriorating, so risk remains elevated.": "趨勢結構偏弱或持續惡化，風險仍高。",
+        "Signals are mixed, so waiting for better confirmation is more disciplined.": "訊號混合，先等待更好的確認會更有紀律。",
+        "Headline language leans positive for demand, margins, upgrades, or growth.": "標題語氣偏向需求、利潤、升評或成長等正面訊號。",
+        "Headline language leans negative for guidance, regulation, demand, or execution risk.": "標題語氣偏向財測、監管、需求或執行風險等負面訊號。",
+        "Some positive wording is present, but the signal is not strong.": "出現一些正面措辭，但訊號強度不高。",
+        "Some negative wording is present, but the signal is not strong.": "出現一些負面措辭，但訊號強度不高。",
+        "The headline is informational or the signals conflict.": "標題偏資訊性，或正負訊號彼此衝突。",
+        "Elevated": "偏高",
+        "Light": "偏低",
+        "Normal": "正常",
+        "Most lenses are leaning constructive.": "多數鏡頭偏向建設性。",
+        "Most lenses are leaning defensive.": "多數鏡頭偏向防守。",
+        "The lenses disagree, so context matters more.": "各鏡頭看法分歧，因此脈絡更重要。",
+        "Lens states are mixed.": "鏡頭狀態偏混合。",
+        "Fast Read": "快速閱讀",
+        "Swing Map": "波段地圖",
+        "Position View": "部位視角",
+        "Cycle View": "週期視角",
+        "Fast Read favors fresh intraday strength.": "快速閱讀偏好最新盤中強勢。",
+        "Fast Read penalizes weak live tape.": "快速閱讀會懲罰疲弱的即時盤勢。",
+        "Fast Read rewards bullish news flow.": "快速閱讀會加分給偏多新聞流。",
+        "Fast Read penalizes bearish news flow.": "快速閱讀會扣分給偏空新聞流。",
+        "Fast Read likes active momentum.": "快速閱讀偏好活躍動能。",
+        "Fast Read dislikes weak short-term momentum.": "快速閱讀不偏好弱勢短線動能。",
+        "Swing Map rewards momentum-led setups.": "波段地圖會加分給動能主導型態。",
+        "Swing Map likes controlled pullbacks.": "波段地圖偏好可控的拉回。",
+        "Swing Map penalizes unstable structure.": "波段地圖會扣分給不穩定結構。",
+        "Swing Map rewards volume confirmation.": "波段地圖會加分給量能確認。",
+        "Swing Map discounts light participation.": "波段地圖會降低量能不足的權重。",
+        "Position View prioritizes price above SMA 200.": "部位視角優先看價格是否站上 SMA 200。",
+        "Position View penalizes price below SMA 200.": "部位視角會扣分給跌破 SMA 200。",
+        "Position View rewards medium-term trend support.": "部位視角會加分給中期趨勢支撐。",
+        "Position View penalizes weak medium-term structure.": "部位視角會扣分給中期結構偏弱。",
+        "Position View rewards strong 1Y return.": "部位視角會加分給強勁的一年報酬。",
+        "Position View penalizes weak 1Y return.": "部位視角會扣分給疲弱的一年報酬。",
+        "Cycle View rewards long-cycle leadership.": "週期視角會加分給長週期領先。",
+        "Cycle View penalizes deterioration.": "週期視角會扣分給惡化跡象。",
+        "Cycle View likes broad trend alignment.": "週期視角偏好大方向一致。",
+        "Cycle View discounts broken leadership.": "週期視角會降低失去領先地位的評價。",
+        "Cycle View notes news, but does not over-weight it.": "週期視角會參考新聞，但不會給過高權重。",
+        "Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking.": "當你想先得到一個答案時，先看這裡。Winner Card 會依目前趨勢鏡頭調整，因此領先者會隨你的問題而改變。",
+        "Compared with {runner}, this setup currently has the cleaner edge for the active lens. Change the lens and the winner can change too.": "和 {runner} 相比，這個配置在目前鏡頭下更乾淨、更具優勢。切換鏡頭後，領先者也可能改變。",
+        "This is the most active catalyst bucket right now. If new headlines keep leaning the same way, they can strengthen or weaken the current signal faster than technicals alone.": "這是目前最活躍的催化劑分類。如果新標題持續往同一方向傾斜，對目前訊號的強化或削弱速度可能比技術面更快。",
+        "Confidence comes from trend structure, news pulse, and trade setup aligning. When those disagree, the dashboard tends to fall back to HOLD.": "信心來自趨勢結構、新聞脈動與交易型態彼此一致。當它們互相衝突時，儀表板通常會回到觀望。",
+        "Use this as the action style: momentum-led means continuation is cleaner, pullback watch means patience matters, and risk-off means price can stay fragile.": "把這個當成執行風格：動能主導代表順勢延續較乾淨；拉回觀察代表耐心更重要；風險趨避代表價格可能持續脆弱。",
+        "The lead story is the fastest narrative snapshot. Check whether its direction agrees with the Catalyst Engine before trusting it too much.": "主導新聞是最快速的敘事快照。在過度相信它之前，先確認它的方向是否與 Catalyst Engine 一致。",
+        "No extra alert context is active.": "目前沒有額外警示脈絡。",
+        "Current leader": "目前領先者",
+        "Nearest rival": "最接近的對手",
+        "Lens adjustment": "鏡頭調整",
+        "Catalyst edge": "催化優勢",
+        "Runner-up focus": "次名焦點",
+        "Base score": "基礎分數",
+        "Current leader": "目前領先者",
+
+    }
+}
+
+GROUP_TRANSLATIONS = {
+    "繁體中文": {
+        "Tech & AI": "科技與 AI",
+        "Semiconductors": "半導體",
+        "Financials": "金融",
+        "Healthcare": "醫療保健",
+        "Consumer": "消費",
+        "Industrials": "工業",
+        "Energy": "能源",
+        "Communication": "通訊媒體",
+        "Utilities & REITs": "公用事業與 REITs",
+        "Transportation": "運輸",
+        "Market ETFs": "市場 ETF",
+        "Taiwan Semiconductors": "台股半導體",
+        "Taiwan AI Supply Chain": "台股 AI 供應鏈",
+        "Taiwan Financials": "台股金融",
+        "Taiwan Shipping & Cyclicals": "台股航運與景氣循環",
+        "Taiwan ETFs": "台股 ETF",
+    }
+}
+
+LENS_OPTION_LABELS = {
+    "English": {
+        "Fast Read": "Fast Read",
+        "Swing Map": "Swing Map",
+        "Position View": "Position View",
+        "Cycle View": "Cycle View",
+    },
+    "繁體中文": {
+        "Fast Read": "快速閱讀",
+        "Swing Map": "波段地圖",
+        "Position View": "部位視角",
+        "Cycle View": "週期視角",
+    },
+}
+
+LENS_TRANSLATIONS = {
+    "繁體中文": {
+        "Fast Read": {
+            "title": "快速閱讀",
+            "hook": "最適合觀察近期新聞反應與短波段脈絡。",
+            "how_to_read": "當你想知道最近幾週的新聞是否正在加速動能或逐漸失效時，用這個鏡頭。",
+            "watch_for": "觀察跳空後是否延續、近期支撐是否被測試，以及訊號是轉強還是轉弱。",
+        },
+        "Swing Map": {
+            "title": "波段地圖",
+            "hook": "最適合主動交易者與中期型態判讀。",
+            "how_to_read": "這是最實用的鏡頭，適合比較目前趨勢結構與近幾次財報或總經循環。",
+            "watch_for": "重複出現的壓力區、乾淨的拉回、動能重置，以及突破是否被確認。",
+        },
+        "Position View": {
+            "title": "部位視角",
+            "hook": "最適合檢查完整趨勢年內，投資邏輯是否仍成立。",
+            "how_to_read": "當你更在意結構性強弱，而不是每日噪音時，用這個鏡頭。",
+            "watch_for": "價格相對 SMA 200、趨勢品質是否持續，以及新聞是在支持還是對抗大方向。",
+        },
+        "Cycle View": {
+            "title": "週期視角",
+            "hook": "最適合拉遠看大級別市場狀態。",
+            "how_to_read": "這個鏡頭用來看完整週期行為，不是拿來找精準進場點。",
+            "watch_for": "重大轉折、長期領導力，以及股票仍在廣義累積還是開始惡化。",
+        },
+    }
+}
+
+def get_lang() -> str:
+    return st.session_state.get("dashboard_language", "English")
+
+def get_news_mode() -> str:
+    return st.session_state.get("dashboard_news_mode", "Original source")
+
+def news_mode_prefers_helper() -> bool:
+    return get_news_mode() in {"Bilingual assist", "Chinese-first assist"}
+
+def news_mode_prefers_chinese_first() -> bool:
+    return get_news_mode() == "Chinese-first assist"
+
+def t(key: str, **kwargs) -> str:
+    lang = get_lang()
+    value = TRANSLATIONS.get(lang, {}).get(key, TRANSLATIONS["English"].get(key, key))
+    return value.format(**kwargs) if kwargs else value
+
+def tr_term(value):
+    if value is None:
+        return value
+    lang = get_lang()
+    return TERM_TRANSLATIONS.get(lang, {}).get(str(value), str(value))
+
+def tr_group(value):
+    if value is None:
+        return value
+    return GROUP_TRANSLATIONS.get(get_lang(), {}).get(str(value), str(value))
+
+def tr_lens_name(value: str) -> str:
+    return LENS_OPTION_LABELS.get(get_lang(), {}).get(value, value)
+
+def tr_lens_meta(meta: dict) -> dict:
+    lang = get_lang()
+    translated = dict(meta)
+    base_key = meta.get("title")
+    localized = LENS_TRANSLATIONS.get(lang, {}).get(base_key)
+    if localized:
+        translated.update(localized)
+    return translated
+
+def tr_confidence(value):
+    return tr_term(value)
+
+def tr_signal(value):
+    return tr_term(value)
+
+def tr_relevance(value):
+    return tr_term(value)
+
+def tr_setup(value):
+    return tr_term(value)
+
+def tr_news_label(value):
+    return tr_term(value)
+
+def tr_direction(value):
+    return tr_term(value)
+
+def tr_reason_text(value):
+    return tr_term(value)
+
+def build_news_helper_text(item: dict, ticker: str, probability: int) -> str:
+    direction_text, _, _ = article_direction_meta(item)
+    confidence = tr_confidence(item.get("confidence", "N/A"))
+    relevance = relevance_label(int(item.get("relevance", 0)))
+    helper = t(
+        "news_helper_template",
+        ticker=display_ticker_label(ticker),
+        direction=direction_text,
+        probability=probability,
+        confidence=confidence,
+        relevance=relevance,
+    )
+    reason = str(item.get("impact_reason", "") or "").strip()
+    if reason:
+        helper += f" {t('news_reason_label')}: {tr_reason_text(reason)}"
+    return helper
+
+def build_news_summary_html(item: dict, ticker: str, probability: int, block_class: str = "story-row-summary") -> str:
+    source_summary = str(item.get("summary") or item.get("impact_reason") or "").strip()
+    mode = get_news_mode()
+    source_html = f'<div class="{block_class}"><strong>{t("source_summary_label")}</strong> {escape(source_summary or t("no_source_summary"))}</div>'
+    if mode == "Original source":
+        return f'<div class="{block_class}">{escape(source_summary or t("no_source_summary"))}</div>'
+    helper_html = f'<div class="{block_class}"><strong>{t("news_helper_label")}</strong> {escape(build_news_helper_text(item, ticker, probability))}</div>'
+    if news_mode_prefers_chinese_first():
+        return helper_html + source_html
+    return source_html + helper_html
+
+def build_compact_summary_text(item: dict, ticker: str, probability: int, limit: int = 180) -> str:
+    source_summary = str(item.get("summary") or item.get("impact_reason") or "").strip()
+    if get_news_mode() == "Original source":
+        return source_summary[:limit] or t("no_source_summary")
+    return build_news_helper_text(item, ticker, probability)[:limit]
+
+
+def html_block(markup: str) -> str:
+    return textwrap.dedent(markup).strip()
+
+
+def contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
+
+
+def build_news_aliases(ticker: str) -> set[str]:
+    ticker_upper = str(ticker).upper()
+    base_code = ticker_base_code(ticker_upper)
+    aliases = {ticker_upper, base_code}
+    meta = TAIWAN_TICKER_METADATA.get(ticker_upper)
+    if meta:
+        aliases.update(
+            {
+                meta.get("code", "").upper(),
+                meta.get("en", "").upper(),
+                meta.get("zh", "").upper(),
+            }
+        )
+    return {alias for alias in aliases if alias}
+
+
+def score_news_relevance(title: str, summary: str, related: list[str], aliases: set[str]) -> int:
+    text_blob = f"{title} {summary}".upper()
+    related_set = {str(value).upper() for value in related or []}
+    relevance = 0
+    if aliases & related_set:
+        relevance += 4
+    if any(alias in text_blob for alias in aliases if alias):
+        relevance += 2
+    if any(keyword in text_blob for keyword in ("EARNINGS", "GUIDANCE", "AI", "CHIPS", "DEMAND", "REVENUE", "EXPORT", "TARIFF", "財報", "AI", "晶片", "需求", "營收", "出口", "關稅")):
+        relevance += 1
+    return relevance
+
+
+def normalize_google_news_url(url: str) -> str:
+    return unescape(str(url or "")).strip()
+
+
+def split_google_title(title: str) -> tuple[str, str]:
+    clean = unescape(str(title or "")).strip()
+    if " - " in clean:
+        head, tail = clean.rsplit(" - ", 1)
+        return head.strip(), tail.strip()
+    return clean, "Google News"
+
+
+def clean_google_description(description: str) -> str:
+    raw = unescape(str(description or ""))
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
+
+
+def parse_google_news_rss(query: str, max_items: int = 10) -> list[dict]:
+    feed_url = (
+        "https://news.google.com/rss/search?"
+        f"q={quote_plus(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    )
+    req = Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urlopen(req, timeout=8) as response:
+            xml_bytes = response.read()
+    except Exception:
+        return []
+
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return []
+
+    items: list[dict] = []
+    for node in root.findall(".//item")[:max_items]:
+        raw_title = node.findtext("title", default="").strip()
+        title, provider = split_google_title(raw_title)
+        link = normalize_google_news_url(node.findtext("link", default="").strip())
+        description = clean_google_description(node.findtext("description", default="").strip())
+        pub_date = pd.to_datetime(node.findtext("pubDate", default=""), utc=True, errors="coerce")
+        items.append(
+            {
+                "title": title or "Untitled",
+                "summary": description,
+                "provider": provider or "Google News",
+                "url": link,
+                "published": pub_date,
+                "related": [],
+            }
+        )
+    return items
+
+
+def fetch_taiwan_local_news(ticker: str, max_items: int = 12) -> list[dict]:
+    if not is_taiwan_ticker(ticker):
+        return []
+
+    meta = TAIWAN_TICKER_METADATA.get(str(ticker).upper(), {})
+    code = meta.get("code", ticker_base_code(ticker))
+    zh_name = meta.get("zh", code)
+    en_name = meta.get("en", code)
+    aliases = build_news_aliases(ticker)
+
+    query_parts = [zh_name]
+    if en_name and en_name.upper() != zh_name.upper():
+        query_parts.append(f'"{en_name}"')
+    if code:
+        query_parts.append(code)
+    query = " OR ".join(part for part in query_parts if part)
+
+    items = []
+    for item in parse_google_news_rss(query, max_items=max_items * 2):
+        relevance = score_news_relevance(item["title"], item["summary"], item.get("related", []), aliases)
+        if contains_cjk(item["title"]):
+            relevance += 2
+        impact_label, impact_score, impact_reason = infer_news_impact(item["title"], item["summary"])
+        confidence = infer_news_confidence(relevance, impact_score)
+        item.update(
+            {
+                "related": [str(ticker).upper()],
+                "relevance": relevance,
+                "impact_label": impact_label,
+                "impact_score": impact_score,
+                "impact_reason": impact_reason,
+                "confidence": confidence,
+                "source_origin": "tw_local",
+            }
+        )
+        items.append(item)
+
+    items.sort(
+        key=lambda x: (
+            x.get("relevance", 0),
+            1 if contains_cjk(x.get("title", "")) else 0,
+            pd.Timestamp.min.tz_localize("UTC") if pd.isna(x.get("published")) else x.get("published"),
+        ),
+        reverse=True,
+    )
+    return items[:max_items]
+
+
+def dedupe_news_items(items: list[dict], max_items: int = 12) -> list[dict]:
+    deduped = []
+    seen: set[str] = set()
+    for item in items:
+        title_key = re.sub(r"\s+", " ", str(item.get("title", "")).strip().lower())
+        url_key = str(item.get("url", "")).strip().lower()
+        key = url_key or title_key
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    deduped.sort(
+        key=lambda x: (
+            x.get("relevance", 0),
+            1 if x.get("source_origin") == "tw_local" else 0,
+            1 if contains_cjk(x.get("title", "")) else 0,
+            pd.Timestamp.min.tz_localize("UTC") if pd.isna(x.get("published")) else x.get("published"),
+        ),
+        reverse=True,
+    )
+    return deduped[:max_items]
+
+
+def ticker_base_code(ticker: str) -> str:
+    return str(ticker).split(".", 1)[0].upper()
+
+
+def is_taiwan_ticker(ticker: str) -> bool:
+    ticker_upper = str(ticker).upper()
+    return ticker_upper.endswith(".TW") or ticker_upper.endswith(".TWO") or ticker_upper in TAIWAN_TICKER_METADATA
+
+
+def normalize_dashboard_ticker(raw_symbol: str) -> str:
+    symbol = str(raw_symbol).strip().upper().replace(" ", "")
+    if not symbol:
+        return ""
+    if symbol in TAIWAN_TICKER_METADATA:
+        return symbol
+    if symbol.isdigit() and len(symbol) in {4, 5, 6}:
+        return f"{symbol}.TW"
+    return symbol
+
+
+def market_scope_group_options(scope: str) -> list[str]:
+    if scope == "U.S. only":
+        return US_WATCHLIST_GROUPS
+    if scope == "Taiwan only":
+        return TAIWAN_WATCHLIST_GROUPS
+    return US_WATCHLIST_GROUPS + TAIWAN_WATCHLIST_GROUPS
+
+
+def display_ticker_label(ticker: str) -> str:
+    ticker_upper = str(ticker).upper()
+    meta = TAIWAN_TICKER_METADATA.get(ticker_upper)
+    if meta:
+        company = meta["zh"] if get_lang() == "繁體中文" else meta["en"]
+        return f"{meta['code']} {company}"
+    if is_taiwan_ticker(ticker_upper):
+        base = ticker_base_code(ticker_upper)
+        return f"{base} 台股" if get_lang() == "繁體中文" else f"{base} Taiwan"
+    return str(ticker).upper()
+
+
+def market_scope_label(scope: str) -> str:
+    return {
+        "Mixed (U.S. + Taiwan)": t("market_scope_mixed"),
+        "U.S. only": t("market_scope_us"),
+        "Taiwan only": t("market_scope_tw"),
+    }.get(scope, scope)
 
 
 # ---------------------------
@@ -1603,17 +2485,31 @@ def fetch_intraday_data(tickers: list[str]):
 
 @st.cache_data(ttl=600)
 def fetch_ticker_news(ticker: str, max_items: int = 12):
-    try:
-        tk = yf.Ticker(ticker)
+    raw_news = []
+    last_error = None
+    news_candidates = [ticker]
+    base_code = ticker_base_code(ticker)
+    if is_taiwan_ticker(ticker) and base_code != str(ticker).upper():
+        news_candidates.append(base_code)
+
+    for candidate in news_candidates:
         try:
-            raw_news = tk.news or []
-        except Exception:
-            raw_news = tk.get_news() or []
-    except Exception as e:
-        return [], f"News unavailable for {ticker}: {e}"
+            tk = yf.Ticker(candidate)
+            try:
+                raw_news = tk.news or []
+            except Exception:
+                raw_news = tk.get_news() or []
+            if raw_news:
+                break
+        except Exception as e:
+            last_error = e
+
+    if raw_news is None:
+        raw_news = []
 
     items = []
-    ticker_upper = ticker.upper()
+    ticker_upper = str(ticker).upper()
+    news_aliases = build_news_aliases(ticker_upper)
 
     for item in raw_news:
         if not isinstance(item, dict):
@@ -1646,15 +2542,7 @@ def fetch_ticker_news(ticker: str, max_items: int = 12):
             if isinstance(candidate, list):
                 related.extend([str(x).upper() for x in candidate])
 
-        text_blob = f"{title} {summary}".upper()
-        relevance = 0
-        if ticker_upper in related:
-            relevance += 4
-        if ticker_upper in text_blob:
-            relevance += 2
-        if any(keyword in text_blob for keyword in ("EARNINGS", "GUIDANCE", "AI", "CHIPS", "DEMAND", "REVENUE", "EXPORT", "TARIFF")):
-            relevance += 1
-
+        relevance = score_news_relevance(title, summary, related, news_aliases)
         impact_label, impact_score, impact_reason = infer_news_impact(title, summary)
         confidence = infer_news_confidence(relevance, impact_score)
 
@@ -1670,11 +2558,16 @@ def fetch_ticker_news(ticker: str, max_items: int = 12):
             "impact_score": impact_score,
             "impact_reason": impact_reason,
             "confidence": confidence,
+            "source_origin": "yahoo",
         })
 
-    items.sort(key=lambda x: (x["relevance"], pd.Timestamp.min.tz_localize("UTC") if pd.isna(x["published"]) else x["published"]), reverse=True)
-    filtered = [x for x in items if x["relevance"] > 0]
-    return (filtered or items)[:max_items], None
+    local_tw_items = fetch_taiwan_local_news(ticker, max_items=max_items * 2) if is_taiwan_ticker(ticker) else []
+    merged_items = dedupe_news_items(local_tw_items + items, max_items=max_items * 3)
+    filtered_items = [x for x in merged_items if x.get("relevance", 0) > 0]
+
+    if last_error and not merged_items:
+        return [], f"News unavailable for {display_ticker_label(ticker)}: {last_error}"
+    return (filtered_items or merged_items)[:max_items], None
 
 
 # ---------------------------
@@ -2326,30 +3219,31 @@ def resolve_trend_lens(lens_name: str, manual_override: bool, manual_period: str
 
 
 def render_active_trend_lens(lens_meta: dict):
+    lens_meta = tr_lens_meta(lens_meta)
     st.markdown(
         f"""
         <div class="lens-shell">
-            <div class="section-header" style="margin:0;">Trend Lens</div>
-            <div class="lens-title">{escape(lens_meta.get('title', 'Trend Lens'))}</div>
+            <div class="section-header" style="margin:0;">{t('trend_lens')}</div>
+            <div class="lens-title">{escape(lens_meta.get('title', t('trend_lens')))}</div>
             <div class="lens-copy">{escape(lens_meta.get('hook', ''))}</div>
             <div class="lens-grid">
                 <div class="lens-card">
-                    <div class="lens-label">Best use</div>
-                    <div class="lens-head">{escape(lens_meta.get('title', 'Trend Lens'))}</div>
+                    <div class="lens-label">{t('best_use')}</div>
+                    <div class="lens-head">{escape(lens_meta.get('title', t('trend_lens')))}</div>
                     <div class="lens-sub">{escape(lens_meta.get('hook', ''))}</div>
                 </div>
                 <div class="lens-card">
-                    <div class="lens-label">How to read it</div>
-                    <div class="lens-head">What this lens is good at</div>
+                    <div class="lens-label">{t('how_to_read_it')}</div>
+                    <div class="lens-head">{t('what_this_lens_good_at')}</div>
                     <div class="lens-sub">{escape(lens_meta.get('how_to_read', ''))}</div>
                 </div>
                 <div class="lens-card">
-                    <div class="lens-label">Watch for</div>
-                    <div class="lens-head">Most useful reference points</div>
+                    <div class="lens-label">{t('watch_for')}</div>
+                    <div class="lens-head">{t('most_useful_reference_points')}</div>
                     <div class="lens-sub">{escape(lens_meta.get('watch_for', ''))}</div>
                 </div>
             </div>
-            <div class="lens-copy" style="margin-top:12px;">The Winner Card and comparison scores now adapt to this active lens, so the strongest stock can change depending on whether you care about fresh reaction, swing structure, position strength, or cycle leadership.</div>
+            <div class="lens-copy" style="margin-top:12px;">{t('winner_card_adapts')}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2358,17 +3252,17 @@ def render_active_trend_lens(lens_meta: dict):
 
 def render_explore_hero():
     st.markdown(
-        """
+        f"""
         <div class="editorial-hero">
-            <div class="hero-kicker">Command Layer</div>
-            <div class="hero-title">Institutional-style market research, redesigned with a calmer premium theme.</div>
-            <div class="hero-copy">The new direction is cleaner, darker, and more focused. It reduces visual noise, strengthens hierarchy, and makes the journey from watchlist scan to deep ticker research feel more intentional.</div>
+            <div class="hero-kicker">{t('command_layer')}</div>
+            <div class="hero-title">{t('hero_title')}</div>
+            <div class="hero-copy">{t('hero_copy')}</div>
             <div class="hero-chip-row">
-                <span class="hero-chip">News-first reading flow</span>
-                <span class="hero-chip">Winner card with context</span>
-                <span class="hero-chip">Catalyst Engine reference guide</span>
-                <span class="hero-chip">Trading Lab interpretation</span>
-                <span class="hero-chip">Same theme, richer journey</span>
+                <span class="hero-chip">{t('chip_news_flow')}</span>
+                <span class="hero-chip">{t('chip_winner')}</span>
+                <span class="hero-chip">{t('chip_catalyst_guide')}</span>
+                <span class="hero-chip">{t('chip_trading_lab')}</span>
+                <span class="hero-chip">{t('chip_richer_journey')}</span>
             </div>
         </div>
         """,
@@ -2378,30 +3272,30 @@ def render_explore_hero():
 
 def render_section_guide():
     st.markdown(
-        """
+        f"""
         <div class="guide-shell">
-            <div class="guide-title">A more focused flow for deeper exploration</div>
-            <div class="guide-copy">Each section now behaves like part of a deliberate workflow: scan, compare, understand the driver, then validate the setup.</div>
+            <div class="guide-title">{t('guide_title')}</div>
+            <div class="guide-copy">{t('guide_copy')}</div>
             <div class="guide-grid">
                 <div class="guide-card">
-                    <div class="guide-label">Step 1</div>
-                    <div class="guide-head">Comparison Arena</div>
-                    <div class="guide-sub">Scan the watchlist fast. This is the shortlist stage where you decide which names deserve attention first.</div>
+                    <div class="guide-label">{t('step_1')}</div>
+                    <div class="guide-head">{t('comparison_arena')}</div>
+                    <div class="guide-sub">{t('comparison_arena_copy')}</div>
                 </div>
                 <div class="guide-card">
-                    <div class="guide-label">Step 2</div>
-                    <div class="guide-head">Winner Card</div>
-                    <div class="guide-sub">See which selected stock currently has the strongest setup and why the edge exists versus the next name.</div>
+                    <div class="guide-label">{t('step_2')}</div>
+                    <div class="guide-head">{t('winner_card')}</div>
+                    <div class="guide-sub">{t('winner_card_copy')}</div>
                 </div>
                 <div class="guide-card">
-                    <div class="guide-label">Step 3</div>
-                    <div class="guide-head">Catalyst + News + Alerts</div>
-                    <div class="guide-sub">Find out what is actually driving the narrative, then check how each lens sees the setup: earnings, AI demand, regulation, macro, analysts, or supply chain can shift different lenses in different ways.</div>
+                    <div class="guide-label">{t('step_3')}</div>
+                    <div class="guide-head">{t('catalyst_news_alerts')}</div>
+                    <div class="guide-sub">{t('catalyst_news_alerts_copy')}</div>
                 </div>
                 <div class="guide-card">
-                    <div class="guide-label">Step 4</div>
-                    <div class="guide-head">Trading Lab + Candles</div>
-                    <div class="guide-sub">Only after the narrative makes sense should you confirm the structure with the active trend lens, MACD, Bollinger context, support, resistance, and candles.</div>
+                    <div class="guide-label">{t('step_4')}</div>
+                    <div class="guide-head">{t('trading_lab_candles')}</div>
+                    <div class="guide-sub">{t('trading_lab_candles_copy')}</div>
                 </div>
             </div>
         </div>
@@ -2417,28 +3311,28 @@ def render_reference_guide(analysis: dict, ticker: str, news_items: list[dict]):
     st.markdown(
         f"""
         <div class="reference-shell">
-            <div class="reference-title">Reference guide for {escape(ticker)}</div>
-            <div class="reference-copy">This panel explains what matters most in the current setup, so readers understand why each section exists instead of just seeing another chart or score.</div>
+            <div class="reference-title">{t("reference_guide_for", ticker=escape(display_ticker_label(ticker)))}</div>
+            <div class="reference-copy">{t("reference_copy")}</div>
             <div class="reference-grid">
                 <div class="reference-card">
-                    <div class="reference-label">What to watch in news</div>
-                    <div class="reference-head">{escape(catalyst.get('dominant', 'Macro'))}</div>
-                    <div class="reference-sub">This is the most active catalyst bucket right now. If new headlines keep leaning the same way, they can strengthen or weaken the current signal faster than technicals alone.</div>
+                    <div class="reference-label">{t("what_to_watch_in_news")}</div>
+                    <div class="reference-head">{escape(tr_term(catalyst.get('dominant', 'Macro')))}</div>
+                    <div class="reference-sub">{escape(tr_term("This is the most active catalyst bucket right now. If new headlines keep leaning the same way, they can strengthen or weaken the current signal faster than technicals alone."))}</div>
                 </div>
                 <div class="reference-card">
-                    <div class="reference-label">What gives conviction</div>
-                    <div class="reference-head">{escape(analysis.get('confidence', 'Moderate'))} confidence</div>
-                    <div class="reference-sub">Confidence comes from trend structure, news pulse, and trade setup aligning. When those disagree, the dashboard tends to fall back to HOLD.</div>
+                    <div class="reference-label">{t("what_gives_conviction")}</div>
+                    <div class="reference-head">{escape(tr_confidence(analysis.get('confidence', 'Moderate')))}</div>
+                    <div class="reference-sub">{escape(tr_term("Confidence comes from trend structure, news pulse, and trade setup aligning. When those disagree, the dashboard tends to fall back to HOLD."))}</div>
                 </div>
                 <div class="reference-card">
-                    <div class="reference-label">Trading lens</div>
-                    <div class="reference-head">{escape(lab.get('setup', 'Balanced'))}</div>
-                    <div class="reference-sub">Use this as the action style: momentum-led means continuation is cleaner, pullback watch means patience matters, and risk-off means price can stay fragile.</div>
+                    <div class="reference-label">{t("trading_lens")}</div>
+                    <div class="reference-head">{escape(tr_setup(lab.get('setup', 'Balanced')))}</div>
+                    <div class="reference-sub">{escape(tr_term("Use this as the action style: momentum-led means continuation is cleaner, pullback watch means patience matters, and risk-off means price can stay fragile."))}</div>
                 </div>
                 <div class="reference-card">
-                    <div class="reference-label">Lead story context</div>
-                    <div class="reference-head">{escape((lead.get('title') or 'No strong lead story')[:56])}</div>
-                    <div class="reference-sub">The lead story is the fastest narrative snapshot. Check whether its direction agrees with the Catalyst Engine before trusting it too much.</div>
+                    <div class="reference-label">{t("lead_story_context")}</div>
+                    <div class="reference-head">{escape((lead.get('title') or tr_term('No strong lead story'))[:56])}</div>
+                    <div class="reference-sub">{escape(tr_term("The lead story is the fastest narrative snapshot. Check whether its direction agrees with the Catalyst Engine before trusting it too much."))}</div>
                 </div>
             </div>
         </div>
@@ -2463,7 +3357,7 @@ def render_news_highlights(ticker: str, news_items: list[dict]):
             <div><span class="highlight-tag {cls}">{escape(label)}</span></div>
             <div>
                 <div class="highlight-head">{title}</div>
-                <div class="soft-note">{provider} · Why it matters to {escape(ticker)}: {reason}</div>
+                <div class="soft-note">{provider} · Why it matters to {escape(display_ticker_label(ticker))}: {reason}</div>
             </div>
             <div class="soft-note" style="text-align:right;"><strong style="font-size:18px; color:#ffffff;">{probability}%</strong><br>estimated effect</div>
         </div>
@@ -2495,7 +3389,8 @@ def label_lens_state(state: str, lens_title: str) -> str:
         "Position View": {"bullish": "Position View intact", "bearish": "Position View broken", "neutral": "Position View mixed"},
         "Cycle View": {"bullish": "Cycle View leader", "bearish": "Cycle View laggard", "neutral": "Cycle View mixed"},
     }
-    return mapping.get(lens_title, {}).get(state, f"{lens_title} {state}")
+    value = mapping.get(lens_title, {}).get(state, f"{lens_title} {state}")
+    return tr_term(value)
 
 
 def build_lens_alerts(analysis: dict, intraday: dict) -> dict:
@@ -2553,40 +3448,40 @@ def render_alert_layer(analysis: dict, intraday: dict):
         cls = "lens-alert-bull" if state["state"] == "bullish" else "lens-alert-bear" if state["state"] == "bearish" else "lens-alert-neutral"
         chip_html.append(f'<span class="lens-alert-chip {cls}">{escape(state["label"])} · {state["score"]:+d}</span>')
 
-    reasons_html = "".join(f"<li>{escape(item)}</li>" for item in active_state.get("reasons", [])) or "<li>No extra alert context is active.</li>"
+    reasons_html = "".join(f"<li>{escape(tr_term(item))}</li>" for item in active_state.get("reasons", [])) or f"<li>{escape(t('no_extra_alert_context'))}</li>"
 
     st.markdown(
         f"""
         <div class="alert-shell">
-            <div class="section-header" style="margin:0; color:#eef4ff;">Alert Layer</div>
-            <div class="alert-title">{escape(alert_map.get('headline', 'Lens states are mixed.'))}</div>
-            <div class="alert-copy">Each lens now has its own alert state, so the same stock can be Fast Read bullish while still being Cycle View mixed or laggard.</div>
+            <div class="section-header" style="margin:0; color:#eef4ff;">{t("alert_layer")}</div>
+            <div class="alert-title">{escape(tr_term(alert_map.get('headline', 'Lens states are mixed.')))}</div>
+            <div class="alert-copy">{t("alert_layer_copy")}</div>
             <div class="alert-grid">
                 <div class="alert-box">
-                    <div class="alert-label">Fast Read</div>
-                    <div class="alert-value">{escape(states.get('Fast Read', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-label">{escape(tr_lens_name("Fast Read"))}</div>
+                    <div class="alert-value">{escape(tr_term(states.get('Fast Read', {}).get('label', 'N/A')))}</div>
                     <div class="alert-sub">Score {states.get('Fast Read', {}).get('score', 0):+d}</div>
                 </div>
                 <div class="alert-box">
-                    <div class="alert-label">Swing Map</div>
-                    <div class="alert-value">{escape(states.get('Swing Map', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-label">{escape(tr_lens_name("Swing Map"))}</div>
+                    <div class="alert-value">{escape(tr_term(states.get('Swing Map', {}).get('label', 'N/A')))}</div>
                     <div class="alert-sub">Score {states.get('Swing Map', {}).get('score', 0):+d}</div>
                 </div>
                 <div class="alert-box">
-                    <div class="alert-label">Position View</div>
-                    <div class="alert-value">{escape(states.get('Position View', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-label">{escape(tr_lens_name("Position View"))}</div>
+                    <div class="alert-value">{escape(tr_term(states.get('Position View', {}).get('label', 'N/A')))}</div>
                     <div class="alert-sub">Score {states.get('Position View', {}).get('score', 0):+d}</div>
                 </div>
                 <div class="alert-box">
-                    <div class="alert-label">Cycle View</div>
-                    <div class="alert-value">{escape(states.get('Cycle View', {}).get('label', 'N/A'))}</div>
+                    <div class="alert-label">{escape(tr_lens_name("Cycle View"))}</div>
+                    <div class="alert-value">{escape(tr_term(states.get('Cycle View', {}).get('label', 'N/A')))}</div>
                     <div class="alert-sub">Score {states.get('Cycle View', {}).get('score', 0):+d}</div>
                 </div>
             </div>
             <div class="lens-alert-row">{''.join(chip_html)}</div>
-            <div class="lens-alert-note"><strong>Active lens focus:</strong> {escape(active_title)} · {escape(active_state.get('label', 'N/A'))}</div>
+            <div class="lens-alert-note"><strong>{t("active_lens_focus")}:</strong> {escape(tr_lens_name(active_title))} · {escape(tr_term(active_state.get('label', 'N/A')))}</div>
             <ul class="crypto-reasons">{reasons_html}</ul>
-            <div class="lens-alert-note">Bullish {counts.get('bullish', 0)} · Neutral {counts.get('neutral', 0)} · Bearish {counts.get('bearish', 0)}</div>
+            <div class="lens-alert-note">{t("bullish_count", count=counts.get("bullish", 0))} · {t("neutral_count", count=counts.get("neutral", 0))} · {t("bearish_count", count=counts.get("bearish", 0))}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2720,42 +3615,71 @@ def render_winner_card(bundles: list[dict], lens_meta: dict | None = None):
     leader_analysis = leader["analysis"]
     catalyst = leader_analysis.get("catalyst_engine", {}).get("dominant", "Macro")
     runner_catalyst = runner["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
-    guide = "Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking."
+    guide = tr_term("Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking.")
     why = leader_fields["lens_reasons"][:3] or leader_analysis["reasons"][:3]
+
+    if get_lang() == "繁體中文":
+        hero_title = f"{display_ticker_label(leader['ticker'])} 目前在 {tr_lens_name(leader_fields['lens_title'])} 下領先"
+        hero_copy = f"和 {display_ticker_label(runner['ticker'])} 相比，這個配置在目前鏡頭下更乾淨、更具優勢。切換鏡頭後，領先者也可能改變。"
+        current_leader_label = "目前領先者"
+        nearest_rival_label = "最接近的對手"
+        lens_adjustment_label = "鏡頭調整"
+        catalyst_edge_label = "催化優勢"
+        lens_score_leader = f"鏡頭分數 {leader_fields['lens_score']:+d} · {tr_signal(leader_analysis['signal'])}"
+        lens_score_runner = f"鏡頭分數 {runner_fields['lens_score']:+d} · {tr_signal(runner['analysis']['signal'])}"
+        lens_adjustment_sub = f"基礎分數 {leader_fields['base_score']:+d}，再由目前鏡頭進一步調整。"
+        catalyst_sub = f"次名焦點：{tr_term(runner_catalyst)} · 目前優勢 {diff:+d}"
+        compare_label = "智慧比較"
+        winner_badge = "勝出卡"
+    else:
+        hero_title = f"{display_ticker_label(leader['ticker'])} is leading under {tr_lens_name(leader_fields['lens_title'])}"
+        hero_copy = f"Compared with {display_ticker_label(runner['ticker'])}, this setup currently has the cleaner edge for the active lens. Change the lens and the winner can change too."
+        current_leader_label = "Current leader"
+        nearest_rival_label = "Nearest rival"
+        lens_adjustment_label = "Lens adjustment"
+        catalyst_edge_label = "Catalyst edge"
+        lens_score_leader = f"Lens score {leader_fields['lens_score']:+d} · {tr_signal(leader_analysis['signal'])}"
+        lens_score_runner = f"Lens score {runner_fields['lens_score']:+d} · {tr_signal(runner['analysis']['signal'])}"
+        lens_adjustment_sub = f"Base score {leader_fields['base_score']:+d} adjusted by the active lens."
+        catalyst_sub = f"Runner-up focus: {tr_term(runner_catalyst)} · Current edge {diff:+d}"
+        compare_label = "Smart Compare"
+        winner_badge = "Winner Card"
+
+    why_html = ''.join(f'<li>{escape(tr_term(item))}</li>' for item in why)
 
     st.markdown(
         f"""
         <div class="winner-shell">
-            <div class="section-header" style="margin:0; color:#eef4ff;">Smart Compare</div>
+            <div class="section-header" style="margin:0; color:#eef4ff;">{compare_label}</div>
             <div class="winner-copy">{escape(guide)}</div>
             <div class="winner-hero">
                 <div class="winner-hero-main">
-                    <span class="winner-badge">Winner Card</span>
-                    <div class="winner-main-title">{escape(leader['ticker'])} is leading under {escape(leader_fields['lens_title'])}</div>
-                    <div class="winner-main-copy">Compared with {escape(runner['ticker'])}, this setup currently has the cleaner edge for the active lens. Change the lens and the winner can change too.</div>
-                    <ul class="winner-reason-list">{''.join(f'<li>{escape(item)}</li>' for item in why)}</ul>
+                    <span class="winner-badge">{winner_badge}</span>
+                    <div class="winner-main-title">{escape(hero_title)}</div>
+                    <div class="winner-main-copy">{escape(hero_copy)}</div>
+                    <ul class="winner-reason-list">{why_html}</ul>
                 </div>
                 <div class="winner-hero-side">
                     <div class="winner-rail-grid">
                         <div class="winner-mini">
-                            <div class="winner-mini-label">Current leader</div>
-                            <div class="winner-mini-value">{escape(leader['ticker'])}</div>
-                            <div class="winner-mini-sub">Lens score {leader_fields['lens_score']:+d} · {escape(leader_analysis['signal'])}</div>
+                            <div class="winner-mini-label">{current_leader_label}</div>
+                            <div class="winner-mini-value">{escape(display_ticker_label(leader['ticker']))}</div>
+                            <div class="winner-mini-sub">{escape(lens_score_leader)}</div>
                         </div>
                         <div class="winner-mini">
-                            <div class="winner-mini-label">Nearest rival</div>
-                            <div class="winner-mini-value">{escape(runner['ticker'])}</div>
-                            <div class="winner-mini-sub">Lens score {runner_fields['lens_score']:+d} · {escape(runner['analysis']['signal'])}</div>
+                            <div class="winner-mini-label">{nearest_rival_label}</div>
+                            <div class="winner-mini-value">{escape(display_ticker_label(runner['ticker']))}</div>
+                            <div class="winner-mini-sub">{escape(lens_score_runner)}</div>
                         </div>
                         <div class="winner-mini">
-                            <div class="winner-mini-label">Lens adjustment</div>
+                            <div class="winner-mini-label">{lens_adjustment_label}</div>
                             <div class="winner-mini-value">{leader_fields['lens_adjustment']:+d}</div>
-                            <div class="winner-mini-sub">Base score {leader_fields['base_score']:+d} adjusted by the active lens.</div>
+                            <div class="winner-mini-sub">{escape(lens_adjustment_sub)}</div>
                         </div>
                         <div class="winner-mini">
-                            <div class="winner-mini-label">Catalyst edge</div>
-                            <div class="winner-mini-value">{escape(catalyst)}</div>
-                            <div class="winner-mini-sub">Runner-up focus: {escape(runner_catalyst)} · Current edge {diff:+d}</div>
+                            <div class="winner-mini-label">{catalyst_edge_label}</div>
+                            <div class="winner-mini-value">{escape(tr_term(catalyst))}</div>
+                            <div class="winner-mini-sub">{escape(catalyst_sub)}</div>
                         </div>
                     </div>
                 </div>
@@ -2910,10 +3834,10 @@ def impact_bar(item: dict) -> str:
 # ---------------------------
 def relevance_label(relevance: int) -> str:
     if relevance >= 4:
-        return "High"
+        return tr_relevance("High")
     if relevance >= 2:
-        return "Medium"
-    return "Low"
+        return tr_relevance("Medium")
+    return tr_relevance("Low")
 
 
 def article_probability(item: dict) -> int:
@@ -2931,10 +3855,10 @@ def article_direction_meta(item: dict) -> tuple[str, str, str]:
     label = item.get("impact_label", "Neutral / mixed")
     label_l = label.lower()
     if "bullish" in label_l:
-        return "Likely to support upside", "impact-up", "row-meter-fill-up"
+        return ("可能支撐上行" if get_lang() == "繁體中文" else "Likely to support upside"), "impact-up", "row-meter-fill-up"
     if "bearish" in label_l:
-        return "Likely to pressure downside", "impact-down", "row-meter-fill-down"
-    return "Likely to keep direction mixed", "impact-flat", "row-meter-fill-flat"
+        return ("可能帶來下行壓力" if get_lang() == "繁體中文" else "Likely to pressure downside"), "impact-down", "row-meter-fill-down"
+    return ("可能維持方向混合" if get_lang() == "繁體中文" else "Likely to keep direction mixed"), "impact-flat", "row-meter-fill-flat"
 
 
 def signal_css_class(signal: str) -> str:
@@ -2945,39 +3869,43 @@ def compact_story_line(item: dict, ticker: str) -> str:
     direction_text, tag_class, _ = article_direction_meta(item)
     prob = article_probability(item)
     title = escape(item.get("title", "Untitled"))
-    summary = escape((item.get("summary") or item.get("impact_reason") or "")[:180])
+    summary = escape(build_compact_summary_text(item, ticker, prob))
     provider = escape(str(item.get("provider", "Unknown source")))
     us_time = format_us_timestamp(item.get("published"))
     link_html = ""
     if item.get("url"):
-        link_html = f'<a class="brief-link" href="{escape(str(item["url"]))}" target="_blank">Open article ↗</a>'
-    return f"""
-        <div class="brief-item">
-            <div class="brief-meta">{provider} · {us_time}</div>
-            <div class="brief-headline">{title}</div>
-            <div class="brief-summary">{summary}</div>
-            <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
-                <span class="impact-tag {tag_class}">{escape(direction_text)}</span>
-                <span class="impact-tag impact-flat">Impact chance {prob}%</span>
-            </div>
-            {link_html}
-        </div>
-    """
+        link_html = f'<a class="brief-link" href="{escape(str(item["url"]))}" target="_blank">{t("open_article")}</a>'
+    helper_chip = f'<span class="news-helper-chip">{t("news_mode_bilingual")}</span>' if news_mode_prefers_helper() else ""
+    return (
+        f'<div class="brief-item">'
+        f'<div class="brief-meta">{provider} · {us_time}</div>'
+        f'<div class="brief-headline">{title}</div>'
+        f'<div class="brief-summary">{summary}</div>'
+        f'<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">'
+        f'<span class="impact-tag {tag_class}">{escape(direction_text)}</span>'
+        f'<span class="impact-tag impact-flat">{t("estimated_effect")} {prob}%</span>'
+        f'{helper_chip}'
+        f'</div>'
+        f'{link_html}'
+        f'</div>'
+    )
 
 
 def render_daily_briefing(ticker: str, news_items: list[dict]):
     top_items = news_items[:3]
     if not top_items:
-        st.info(f"No recent stock-specific news was returned for {ticker}.")
+        st.info(t("no_recent_news", ticker=display_ticker_label(ticker)))
         return
     body = "".join(compact_story_line(item, ticker) for item in top_items)
     st.markdown(
-        f"""
-        <div class="news-brief-card">
-            <div class="section-header">Daily Briefing</div>
-            {body}
-        </div>
-        """,
+        html_block(
+            f"""
+            <div class="news-brief-card">
+                <div class="section-header">{t("daily_briefing")}</div>
+                {body}
+            </div>
+            """
+        ),
         unsafe_allow_html=True,
     )
 
@@ -2988,49 +3916,49 @@ def render_feature_story(ticker: str, analysis: dict, news_items: list[dict]):
         direction_text, _, _ = article_direction_meta(lead)
         probability = article_probability(lead)
         title = escape(lead.get("title", f"{ticker} market setup"))
-        summary = escape((lead.get("summary") or lead.get("impact_reason") or analysis["summary"])[:420])
+        summary_html = build_news_summary_html(lead, ticker, probability, block_class="lead-summary")
         provider = escape(str(lead.get("provider", "Unknown source")))
         meta = f"{provider} · Taiwan {format_tw_timestamp(lead.get('published'))}"
         link_html = ""
         if lead.get("url"):
-            link_html = f'<a class="small-pill" href="{escape(str(lead["url"]))}" target="_blank">Open article ↗</a>'
+            link_html = f'<a class="small-pill" href="{escape(str(lead["url"]))}" target="_blank">{t("open_article")}</a>'
         pos = probability if "bullish" in lead.get("impact_label", "").lower() else max(100 - probability, 18)
         neg = probability if "bearish" in lead.get("impact_label", "").lower() else max(100 - probability, 18)
-        why_copy = escape(lead.get("impact_reason", analysis["summary"]))
+        why_copy = escape(tr_reason_text(lead.get("impact_reason", analysis["summary"])))
     else:
         lead = None
-        direction_text = "Direction currently mixed"
+        direction_text = tr_term("Direction currently mixed")
         probability = 50
         title = escape(f"{ticker} is trading on technical and news cross-currents")
-        summary = escape(analysis["summary"])
-        meta = "No stock-specific story returned"
+        summary_html = f'<div class="lead-summary">{escape(tr_reason_text(analysis["summary"]))}</div>'
+        meta = tr_term("No stock-specific story returned")
         link_html = ""
         pos = neg = 50
-        why_copy = escape(analysis["summary"])
+        why_copy = escape(tr_reason_text(analysis["summary"]))
 
     st.markdown(
         f"""
         <div class="lead-story">
-            <div class="section-header" style="margin:0; color:#eef4ff;">Top Story</div>
+            <div class="section-header" style="margin:0; color:#eef4ff;">{t("top_story")}</div>
             <div class="lead-kicker">{escape(meta)}</div>
             <div class="lead-title">{title}</div>
-            <div class="lead-summary">{summary}</div>
+            {summary_html}
             <div class="lead-meta-row">
                 <span class="small-pill">{escape(direction_text)}</span>
-                <span class="small-pill">Estimated effect on {escape(ticker)}: {probability}%</span>
-                <span class="small-pill">{escape(analysis['news_pulse']['label'])}</span>
+                <span class="small-pill">{t("estimated_effect_on", ticker=escape(display_ticker_label(ticker)), probability=probability)}</span>
+                <span class="small-pill">{escape(tr_news_label(analysis['news_pulse']['label']))}</span>
                 {link_html}
             </div>
             <div class="lead-story-board">
                 <div class="lead-story-panel">
-                    <div class="lead-panel-label">Why this matters now</div>
-                    <div class="lead-panel-value">{escape(ticker)} setup context</div>
+                    <div class="lead-panel-label">{t("why_this_matters_now")}</div>
+                    <div class="lead-panel-value">{t("setup_context", ticker=escape(display_ticker_label(ticker)))}</div>
                     <div class="lead-panel-copy">{why_copy}</div>
                 </div>
                 <div class="lead-story-panel">
-                    <div class="lead-panel-label">Directional pressure</div>
-                    <div class="lead-panel-value">Up {pos}% / Down {neg}%</div>
-                    <div class="lead-panel-copy">This is a reference estimate of how strongly the story could influence the selected stock in the near term.</div>
+                    <div class="lead-panel-label">{t("directional_pressure")}</div>
+                    <div class="lead-panel-value">{t("up_down_pressure", pos=pos, neg=neg)}</div>
+                    <div class="lead-panel-copy">{t("directional_pressure_copy")}</div>
                     <div class="impact-meter" style="margin-top:12px;">
                         <div class="impact-pos" style="width:{pos}%;"></div>
                     </div>
@@ -3048,34 +3976,34 @@ def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items:
     intraday_price = format_price(intraday["last_price"]) if intraday.get("available") else "N/A"
     intraday_change = format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A"
     latest_trend_date = format_us_timestamp(analysis["latest_daily_ts"])
-    top_reasons = "".join(f"<li>{escape(r)}</li>" for r in analysis["reasons"][:3])
-    alert_html = "".join(f"<li>{escape(a)}</li>" for a in analysis.get("alerts", [])[:2]) or "<li>No urgent alert is active.</li>"
+    top_reasons = "".join(f"<li>{escape(tr_reason_text(r))}</li>" for r in analysis["reasons"][:3])
+    alert_html = "".join(f"<li>{escape(tr_reason_text(a))}</li>" for a in analysis.get("alerts", [])[:2]) or f"<li>{escape(tr_term('No urgent alert is active.'))}</li>"
     st.markdown(
         f"""
         <div class="crypto-card">
-            <div class="crypto-kicker">Pro Signal Deck</div>
-            <div class="crypto-signal {signal_class}">{escape(signal)}</div>
+            <div class="crypto-kicker">{t("signal_deck")}</div>
+            <div class="crypto-signal {signal_class}">{escape(tr_signal(signal))}</div>
             <div class="crypto-main-number">{analysis.get('pro_score', analysis['score']):+d}</div>
-            <div class="crypto-sub">{escape(analysis['summary'])}</div>
+            <div class="crypto-sub">{escape(tr_reason_text(analysis['summary']))}</div>
             <div class="crypto-grid">
                 <div class="crypto-mini">
-                    <div class="crypto-mini-label">Confidence</div>
-                    <div class="crypto-mini-value">{escape(analysis['confidence'])}</div>
-                    <div class="crypto-mini-sub">1Y trend: {escape(analysis['trend'])}</div>
+                    <div class="crypto-mini-label">{t("confidence")}</div>
+                    <div class="crypto-mini-value">{escape(tr_confidence(analysis['confidence']))}</div>
+                    <div class="crypto-mini-sub">{t("trend_1y")}: {escape(tr_term(analysis['trend']))}</div>
                 </div>
                 <div class="crypto-mini">
-                    <div class="crypto-mini-label">News Pulse</div>
+                    <div class="crypto-mini-label">{t("news_pulse")}</div>
                     <div class="crypto-mini-value">{pulse['up']}/{pulse['down']}</div>
-                    <div class="crypto-mini-sub">{escape(pulse['label'])}</div>
+                    <div class="crypto-mini-sub">{escape(tr_news_label(pulse['label']))}</div>
                 </div>
                 <div class="crypto-mini">
-                    <div class="crypto-mini-label">Intraday</div>
+                    <div class="crypto-mini-label">{t("intraday")}</div>
                     <div class="crypto-mini-value">{intraday_change}</div>
                     <div class="crypto-mini-sub">{intraday_price}</div>
                 </div>
                 <div class="crypto-mini">
-                    <div class="crypto-mini-label">Trading Lab</div>
-                    <div class="crypto-mini-value">{escape(analysis.get('trading_lab', {}).get('setup', 'Balanced'))}</div>
+                    <div class="crypto-mini-label">{t("trading_lab")}</div>
+                    <div class="crypto-mini-value">{escape(tr_setup(analysis.get('trading_lab', {}).get('setup', 'Balanced')))}</div>
                     <div class="crypto-mini-sub">{latest_trend_date}</div>
                 </div>
             </div>
@@ -3155,29 +4083,29 @@ def render_decision_brief(ticker: str, analysis: dict, intraday: dict, news_item
     st.markdown(
         f"""
         <div class="brief-shell">
-            <div class="section-header" style="margin:0; color:#f5ead8;">Decision Brief</div>
-            <div class="brief-title">What matters now for {escape(ticker)}</div>
-            <div class="brief-copy">This is the quick executive read. It pulls the signal, catalyst engine, Trading Lab, and current alerts into one plain-language plan before the deeper research sections.</div>
+            <div class="section-header" style="margin:0; color:#f5ead8;">{t('decision_brief')}</div>
+            <div class="brief-title">{t('what_matters_now_for', ticker=escape(display_ticker_label(ticker)))}</div>
+            <div class="brief-copy">{t('decision_brief_copy')}</div>
             <div class="brief-grid">
                 <div class="brief-box">
-                    <div class="brief-label">Current stance</div>
-                    <div style="margin-top:10px;"><span class="crypto-signal {brief['signal_class']}">{escape(brief['stance'])}</span></div>
-                    <div class="brief-sub">{escape(brief['confidence'])} confidence · Intraday {escape(brief['intraday_move'])}</div>
+                    <div class="brief-label">{t('current_stance')}</div>
+                    <div style="margin-top:10px;"><span class="crypto-signal {brief['signal_class']}">{escape(tr_signal(brief['stance']))}</span></div>
+                    <div class="brief-sub">{escape(tr_confidence(brief['confidence']))} · {t('intraday')} {escape(brief['intraday_move'])}</div>
                 </div>
                 <div class="brief-box">
-                    <div class="brief-label">Dominant catalyst</div>
-                    <div class="brief-value">{escape(brief['dominant'])}</div>
-                    <div class="brief-sub">{escape(brief['news_label'])}</div>
+                    <div class="brief-label">{t('dominant_catalyst')}</div>
+                    <div class="brief-value">{escape(tr_term(brief['dominant']))}</div>
+                    <div class="brief-sub">{escape(tr_news_label(brief['news_label']))}</div>
                 </div>
                 <div class="brief-box">
-                    <div class="brief-label">Best execution style</div>
-                    <div class="brief-value">{escape(brief['setup'])}</div>
-                    <div class="brief-sub">{escape(brief['execution'])}</div>
+                    <div class="brief-label">{t('best_execution_style')}</div>
+                    <div class="brief-value">{escape(tr_setup(brief['setup']))}</div>
+                    <div class="brief-sub">{escape(tr_term(brief['execution']))}</div>
                 </div>
                 <div class="brief-box">
-                    <div class="brief-label">Main risk flag</div>
-                    <div class="brief-value brief-risk">{escape((brief['risk_flag'])[:68])}</div>
-                    <div class="brief-sub">Lead story: {escape((brief['lead_story'])[:90])}</div>
+                    <div class="brief-label">{t('main_risk_flag')}</div>
+                    <div class="brief-value brief-risk">{escape((tr_term(brief['risk_flag']))[:68])}</div>
+                    <div class="brief-sub">{t('lead_story_label')}: {escape((brief['lead_story'])[:90])}</div>
                 </div>
             </div>
             <div class="brief-action">Next step</div>
@@ -3192,40 +4120,40 @@ def render_story_row(item: dict, ticker: str, idx: int):
     direction_text, tag_class, meter_class = article_direction_meta(item)
     probability = article_probability(item)
     title = escape(item.get("title", "Untitled"))
-    summary = escape(item.get("summary") or item.get("impact_reason") or "")
+    summary_html = build_news_summary_html(item, ticker, probability)
     provider = escape(str(item.get("provider", "Unknown source")))
     related = ", ".join(item.get("related", [])[:5]) if item.get("related") else "Not provided"
     meta = f"{provider} · US {format_us_timestamp(item.get('published'))} · Taiwan {format_tw_timestamp(item.get('published'))}"
     relevance = relevance_label(int(item.get("relevance", 0)))
     link_html = ""
     if item.get("url"):
-        link_html = f'<a class="inline-link" href="{escape(str(item["url"]))}" target="_blank">Open article ↗</a>'
+        link_html = f'<a class="inline-link" href="{escape(str(item["url"]))}" target="_blank">{t("open_article")}</a>'
     st.markdown(
         f"""
         <div class="story-row">
             <div class="story-row-head">
                 <div>
-                    <div class="story-row-meta">Story {idx:02d} · {escape(meta)}</div>
+                    <div class="story-row-meta">{t("story", idx=idx)} · {escape(meta)}</div>
                     <div class="story-row-title">{title}</div>
                     <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">
                         <span class="impact-tag {tag_class}">{escape(direction_text)}</span>
-                        <span class="impact-tag impact-flat">Confidence {escape(item.get('confidence', 'N/A'))}</span>
-                        <span class="impact-tag impact-flat">Relevance {escape(relevance)}</span>
+                        <span class="impact-tag impact-flat">{t("confidence")} {escape(tr_confidence(item.get('confidence', 'N/A')))}</span>
+                        <span class="impact-tag impact-flat">{t("relevance")} {escape(relevance)}</span>
                     </div>
                 </div>
             </div>
             <div class="story-row-grid">
                 <div>
-                    <div class="story-row-summary">{summary}</div>
-                    <div class="story-row-summary"><strong>Why this could matter to {escape(ticker)}:</strong> {escape(item.get('impact_reason', ''))}</div>
-                    <div class="story-row-summary"><strong>Related tickers:</strong> {escape(related)}</div>
+                    {summary_html}
+                    <div class="story-row-summary"><strong>{t("why_this_could_matter", ticker=escape(display_ticker_label(ticker)))}</strong> {escape(tr_reason_text(item.get('impact_reason', '')))}</div>
+                    <div class="story-row-summary"><strong>{t("related_tickers")}</strong> {escape(tr_term(related))}</div>
                     <div class="row-meter"><div class="{meter_class}" style="width:{probability}%;"></div></div>
                     <div style="margin-top:10px;">{link_html}</div>
                 </div>
                 <div class="prob-box">
-                    <div class="prob-label">Estimated effect</div>
+                    <div class="prob-label">{t("estimated_effect")}</div>
                     <div class="prob-value">{probability}%</div>
-                    <div class="prob-sub">Chance this story materially nudges {escape(ticker)} in the shown direction over the near term.</div>
+                    <div class="prob-sub">{t("chance_nudges", ticker=escape(display_ticker_label(ticker)))}</div>
                     <div class="prob-meter">
                         <div class="prob-meter-fill" style="width:{probability}%;"></div>
                     </div>
@@ -3239,30 +4167,31 @@ def render_story_row(item: dict, ticker: str, idx: int):
 
 def render_news_stream(ticker: str, news_items: list[dict]):
     st.markdown(
-        """
+        f"""
         <div class="news-board-shell">
-            <div class="section-header" style="margin:0; color:#eef4ff;">Top News Stories</div>
-            <div class="news-board-copy">Selected-stock stories first. Use the highlights board to spot what matters most, then move into the full story rows for detail, relevance, and directional context.</div>
+            <div class="section-header" style="margin:0; color:#eef4ff;">{t("top_news_stories")}</div>
+            <div class="news-board-copy">{t("news_board_copy")}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     if not news_items:
-        st.info(f"No recent stock-specific news was returned for {ticker}.")
+        st.info(t("no_recent_news", ticker=display_ticker_label(ticker)))
         return
     render_news_highlights(ticker, news_items)
     for idx, item in enumerate(news_items, start=1):
         render_story_row(item, ticker, idx)
 
 def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None):
+    lens_display = tr_lens_meta(lens_meta or {"title": "Position View", "how_to_read": "Use this view to confirm structure."})
     st.markdown(
         f"""
         <div class="trend-shell">
             <div class="trend-header">
                 <div>
-                    <div class="section-header" style="margin:0;">Trend Lab</div>
-                    <div class="trend-title">Candlestick confirmation</div>
-                    <div class="trend-sub">This section stays at the bottom so readers first absorb the news and estimated stock impact, then confirm the setup with the active trend lens and live tape.</div>
+                    <div class="section-header" style="margin:0;">{t("trend_lab")}</div>
+                    <div class="trend-title">{t("candlestick_confirmation")}</div>
+                    <div class="trend-sub">{t("trend_lab_copy")}</div>
                 </div>
             </div>
         </div>
@@ -3271,17 +4200,17 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
     )
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Last daily close", format_price(analysis["last_price"]))
+    c1.metric(t("last_daily_close"), format_price(analysis["last_price"]))
     c2.metric("SMA 50 vs 200", f"{format_price(analysis['sma50'])} / {format_price(analysis['sma200'])}")
     c3.metric("RSI 14", "N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}")
-    c4.metric("Intraday move", format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
+    c4.metric(t("intraday_move"), format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
 
     render_trading_lab_panel(analysis)
 
     render_candlestick_chart(
         daily_ohlc.tail(252) if daily_ohlc is not None else pd.DataFrame(),
-        "Candlestick structure under the active trend lens",
-        f"{lens_meta.get('title', 'Trend Lens')}: {lens_meta.get('how_to_read', 'Use this view to confirm structure.')}" if lens_meta else "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
+        t("candlestick_confirmation"),
+        f"{lens_display.get('title', tr_lens_name((lens_meta or {}).get('title', 'Trend Lens')))}: {lens_display.get('how_to_read', (lens_meta or {}).get('how_to_read', 'Use this view to confirm structure.'))}" if lens_meta else "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
         height=440,
         show_ma=True,
     )
@@ -3289,14 +4218,14 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
     if intraday.get("available") and intraday_ohlc is not None and not intraday_ohlc.empty:
         render_candlestick_chart(
             intraday_ohlc.tail(78),
-            "Live intraday candlestick tape (5m)",
-            "Latest intraday price action in the same dark premium theme.",
+            "Live intraday candlestick tape (5m)" if get_lang() == "English" else "即時盤中 K 線 (5 分)",
+            "Latest intraday price action in the same dark premium theme." if get_lang() == "English" else "以相同高級深色主題呈現最新盤中價格結構。",
             height=300,
             show_ma=False,
         )
 
     st.markdown(
-        f'<div class="footer-note">Research view only. The signal combines moving averages, RSI, volume confirmation, 1-year trend, and current stock-specific news pulse.</div>',
+        f'<div class="footer-note">{t("research_view_only")}</div>',
         unsafe_allow_html=True,
     )
 
@@ -3394,26 +4323,26 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         <div class="compare-shell">
             <div class="compare-topline">
                 <div>
-                    <div class="section-header" style="margin:0; color:#eef4ff;">Comparison Arena</div>
-                    <div class="compare-title">Modern side-by-side setup for price strength and signal quality</div>
-                    <div class="compare-copy">This section now follows the same premium dark control-panel style as your sidebar. It lets you scan which stock has stronger trend structure, cleaner recommendation quality, and better news support before you open each individual page.</div>
+                    <div class="section-header" style="margin:0; color:#eef4ff;">{t("comparison_arena")}</div>
+                    <div class="compare-title">{t("comparison_title")}</div>
+                    <div class="compare-copy">{t("comparison_copy")}</div>
                 </div>
             </div>
             <div class="compare-hero-grid">
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">Strongest Pro setup</div>
-                    <div class="compare-hero-value">{escape(strongest['ticker'])}</div>
-                    <div class="compare-hero-sub">Lens score {compute_lens_winner_fields(strongest, lens_meta)['lens_score']:+d} · {escape(strongest['analysis']['signal'])} · {escape(strongest['analysis']['confidence'])} confidence</div>
+                    <div class="compare-hero-label">{t("strongest_pro_setup")}</div>
+                    <div class="compare-hero-value">{escape(display_ticker_label(strongest['ticker']))}</div>
+                    <div class="compare-hero-sub">{t("lens_score")} {compute_lens_winner_fields(strongest, lens_meta)['lens_score']:+d} · {escape(tr_signal(strongest['analysis']['signal']))} · {escape(tr_confidence(strongest['analysis']['confidence']))}</div>
                 </div>
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">Best 1Y price strength</div>
-                    <div class="compare-hero-value">{escape(best_return['ticker'])}</div>
-                    <div class="compare-hero-sub">{format_percent(best_return['analysis']['one_year_return'])} over the selected trend window</div>
+                    <div class="compare-hero-label">{t("best_1y_price_strength")}</div>
+                    <div class="compare-hero-value">{escape(display_ticker_label(best_return['ticker']))}</div>
+                    <div class="compare-hero-sub">{format_percent(best_return['analysis']['one_year_return'])}</div>
                 </div>
                 <div class="compare-hero-tile">
-                    <div class="compare-hero-label">Best current news tailwind</div>
-                    <div class="compare-hero-value">{escape(most_bullish_news['ticker'])}</div>
-                    <div class="compare-hero-sub">{escape(most_bullish_news['analysis']['news_pulse']['label'])}</div>
+                    <div class="compare-hero-label">{t("best_current_news_tailwind")}</div>
+                    <div class="compare-hero-value">{escape(display_ticker_label(most_bullish_news['ticker']))}</div>
+                    <div class="compare-hero-sub">{escape(tr_news_label(most_bullish_news['analysis']['news_pulse']['label']))}</div>
                 </div>
             </div>
         </div>
@@ -3432,21 +4361,21 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
             st.markdown(
                 f"""
                 <div class="compare-card">
-                    <div class="compare-card-kicker">Side-by-side profile</div>
-                    <div style="margin-top:10px;"><span class="crypto-signal {signal_class_name}">{escape(signal)}</span></div>
-                    <div class="compare-card-title">{escape(bundle['ticker'])}</div>
+                    <div class="compare-card-kicker">{t("side_by_side_profile")}</div>
+                    <div style="margin-top:10px;"><span class="crypto-signal {signal_class_name}">{escape(tr_signal(signal))}</span></div>
+                    <div class="compare-card-title">{escape(display_ticker_label(bundle['ticker']))}</div>
                     <div class="compare-card-price">{format_price(analysis['last_price'])}</div>
                     <div class="compare-card-grid">
                         <div class="compare-stat">
-                            <div class="compare-stat-label">1Y Return</div>
+                            <div class="compare-stat-label">{t("trend_1y")}</div>
                             <div class="compare-stat-value">{format_percent(analysis['one_year_return'])}</div>
                         </div>
                         <div class="compare-stat">
-                            <div class="compare-stat-label">Confidence</div>
-                            <div class="compare-stat-value">{escape(analysis['confidence'])}</div>
+                            <div class="compare-stat-label">{t("confidence")}</div>
+                            <div class="compare-stat-value">{escape(tr_confidence(analysis["confidence"]))}</div>
                         </div>
                         <div class="compare-stat">
-                            <div class="compare-stat-label">Lens Score</div>
+                            <div class="compare-stat-label">{t("lens_score")}</div>
                             <div class="compare-stat-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
                         </div>
                         <div class="compare-stat">
@@ -3455,7 +4384,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
                         </div>
                     </div>
                     <div class="compare-card-meta">
-                        Intraday <strong>{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</strong> · News pulse <strong>{escape(pulse)}</strong>
+                        {t('intraday')} <strong>{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</strong> · {t('news_pulse')} <strong>{escape(tr_news_label(pulse))}</strong>
                     </div>
                 </div>
                 """,
@@ -3474,34 +4403,34 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         signal_class_name = signal_css_class(signal)
         row_html_parts.append(textwrap.dedent(f"""<div class="compare-table-row">
     <div class="compare-table-cell">
-        <div class="compare-table-ticker">{escape(bundle['ticker'])}</div>
-        <div class="compare-table-sub">{escape(analysis['trend'])}</div>
+        <div class="compare-table-ticker">{escape(display_ticker_label(bundle['ticker']))}</div>
+        <div class="compare-table-sub">{escape(tr_term(analysis["trend"]))}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">Last price</div>
+        <div class="compare-table-sub">{t("last_price")}</div>
         <div class="compare-table-value">{format_price(analysis['last_price'])}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">1Y return</div>
+        <div class="compare-table-sub">{t("trend_1y")}</div>
         <div class="compare-table-value">{format_percent(analysis['one_year_return'])}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">Signal</div>
-        <div><span class="compare-table-chip {signal_class_name}">{escape(signal)}</span></div>
-        <div class="compare-table-note">{escape(analysis['confidence'])} confidence</div>
+        <div class="compare-table-sub">{t("signal")}</div>
+        <div><span class="compare-table-chip {signal_class_name}">{escape(tr_signal(signal))}</span></div>
+        <div class="compare-table-note">{escape(tr_confidence(analysis["confidence"]))}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">Lens score</div>
+        <div class="compare-table-sub">{t("lens_score")}</div>
         <div class="compare-table-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
         <div class="compare-table-note">RSI {"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">Intraday</div>
+        <div class="compare-table-sub">{t("intraday")}</div>
         <div class="compare-table-value">{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</div>
         <div class="compare-table-note">{escape(analysis['rsi_status'])}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">News pulse</div>
+        <div class="compare-table-sub">{t("news_pulse")}</div>
         <div class="compare-table-value">{escape(analysis['news_pulse']['label'])}</div>
         <div class="compare-table-note">{escape(analysis['summary'])}</div>
     </div>
@@ -3523,7 +4452,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         st.markdown(
             f"""
             <div class="mini-candle-card">
-                <div class="mini-candle-name">{escape(bundle['ticker'])}</div>
+                <div class="mini-candle-name">{escape(display_ticker_label(bundle['ticker']))}</div>
                 <div class="mini-candle-sub">{escape(bundle['analysis']['signal'])} · {escape(bundle['analysis']['trend'])}</div>
             </div>
             """,
@@ -3531,7 +4460,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         )
         render_candlestick_chart(
             bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
-            f"{bundle['ticker']} recent structure",
+            f"{t("recent_structure", ticker=display_ticker_label(bundle["ticker"]))}",
             "Recent daily candles in the shared dashboard theme.",
             height=220,
             show_ma=False,
@@ -3561,7 +4490,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
 def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
     bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
     if bundle is None:
-        st.warning(f"No usable price series found for {ticker}.")
+        st.warning("找不到可用的價格序列。" if get_lang() == "繁體中文" else f"No usable price series found for {display_ticker_label(ticker)}.")
         return
 
     if bundle["news_error"]:
@@ -3586,7 +4515,7 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
 
 
 def render_stock_explorer_nav(tickers: list[str]):
-    chip_html = "".join(f'<span class="explorer-nav-chip">{escape(ticker)}</span>' for ticker in tickers[:10])
+    chip_html = "".join(f'<span class="explorer-nav-chip">{escape(display_ticker_label(ticker))}</span>' for ticker in tickers[:10])
     if len(tickers) > 10:
         chip_html += f'<span class="explorer-nav-chip">+{len(tickers) - 10} more</span>'
 
@@ -3595,17 +4524,17 @@ def render_stock_explorer_nav(tickers: list[str]):
         <div class="explorer-nav-shell">
             <div class="explorer-nav-head">
                 <div>
-                    <div class="explorer-nav-kicker">Explorer Navigation</div>
-                    <div class="explorer-nav-title">Choose a ticker below to enter its full market workspace</div>
-                    <div class="explorer-nav-copy">This is the transition from <strong>screening</strong> into <strong>deep research</strong>. Select any ticker tab below and the dashboard shifts into that stock’s own workspace with related news, catalyst mapping, lens-aware alerts, Trading Lab, and candlestick confirmation.</div>
+                    <div class="explorer-nav-kicker">{t("explorer_navigation")}</div>
+                    <div class="explorer-nav-title">{t("choose_ticker_workspace")}</div>
+                    <div class="explorer-nav-copy">{t("explorer_nav_copy")}</div>
                     <div class="explorer-nav-row">
                         {chip_html}
                     </div>
                 </div>
                 <div class="explorer-nav-panel">
-                    <div class="explorer-nav-panel-label">What happens next</div>
-                    <div class="explorer-nav-panel-value">Open a ticker workspace ↓</div>
-                    <div class="explorer-nav-panel-copy">You’ll move into that stock’s dedicated workspace, where the news, catalysts, alerts, and chart structure are all focused on just that one name.</div>
+                    <div class="explorer-nav-panel-label">{t("what_happens_next")}</div>
+                    <div class="explorer-nav-panel-value">{t("open_ticker_workspace")}</div>
+                    <div class="explorer-nav-panel-copy">{t("open_ticker_workspace_copy")}</div>
                 </div>
             </div>
         </div>
@@ -3613,79 +4542,148 @@ def render_stock_explorer_nav(tickers: list[str]):
         unsafe_allow_html=True,
     )
 
+def inject_localization_overrides():
+    st.markdown(
+        """
+        <style>
+        .news-helper-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 11px;
+            border-radius: 999px;
+            border: 1px solid rgba(244, 197, 106, 0.24);
+            background: rgba(244, 197, 106, 0.10);
+            color: #f4d8a3;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def generate_dashboard():
     inject_css()
     inject_premium_overrides()
-    st.markdown('<div class="top-kicker">David Lau Stock Market Vision</div>', unsafe_allow_html=True)
-    st.title("David Lau Stock Market Vision")
-    st.markdown(
-        '<div class="top-intro">A calmer, more premium market workspace focused on clarity, hierarchy, and deeper exploration across comparison, catalysts, news, and chart structure.</div>',
-        unsafe_allow_html=True,
-    )
-    render_explore_hero()
-    render_section_guide()
+    inject_localization_overrides()
 
     with st.sidebar:
+        current_lang = st.session_state.get("dashboard_language", "English")
+        selected_lang = st.selectbox(
+            t("language"),
+            options=list(LANGUAGE_OPTIONS.keys()),
+            index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
+        )
+        st.session_state["dashboard_language"] = selected_lang
+
+        current_news_mode = st.session_state.get("dashboard_news_mode", "Original source")
+        selected_news_mode = st.selectbox(
+            t("news_display_mode"),
+            options=list(NEWS_DISPLAY_OPTIONS.keys()),
+            index=list(NEWS_DISPLAY_OPTIONS.keys()).index(current_news_mode),
+            format_func=lambda key: {
+                "Original source": t("news_mode_original"),
+                "Bilingual assist": t("news_mode_bilingual"),
+                "Chinese-first assist": t("news_mode_chinese_first"),
+            }.get(key, key),
+        )
+        st.session_state["dashboard_news_mode"] = selected_news_mode
+        st.caption(t("headline_note"))
+        st.caption(t("news_display_note"))
         st.markdown(
-            """
+            f"""
             <div class="side-hero">
-                <div class="side-eyebrow">Control Center</div>
-                <div class="side-title">Vision Deck</div>
-                <div class="side-copy">Build a much broader U.S. market watchlist, compare selected stocks side by side, and refresh the live tape in one modern control panel.</div>
+                <div class="side-eyebrow">{t('control_center')}</div>
+                <div class="side-title">{t('vision_deck')}</div>
+                <div class="side-copy">{t('vision_deck_copy')}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="side-group-label">Watchlist universe</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="side-group-label">{t("watchlist_universe")}</div>', unsafe_allow_html=True)
+        current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+        selected_market_scope = st.selectbox(
+            t("market_scope"),
+            options=list(MARKET_SCOPE_OPTIONS.keys()),
+            index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_market_scope) if current_market_scope in MARKET_SCOPE_OPTIONS else 0,
+            format_func=market_scope_label,
+        )
+        st.session_state["dashboard_market_scope"] = selected_market_scope
+        st.caption(t("market_scope_note"))
+
+        scope_group_options = market_scope_group_options(selected_market_scope)
         selected_groups = st.multiselect(
-            "Preset groups",
-            options=list(WATCHLIST_PRESETS.keys()),
-            default=["Tech & AI", "Semiconductors", "Financials", "Healthcare", "Consumer", "Industrials", "Energy", "Market ETFs"],
-            placeholder="Expand by sector...",
+            t("preset_groups"),
+            options=scope_group_options,
+            format_func=tr_group,
+            default=[group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope] if group in scope_group_options],
+            placeholder=t("expand_by_sector"),
             label_visibility="collapsed",
         )
 
-        available_universe = set(DEFAULT_WATCHLIST_UNIVERSE)
-        for group in selected_groups:
+        available_universe = set()
+        source_groups = selected_groups or scope_group_options
+        for group in source_groups:
             available_universe.update(WATCHLIST_PRESETS.get(group, []))
+        available_universe.update(
+            ticker for ticker in DEFAULT_TICKERS
+            if selected_market_scope != "Taiwan only" or is_taiwan_ticker(ticker)
+        )
         available_universe = sorted(available_universe)
 
+        default_ticker_pool = DEFAULT_TICKERS if selected_market_scope == "Mixed (U.S. + Taiwan)" else [
+            ticker for ticker in DEFAULT_TICKERS
+            if (selected_market_scope == "Taiwan only" and is_taiwan_ticker(ticker)) or (selected_market_scope == "U.S. only" and not is_taiwan_ticker(ticker))
+        ]
         tickers = st.multiselect(
-            "Tickers",
+            t("tickers"),
             options=available_universe,
-            default=[ticker for ticker in DEFAULT_TICKERS if ticker in available_universe],
-            placeholder="Pick any watchlist symbols...",
+            default=[ticker for ticker in default_ticker_pool if ticker in available_universe],
+            placeholder=t("pick_watchlist_symbols"),
+            format_func=display_ticker_label,
         )
 
         custom_ticker_text = st.text_input(
-            "Custom symbols",
+            t("custom_symbols"),
             value="",
-            placeholder="Add any U.S. ticker, e.g. HOOD, NET, CRWD, SHOP",
+            placeholder=t("custom_symbols_placeholder"),
         )
         custom_tickers = [
-            ticker.strip().upper()
+            normalize_dashboard_ticker(ticker)
             for ticker in custom_ticker_text.replace("\n", ",").split(",")
             if ticker.strip()
         ]
 
         final_tickers = []
         for ticker in tickers + custom_tickers:
-            if ticker not in final_tickers:
-                final_tickers.append(ticker)
+            normalized = normalize_dashboard_ticker(ticker)
+            if not normalized:
+                continue
+            if selected_market_scope == "Taiwan only" and not is_taiwan_ticker(normalized):
+                continue
+            if selected_market_scope == "U.S. only" and is_taiwan_ticker(normalized):
+                continue
+            if normalized not in final_tickers:
+                final_tickers.append(normalized)
         tickers = final_tickers
 
-        st.caption("You can now build a much broader U.S. stock watchlist by sector, and also type any extra symbol manually.")
-        st.markdown('<div class="side-group-label">Trend lens</div>', unsafe_allow_html=True)
+        st.caption(t("watchlist_caption"))
+        st.markdown(f'<div class="side-group-label">{t("trend_lens")}</div>', unsafe_allow_html=True)
         lens_name = st.select_slider(
-            "Trend lens",
+            t("trend_lens"),
             options=list(TREND_LENSES.keys()),
             value=DEFAULT_TREND_LENS,
-            help="Swap between purpose-built chart lenses instead of raw lookback periods.",
+            format_func=tr_lens_name,
+            help="Swap between purpose-built chart lenses instead of raw lookback periods." if get_lang() == "English" else "在不同的用途鏡頭間切換，而不是只看原始期間。",
         )
-        manual_override = st.toggle("Manual period override", value=False)
+        manual_override = st.toggle(t("manual_period_override"), value=False)
         if manual_override:
-            manual_period = st.selectbox("Custom lookback", SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
-            manual_interval = st.selectbox("Custom interval", SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
+            manual_period = st.selectbox(t("custom_lookback"), SUPPORTED_PERIODS, index=SUPPORTED_PERIODS.index(DEFAULT_PERIOD))
+            manual_interval = st.selectbox(t("custom_interval"), SUPPORTED_INTERVALS, index=SUPPORTED_INTERVALS.index(DEFAULT_INTERVAL))
         else:
             manual_period = DEFAULT_PERIOD
             manual_interval = DEFAULT_INTERVAL
@@ -3693,50 +4691,60 @@ def generate_dashboard():
         lens_meta = resolve_trend_lens(lens_name, manual_override, manual_period, manual_interval)
         period = lens_meta["period"]
         interval = lens_meta["interval"]
+        lens_display = tr_lens_meta(lens_meta)
 
         st.markdown(
             f"""
             <div class="side-lens-shell">
-                <div class="side-lens-title">{escape(lens_meta['title'])}</div>
-                <div class="side-lens-copy">{escape(lens_meta['hook'])}</div>
+                <div class="side-lens-title">{escape(lens_display['title'])}</div>
+                <div class="side-lens-copy">{escape(lens_display['hook'])}</div>
                 <div class="side-lens-chip-row">
                     <span class="side-lens-chip">{escape(period)}</span>
                     <span class="side-lens-chip">{escape(interval)}</span>
-                    <span class="side-lens-chip">Reference lens</span>
+                    <span class="side-lens-chip">{t('reference_lens')}</span>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        st.markdown('<div class="side-group-label">Live refresh</div>', unsafe_allow_html=True)
-        if st.button("Refresh live data", use_container_width=True):
+        st.markdown(f'<div class="side-group-label">{t("live_refresh")}</div>', unsafe_allow_html=True)
+        if st.button(t("refresh_live_data"), use_container_width=True):
             st.cache_data.clear()
-        st.caption("News-first layout. Daily trend drives the Sentinel signal. When 2 or more stocks are selected, a comparison arena appears automatically.")
+        st.caption(t("refresh_caption"))
+
+    st.markdown(f'<div class="top-kicker">{t("app_name")}</div>', unsafe_allow_html=True)
+    st.title(t("app_name"))
+    st.markdown(
+        f'<div class="top-intro">{t("top_intro")}</div>',
+        unsafe_allow_html=True,
+    )
+    render_explore_hero()
+    render_section_guide()
 
     if not tickers:
-        st.warning("Please select at least one ticker.")
+        st.warning(t("please_select_ticker"))
         return
 
-    with st.spinner("Loading market data and stock-specific news..."):
+    with st.spinner(t("loading_data")):
         daily_data = fetch_daily_data(tickers, period, interval)
         intraday_data = fetch_intraday_data(tickers)
 
     if daily_data is None or daily_data.empty:
-        st.error("No market data was returned. Please try again.")
+        st.error(t("no_market_data"))
         return
 
     render_active_trend_lens(lens_meta)
     render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
 
     render_stock_explorer_nav(tickers)
-    tabs = st.tabs(tickers)
+    tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
     for tab, ticker in zip(tabs, tickers):
         with tab:
             render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta)
 
     st.markdown(
-        '<div class="footer-note">This dashboard is for research and reference. The news effect percentages and directional labels are heuristic estimates, not guarantees or investment advice.</div>',
+        f'<div class="footer-note">{t("footer_note")}</div>',
         unsafe_allow_html=True,
     )
 
