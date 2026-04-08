@@ -1911,7 +1911,7 @@ def render_global_market_indicator(indicator: dict):
         """
     ).strip()
 
-    st.markdown(shell_html, unsafe_allow_html=True)
+    render_html_block(shell_html)
 
 def build_taiwan_benchmark_context(ticker: str, price_series: pd.Series, lens_meta: dict | None = None) -> dict:
     if not is_taiwan_ticker(ticker):
@@ -2891,6 +2891,9 @@ def inject_css():
             .alert-grid, .lens-grid, .compare-card-grid, .crypto-grid, .winner-rail-grid {
                 grid-template-columns: 1fr !important;
             }
+            .target-watch-headline-grid {
+                grid-template-columns: 1fr !important;
+            }
             .highlight-row {
                 grid-template-columns: 1fr !important;
             }
@@ -3508,6 +3511,13 @@ def inject_premium_overrides():
         """,
         unsafe_allow_html=True,
     )
+
+
+
+def render_html_block(html: str):
+    if html is None:
+        return
+    st.markdown(textwrap.dedent(str(html)).strip(), unsafe_allow_html=True)
 
 # ---------------------------
 # Data Fetch
@@ -5533,7 +5543,7 @@ def render_opportunity_radar(bundles: list[dict], lens_meta: dict | None = None)
         rows_html="".join(row_html),
     )
 
-    st.markdown(radar_html, unsafe_allow_html=True)
+    render_html_block(radar_html)
 
 
 def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
@@ -5684,7 +5694,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="mini-candle-grid">', unsafe_allow_html=True)
+    render_html_block('<div class="mini-candle-grid">')
     for bundle in bundles:
         st.markdown(
             f"""
@@ -5702,7 +5712,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
             height=220,
             show_ma=False,
         )
-    st.markdown('</div>', unsafe_allow_html=True)
+    render_html_block('</div>')
 
     board_html = (
         '<div class="compare-table-shell">'
@@ -5722,7 +5732,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         '</div>'
         '</div>'
     )
-    st.markdown(board_html, unsafe_allow_html=True)
+    render_html_block(board_html)
 
 
 def render_target_watch_section(ticker: str, context: dict):
@@ -5796,14 +5806,16 @@ def render_target_watch_section(ticker: str, context: dict):
             warning_html,
             '<div class="target-watch-board">',
             f'<div class="target-watch-board-label">{t("target_headlines")}</div>',
+            '<div class="target-watch-headline-grid">',
             headlines_html,
+            '</div>',
             '</div>',
             f'<div class="target-watch-note">{t("target_reference_note")}</div>',
             '</div>',
         ]
     )
 
-    st.markdown(shell_html, unsafe_allow_html=True)
+    render_html_block(shell_html)
 
 
 def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
@@ -6131,18 +6143,32 @@ def inject_localization_overrides():
             display: grid;
             gap: 10px;
         }
+        .target-watch-headline-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 10px;
+        }
         .target-watch-headline {
-            padding: 12px 13px;
+            padding: 11px 12px;
             border-radius: 16px;
             border: 1px solid rgba(255,255,255,.08);
             background: linear-gradient(135deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.03) 100%);
+            min-width: 0;
         }
         .target-watch-headline-title, .target-watch-headline-title a {
             color: #fff8ee;
-            font-size: 15px;
-            line-height: 1.42;
+            font-size: 14px;
+            line-height: 1.36;
             font-weight: 800;
             text-decoration: none;
+            word-break: break-word;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .target-watch-headline-meta {
+            margin-top: 5px;
         }
         .target-watch-headline-title a:hover {
             text-decoration: underline;
@@ -6322,7 +6348,7 @@ def generate_dashboard():
             unsafe_allow_html=True,
         )
 
-        st.markdown(f'<div class="side-group-label">{t("watchlist_universe")}</div>', unsafe_allow_html=True)
+        render_html_block(f'<div class="side-group-label">{t("watchlist_universe")}</div>')
         current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
         selected_market_scope = st.selectbox(
             t("market_scope"),
@@ -6447,7 +6473,7 @@ def generate_dashboard():
         st.session_state["dashboard_final_tickers"] = tickers
 
         st.caption(t("watchlist_caption"))
-        st.markdown(f'<div class="side-group-label">{t("trend_lens")}</div>', unsafe_allow_html=True)
+        render_html_block(f'<div class="side-group-label">{t("trend_lens")}</div>')
 
         stored_lens_name = st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
         if stored_lens_name not in TREND_LENSES:
@@ -6516,16 +6542,15 @@ def generate_dashboard():
             }
         )
 
-        st.markdown(f'<div class="side-group-label">{t("live_refresh")}</div>', unsafe_allow_html=True)
+        render_html_block(f'<div class="side-group-label">{t("live_refresh")}</div>')
         if st.button(t("refresh_live_data"), use_container_width=True):
             st.cache_data.clear()
         st.caption(t("refresh_caption"))
 
-    st.markdown(f'<div class="top-kicker">{t("app_name")}</div>', unsafe_allow_html=True)
+    render_html_block(f'<div class="top-kicker">{t("app_name")}</div>')
     st.title(t("app_name"))
-    st.markdown(
-        f'<div class="top-intro">{t("top_intro")}</div>',
-        unsafe_allow_html=True,
+    render_html_block(
+        f'<div class="top-intro">{t("top_intro")}</div>'
     )
 
     if not tickers:
@@ -6553,9 +6578,8 @@ def generate_dashboard():
         with tab:
             render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta)
 
-    st.markdown(
-        f'<div class="footer-note">{t("footer_note")}</div>',
-        unsafe_allow_html=True,
+    render_html_block(
+        f'<div class="footer-note">{t("footer_note")}</div>'
     )
 
 
