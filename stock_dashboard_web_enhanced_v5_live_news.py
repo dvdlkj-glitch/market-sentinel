@@ -996,6 +996,99 @@ def inject_css():
                 justify-content: center;
             }
         }
+
+        .brief-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 28%),
+                linear-gradient(180deg, rgba(23, 24, 29, 0.98) 0%, rgba(14, 16, 21, 0.99) 100%);
+            border: 1px solid rgba(255, 215, 128, 0.14);
+            border-radius: 28px;
+            padding: 20px 20px 18px 20px;
+            box-shadow: 0 24px 52px rgba(0,0,0,.24);
+            margin: 14px 0 16px 0;
+            color: #f7f2e8;
+        }
+
+        .brief-shell::after {
+            content: "";
+            position: absolute;
+            right: -80px;
+            top: -74px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(244, 197, 106, 0.12) 0%, rgba(244, 197, 106, 0) 72%);
+            pointer-events: none;
+        }
+
+        .brief-title {
+            font-size: 26px;
+            font-weight: 900;
+            line-height: 1.02;
+            letter-spacing: -0.03em;
+            color: #fff8ee;
+        }
+
+        .brief-copy {
+            font-size: 14px;
+            line-height: 1.66;
+            color: rgba(247, 242, 232, 0.76);
+            max-width: 980px;
+            margin-top: 8px;
+        }
+
+        .brief-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .brief-box {
+            background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 20px;
+            padding: 14px;
+            backdrop-filter: blur(12px);
+        }
+
+        .brief-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            color: rgba(244, 229, 201, 0.72);
+        }
+
+        .brief-value {
+            font-size: 20px;
+            font-weight: 900;
+            line-height: 1.15;
+            color: #fff8ee;
+            margin-top: 8px;
+        }
+
+        .brief-risk {
+            font-size: 17px;
+        }
+
+        .brief-sub {
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(247, 242, 232, 0.76);
+            margin-top: 6px;
+        }
+
+        .brief-action {
+            margin-top: 14px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: rgba(244, 229, 201, 0.78);
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -3005,6 +3098,96 @@ def render_news_first_section(ticker: str, analysis: dict, intraday: dict, news_
     render_catalyst_engine(analysis, ticker)
 
 
+
+def build_decision_brief(analysis: dict, intraday: dict, news_items: list[dict]) -> dict:
+    catalyst = analysis.get("catalyst_engine", {})
+    lab = analysis.get("trading_lab", {})
+    signal = analysis.get("signal", "HOLD")
+    pulse = analysis.get("news_pulse", {})
+    alerts = analysis.get("alerts", [])
+    lead_story = (news_items[0].get("title") if news_items else "") or "No strong lead story"
+    dominant = catalyst.get("dominant", "Macro")
+    setup = lab.get("setup", "Balanced")
+    intraday_move = format_percent(intraday.get("change_pct", pd.NA)) if intraday.get("available") else "N/A"
+
+    if signal == "BUY":
+        action = "Favor continuation entries only when price confirms above near-term resistance or re-tests support cleanly."
+    elif signal == "SELL":
+        action = "Stay defensive until price rebuilds above trend support and headline pressure stops worsening."
+    else:
+        action = "Wait for the catalyst picture and chart structure to align before pressing directional risk."
+
+    if setup == "Momentum-led":
+        execution = "Momentum is leading. Breakouts and continuation days deserve more attention than deep dip-buy attempts."
+    elif setup == "Pullback watch":
+        execution = "The structure is in pullback mode. Patience matters more than speed, especially near support."
+    elif setup == "Risk-off":
+        execution = "The tape is fragile. Capital protection matters more than forcing a setup."
+    else:
+        execution = "The setup is balanced. Let the next strong catalyst or price confirmation set direction."
+
+    if alerts:
+        risk_flag = alerts[0]
+    elif pulse.get("score", 0) <= -1.4:
+        risk_flag = "Headline tone is leaning negative and can overpower otherwise decent chart structure."
+    elif pulse.get("score", 0) >= 1.4:
+        risk_flag = "Positive headline tone is helping the setup, but it still needs price confirmation."
+    else:
+        risk_flag = "No single risk is dominant, so watch whether the next story shifts the narrative."
+
+    return {
+        "stance": signal,
+        "signal_class": signal_css_class(signal),
+        "dominant": dominant,
+        "setup": setup,
+        "action": action,
+        "execution": execution,
+        "risk_flag": risk_flag,
+        "lead_story": lead_story,
+        "intraday_move": intraday_move,
+        "news_label": pulse.get("label", "News tilt: mixed"),
+        "confidence": analysis.get("confidence", "Moderate"),
+    }
+
+
+def render_decision_brief(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
+    brief = build_decision_brief(analysis, intraday, news_items)
+    st.markdown(
+        f"""
+        <div class="brief-shell">
+            <div class="section-header" style="margin:0; color:#f5ead8;">Decision Brief</div>
+            <div class="brief-title">What matters now for {escape(ticker)}</div>
+            <div class="brief-copy">This is the quick executive read. It pulls the signal, catalyst engine, Trading Lab, and current alerts into one plain-language plan before the deeper research sections.</div>
+            <div class="brief-grid">
+                <div class="brief-box">
+                    <div class="brief-label">Current stance</div>
+                    <div style="margin-top:10px;"><span class="crypto-signal {brief['signal_class']}">{escape(brief['stance'])}</span></div>
+                    <div class="brief-sub">{escape(brief['confidence'])} confidence · Intraday {escape(brief['intraday_move'])}</div>
+                </div>
+                <div class="brief-box">
+                    <div class="brief-label">Dominant catalyst</div>
+                    <div class="brief-value">{escape(brief['dominant'])}</div>
+                    <div class="brief-sub">{escape(brief['news_label'])}</div>
+                </div>
+                <div class="brief-box">
+                    <div class="brief-label">Best execution style</div>
+                    <div class="brief-value">{escape(brief['setup'])}</div>
+                    <div class="brief-sub">{escape(brief['execution'])}</div>
+                </div>
+                <div class="brief-box">
+                    <div class="brief-label">Main risk flag</div>
+                    <div class="brief-value brief-risk">{escape((brief['risk_flag'])[:68])}</div>
+                    <div class="brief-sub">Lead story: {escape((brief['lead_story'])[:90])}</div>
+                </div>
+            </div>
+            <div class="brief-action">Next step</div>
+            <div class="brief-copy" style="margin-top:6px;">{escape(brief['action'])}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_story_row(item: dict, ticker: str, idx: int):
     direction_text, tag_class, meter_class = article_direction_meta(item)
     probability = article_probability(item)
@@ -3118,7 +3301,7 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
     )
 
 
-def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str):
+def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
     price_series, field_name = get_price_series(daily_data, ticker)
     volume_series = get_series(daily_data, "Volume", ticker)
     intraday = get_intraday_snapshot(intraday_data, ticker)
@@ -3165,6 +3348,14 @@ def collect_ticker_context(daily_data: pd.DataFrame, intraday_data: pd.DataFrame
     if price_series is None or price_series.empty:
         return None
     analysis = analyze_market_sentinel(price_series, volume_series, news_items, ticker)
+    analysis = enrich_pro_analysis(
+        analysis,
+        price_series,
+        volume_series,
+        news_items,
+        active_lens_title=(lens_meta or {}).get("title", "Position View"),
+        intraday=intraday,
+    )
     return {
         "ticker": ticker,
         "field_name": field_name,
@@ -3382,6 +3573,8 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     daily_ohlc = bundle.get("daily_ohlc", pd.DataFrame())
     intraday_ohlc = bundle.get("intraday_ohlc", pd.DataFrame())
     render_news_first_section(ticker, analysis, intraday, news_items)
+    render_decision_brief(ticker, analysis, intraday, news_items)
+    render_alert_layer(analysis, intraday)
     render_reference_guide(analysis, ticker, news_items)
     render_news_stream(ticker, news_items)
     render_trend_section(analysis, intraday, lens_meta=lens_meta, daily_ohlc=daily_ohlc, intraday_ohlc=intraday_ohlc)
