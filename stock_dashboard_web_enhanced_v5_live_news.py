@@ -12,6 +12,7 @@ from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
@@ -879,6 +880,11 @@ TRANSLATIONS["繁體中文"].update({
 def get_lang() -> str:
     return st.session_state.get("dashboard_language", "English")
 
+
+def get_language() -> str:
+    lang = get_lang()
+    return "zh_TW" if lang == "繁體中文" else "en"
+
 def get_news_mode() -> str:
     return st.session_state.get("dashboard_news_mode", "Original source")
 
@@ -1610,12 +1616,115 @@ def market_scope_label(scope: str) -> str:
 
 
 
-def _csv_encode(values: list[str]) -> str:
-    return ",".join(str(value).strip() for value in values if str(value).strip())
+def sort_ticker_options(options) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in options:
+        normalized = normalize_dashboard_ticker(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return sorted(cleaned, key=lambda ticker: display_ticker_label(ticker).casefold())
 
 
-def _csv_decode(value: str) -> list[str]:
-    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+def sync_multiselect_state(
+    state_key: str,
+    valid_options: list[str],
+    fallback: list[str] | None = None,
+    normalizer=None,
+) -> list[str]:
+    normalize = normalizer or (lambda value: value)
+    normalized_to_option: dict[str, str] = {}
+    for option in valid_options:
+        normalized = normalize(option)
+        if normalized and normalized not in normalized_to_option:
+            normalized_to_option[normalized] = option
+
+    current = []
+    for value in st.session_state.get(state_key, []):
+        normalized = normalize(value)
+        if normalized in normalized_to_option:
+            current.append(normalized_to_option[normalized])
+
+    if not current and fallback:
+        for value in fallback:
+            normalized = normalize(value)
+            if normalized in normalized_to_option:
+                current.append(normalized_to_option[normalized])
+
+    deduped_current = list(dict.fromkeys(current))
+    st.session_state[state_key] = deduped_current
+    return deduped_current
+
+
+
+def dedupe_keep_order(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(str(value) for value in values if str(value).strip()))
+
+
+def filter_tickers_for_market_scope(tickers: list[str], market_scope: str) -> list[str]:
+    filtered: list[str] = []
+    for ticker in tickers:
+        normalized = normalize_dashboard_ticker(ticker)
+        if not normalized:
+            continue
+        if market_scope == "Taiwan only" and not is_taiwan_ticker(normalized):
+            continue
+        if market_scope == "U.S. only" and is_taiwan_ticker(normalized):
+            continue
+        filtered.append(normalized)
+    return dedupe_keep_order(filtered)
+
+
+def default_tickers_for_market_scope(market_scope: str) -> list[str]:
+    if market_scope == "Mixed (U.S. + Taiwan)":
+        return DEFAULT_TICKERS.copy()
+    return [
+        ticker
+        for ticker in DEFAULT_TICKERS
+        if (market_scope == "Taiwan only" and is_taiwan_ticker(ticker))
+        or (market_scope == "U.S. only" and not is_taiwan_ticker(ticker))
+    ]
+
+
+def merge_ticker_selection(existing: list[str], additions: list[str], market_scope: str) -> list[str]:
+    merged = dedupe_keep_order(filter_tickers_for_market_scope(existing + additions, market_scope))
+    return merged
+
+
+EMPTY_SELECTION_SENTINEL = "__none__"
+
+
+def _csv_encode(values: list[str], empty_sentinel: str | None = None) -> str:
+    cleaned = [str(value).strip() for value in values if str(value).strip()]
+    if cleaned:
+        return ",".join(cleaned)
+    return empty_sentinel or ""
+
+
+def _csv_decode(value: str, empty_sentinel: str | None = None) -> list[str]:
+    raw = str(value or "").strip()
+    if empty_sentinel and raw == empty_sentinel:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _query_param_exists(key: str) -> bool:
+    try:
+        query_params = st.query_params
+        if hasattr(query_params, "get_all"):
+            values = query_params.get_all(key)
+            if values is not None:
+                return len(values) > 0
+        return key in query_params
+    except Exception:
+        pass
+    try:
+        params = st.experimental_get_query_params()
+        return key in params
+    except Exception:
+        return False
 
 
 def _query_param_first(key: str) -> str:
@@ -1686,7 +1795,12 @@ def load_dashboard_preferences() -> None:
     if not groups:
         groups = list(MARKET_SCOPE_DEFAULT_GROUPS[market_scope])
 
-    picks = [normalize_dashboard_ticker(value) for value in _csv_decode(_query_param_first("picks"))]
+    picks_param_present = _query_param_exists("picks")
+    picks = [
+        normalize_dashboard_ticker(value)
+        for value in _csv_decode(_query_param_first("picks"), empty_sentinel=EMPTY_SELECTION_SENTINEL)
+    ]
+    picks = filter_tickers_for_market_scope(picks, market_scope)
     custom_symbols = _query_param_first("custom") or st.session_state.get("dashboard_custom_symbols", "")
     symbol_search = _query_param_first("search") or st.session_state.get("dashboard_symbol_search", "")
 
@@ -1707,6 +1821,7 @@ def load_dashboard_preferences() -> None:
     st.session_state["dashboard_market_scope"] = market_scope
     st.session_state["dashboard_selected_groups"] = groups
     st.session_state["dashboard_selected_tickers"] = picks
+    st.session_state["dashboard_selected_tickers_initialized"] = picks_param_present or bool(picks)
     st.session_state["dashboard_custom_symbols"] = custom_symbols
     st.session_state["dashboard_symbol_search"] = symbol_search
     st.session_state["dashboard_lens_name"] = lens_name
@@ -3031,6 +3146,189 @@ def inject_css():
             color: rgba(244, 229, 201, 0.78);
         }
 
+        
+        .compare-mosaic {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 14px;
+            margin-top: 16px;
+        }
+
+        .compare-mosaic-card {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(255,196,87,.10) 0%, rgba(255,196,87,0) 28%),
+                linear-gradient(180deg, rgba(20, 29, 56, 0.96) 0%, rgba(10, 16, 33, 0.98) 100%);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 22px;
+            padding: 16px 16px 14px 16px;
+            box-shadow: 0 18px 36px rgba(0,0,0,.20);
+            min-height: 100%;
+        }
+
+        .compare-mosaic-rank {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,.06);
+            border: 1px solid rgba(255,255,255,.10);
+            color: rgba(255,244,220,.84);
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        .compare-mosaic-title {
+            font-size: 22px;
+            font-weight: 900;
+            line-height: 1.12;
+            color: #ffffff;
+            margin-top: 12px;
+        }
+
+        .compare-mosaic-price {
+            font-size: 22px;
+            font-weight: 900;
+            color: #fff7ea;
+            margin-top: 8px;
+        }
+
+        .compare-mosaic-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .compare-mosaic-stat-label {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: rgba(238,242,255,.60);
+        }
+
+        .compare-mosaic-stat-value {
+            font-size: 16px;
+            font-weight: 900;
+            color: #ffffff;
+            margin-top: 4px;
+            line-height: 1.1;
+        }
+
+        .compare-mosaic-meta {
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(238,242,255,.76);
+            margin-top: 14px;
+            border-top: 1px solid rgba(255,255,255,.08);
+            padding-top: 12px;
+        }
+
+        .compare-layout-note {
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(238,242,255,.74);
+            margin-top: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .compare-mosaic-grid {
+                grid-template-columns: 1fr;
+            }
+            .compare-mosaic-title,
+            .compare-mosaic-price {
+                font-size: 20px;
+            }
+        }
+
+        
+        .stMultiSelect [data-baseweb="select"] > div {
+            background:
+                radial-gradient(circle at top left, rgba(84,214,255,.10) 0%, rgba(84,214,255,0) 28%),
+                linear-gradient(180deg, rgba(15,22,39,.98) 0%, rgba(9,15,28,.99) 100%) !important;
+            border: 1px solid rgba(227,184,102,.16) !important;
+            border-radius: 18px !important;
+            min-height: 52px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 10px 24px rgba(0,0,0,.18);
+            transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+        }
+
+        .stMultiSelect [data-baseweb="select"] > div:hover {
+            border-color: rgba(227,184,102,.28) !important;
+            box-shadow: 0 12px 28px rgba(0,0,0,.20);
+            transform: translateY(-1px);
+        }
+
+        .stMultiSelect [data-baseweb="tag"] {
+            background: linear-gradient(135deg, rgba(227,184,102,.18) 0%, rgba(170,126,53,.24) 100%) !important;
+            border: 1px solid rgba(227,184,102,.24) !important;
+            border-radius: 12px !important;
+            color: #fff4df !important;
+            font-weight: 800 !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+        }
+
+        .stMultiSelect [data-baseweb="tag"] span,
+        .stMultiSelect [data-baseweb="tag"] svg {
+            color: #fff4df !important;
+            fill: #fff4df !important;
+        }
+
+        div[data-baseweb="popover"] [role="listbox"],
+        div[data-baseweb="popover"] ul {
+            background: linear-gradient(180deg, rgba(15,22,39,.99) 0%, rgba(9,15,28,1) 100%) !important;
+            border: 1px solid rgba(227,184,102,.16) !important;
+            border-radius: 16px !important;
+            box-shadow: 0 18px 42px rgba(0,0,0,.34) !important;
+            padding: 6px !important;
+        }
+
+        div[data-baseweb="popover"] [role="option"],
+        div[data-baseweb="popover"] li {
+            color: #eef4ff !important;
+            border-radius: 12px !important;
+        }
+
+        div[data-baseweb="popover"] [role="option"][aria-selected="true"],
+        div[data-baseweb="popover"] li[aria-selected="true"] {
+            background: rgba(227,184,102,.14) !important;
+        }
+
+        .comparison-focus-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+            margin-bottom: 8px;
+        }
+
+        .comparison-focus-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, rgba(227,184,102,.16) 0%, rgba(170,126,53,.22) 100%);
+            border: 1px solid rgba(227,184,102,.22);
+            color: #fff4df;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+        }
+
+        .comparison-focus-note {
+            color: rgba(238,242,255,.68);
+            font-size: 12px;
+            line-height: 1.56;
+            margin-bottom: 14px;
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -3745,28 +4043,87 @@ def trend_label(one_year_return):
     return "Flat"
 
 
-def calculate_rsi(series: pd.Series, period: int = 14):
-    if series is None or len(series) < period + 1:
+
+def to_numeric_series(series: pd.Series | None, *, keep_index: bool = True):
+    if series is None:
         return pd.Series(dtype="float64")
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+    s = series.copy() if isinstance(series, pd.Series) else pd.Series(series)
+    if keep_index:
+        try:
+            s = ensure_datetime_index(s)
+        except Exception:
+            pass
+    return pd.to_numeric(s, errors="coerce")
+
+
+def empty_analysis_payload(ticker: str, indicators: pd.DataFrame | None = None, news_items: list[dict] | None = None):
+    indicators = indicators if indicators is not None else pd.DataFrame()
+    news_pulse = build_news_pulse(news_items or [])
+    return {
+        "signal": "HOLD",
+        "confidence": "Low",
+        "score": 0,
+        "summary": "Data is limited right now, so the dashboard is staying neutral until cleaner price history is available.",
+        "reasons": ["Price history is incomplete or non-numeric, so advanced indicators were safely skipped."],
+        "trend": "N/A",
+        "one_year_return": pd.NA,
+        "rsi14": pd.NA,
+        "rsi_status": "N/A",
+        "last_price": pd.NA,
+        "sma20": pd.NA,
+        "sma50": pd.NA,
+        "sma200": pd.NA,
+        "indicators": indicators,
+        "latest_daily_ts": indicators.index[-1] if not indicators.empty else None,
+        "volume_status": "N/A",
+        "news_pulse": news_pulse,
+        "ticker": ticker,
+    }
+
+
+def calculate_rsi(series: pd.Series, period: int = 14):
+    price = to_numeric_series(series).dropna()
+    if price.empty or len(price) < period + 1:
+        return pd.Series(dtype="float64")
+
+    delta = price.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+
     avg_gain = gain.rolling(window=period, min_periods=period).mean()
     avg_loss = loss.rolling(window=period, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
-    return (100 - (100 / (1 + rs))).astype("float64")
 
+    zero_gain = avg_gain.eq(0)
+    zero_loss = avg_loss.eq(0)
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+
+    rsi = rsi.mask(zero_loss & ~zero_gain, 100.0)
+    rsi = rsi.mask(zero_gain & ~zero_loss, 0.0)
+    rsi = rsi.mask(zero_gain & zero_loss, 50.0)
+
+    return pd.to_numeric(rsi, errors="coerce")
 
 def build_indicator_frame(price_series: pd.Series):
-    price_series = ensure_datetime_index(price_series)
-    df = pd.DataFrame({"Price": price_series.copy()})
-    df["SMA 20"] = price_series.rolling(20).mean()
-    df["SMA 50"] = price_series.rolling(50).mean()
-    df["SMA 200"] = price_series.rolling(200).mean()
-    df["RSI 14"] = calculate_rsi(price_series)
-    df["1Y Return %"] = ((price_series / price_series.iloc[0]) - 1) * 100
-    return df
+    price_series = to_numeric_series(price_series)
+    if price_series.empty:
+        return pd.DataFrame(columns=["Price", "SMA 20", "SMA 50", "SMA 200", "RSI 14", "1Y Return %"])
 
+    df = pd.DataFrame({"Price": price_series.copy()})
+    df["SMA 20"] = price_series.rolling(20, min_periods=20).mean()
+    df["SMA 50"] = price_series.rolling(50, min_periods=50).mean()
+    df["SMA 200"] = price_series.rolling(200, min_periods=200).mean()
+    df["RSI 14"] = calculate_rsi(price_series)
+
+    valid_price = price_series.dropna()
+    base_price = valid_price.iloc[0] if not valid_price.empty else np.nan
+    if pd.notna(base_price) and base_price != 0:
+        df["1Y Return %"] = ((price_series / base_price) - 1.0) * 100.0
+    else:
+        df["1Y Return %"] = np.nan
+
+    return df
 
 def get_ohlc_frame(data: pd.DataFrame | None, ticker: str, tail: int | None = None):
     open_series = get_series(data, "Open", ticker)
@@ -4073,48 +4430,59 @@ def build_catalyst_engine(news_items: list[dict]) -> dict:
 
 
 def calculate_macd(series: pd.Series):
-    ema12 = series.ewm(span=12, adjust=False).mean()
-    ema26 = series.ewm(span=26, adjust=False).mean()
-    macd_line = ema12 - ema26
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    hist = macd_line - signal_line
-    return macd_line, signal_line, hist
+    s = to_numeric_series(series).dropna()
+    if s.empty:
+        empty = pd.Series(dtype="float64")
+        return empty, empty, empty
 
+    ema12 = s.ewm(span=12, adjust=False, min_periods=12).mean()
+    ema26 = s.ewm(span=26, adjust=False, min_periods=26).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False, min_periods=9).mean()
+    hist = macd_line - signal_line
+
+    return (
+        pd.to_numeric(macd_line, errors="coerce"),
+        pd.to_numeric(signal_line, errors="coerce"),
+        pd.to_numeric(hist, errors="coerce"),
+    )
 
 def build_trading_lab(price_series: pd.Series, volume_series: pd.Series | None) -> dict:
-    series = ensure_datetime_index(price_series).dropna()
+    series = to_numeric_series(price_series).dropna()
     if series.empty:
         return {}
+
     macd_line, signal_line, hist = calculate_macd(series)
-    sma20 = series.rolling(20).mean()
-    std20 = series.rolling(20).std()
+    sma20 = series.rolling(20, min_periods=20).mean()
+    std20 = series.rolling(20, min_periods=20).std()
     upper = sma20 + 2 * std20
     lower = sma20 - 2 * std20
 
     last_price = series.iloc[-1]
-    recent_high = series.tail(20).max()
-    recent_low = series.tail(20).min()
-    support = series.tail(20).nsmallest(min(3, len(series.tail(20)))).mean()
-    resistance = series.tail(20).nlargest(min(3, len(series.tail(20)))).mean()
+    tail20 = series.tail(20)
+    support = tail20.nsmallest(min(3, len(tail20))).mean() if not tail20.empty else np.nan
+    resistance = tail20.nlargest(min(3, len(tail20))).mean() if not tail20.empty else np.nan
 
     tags = []
-    if pd.notna(upper.iloc[-1]) and last_price > upper.iloc[-1]:
+    if not upper.empty and pd.notna(upper.iloc[-1]) and last_price > upper.iloc[-1]:
         tags.append("Breakout stretch")
-    elif pd.notna(lower.iloc[-1]) and last_price < lower.iloc[-1]:
+    elif not lower.empty and pd.notna(lower.iloc[-1]) and last_price < lower.iloc[-1]:
         tags.append("Breakdown risk")
-    elif pd.notna(sma20.iloc[-1]) and last_price < sma20.iloc[-1] and last_price > support:
+    elif not sma20.empty and pd.notna(sma20.iloc[-1]) and pd.notna(support) and last_price < sma20.iloc[-1] and last_price > support:
         tags.append("Pullback zone")
     else:
         tags.append("Trend continuation")
 
-    if hist.iloc[-1] > 0 and hist.iloc[-1] > hist.iloc[-2]:
-        tags.append("MACD improving")
-    elif hist.iloc[-1] < 0 and hist.iloc[-1] < hist.iloc[-2]:
-        tags.append("MACD weakening")
+    hist_valid = hist.dropna()
+    if len(hist_valid) >= 2:
+        if hist_valid.iloc[-1] > 0 and hist_valid.iloc[-1] > hist_valid.iloc[-2]:
+            tags.append("MACD improving")
+        elif hist_valid.iloc[-1] < 0 and hist_valid.iloc[-1] < hist_valid.iloc[-2]:
+            tags.append("MACD weakening")
 
     volume_ratio = pd.NA
     if volume_series is not None and not volume_series.empty:
-        vol = ensure_datetime_index(volume_series).dropna()
+        vol = to_numeric_series(volume_series).dropna()
         if not vol.empty:
             avg50 = vol.tail(50).mean()
             if pd.notna(avg50) and avg50 != 0:
@@ -4132,20 +4500,26 @@ def build_trading_lab(price_series: pd.Series, volume_series: pd.Series | None) 
     elif "Breakdown risk" in tags or "MACD weakening" in tags:
         setup = "Risk-off"
 
+    bb_upper = upper.iloc[-1] if not upper.empty else pd.NA
+    bb_mid = sma20.iloc[-1] if not sma20.empty else pd.NA
+    bb_lower = lower.iloc[-1] if not lower.empty else pd.NA
+    macd_last = macd_line.dropna().iloc[-1] if not macd_line.dropna().empty else pd.NA
+    signal_last = signal_line.dropna().iloc[-1] if not signal_line.dropna().empty else pd.NA
+    hist_last = hist_valid.iloc[-1] if not hist_valid.empty else pd.NA
+
     return {
-        "macd": macd_line.iloc[-1],
-        "macd_signal": signal_line.iloc[-1],
-        "macd_hist": hist.iloc[-1],
-        "bb_upper": upper.iloc[-1],
-        "bb_mid": sma20.iloc[-1],
-        "bb_lower": lower.iloc[-1],
+        "macd": macd_last,
+        "macd_signal": signal_last,
+        "macd_hist": hist_last,
+        "bb_upper": bb_upper,
+        "bb_mid": bb_mid,
+        "bb_lower": bb_lower,
         "support": support,
         "resistance": resistance,
         "volume_ratio": volume_ratio,
         "setup": setup,
         "tags": tags,
     }
-
 
 def enrich_pro_analysis(analysis: dict, price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict], active_lens_title: str | None = None, intraday: dict | None = None) -> dict:
     catalyst = build_catalyst_engine(news_items)
@@ -4758,13 +5132,20 @@ def render_winner_card(bundles: list[dict], lens_meta: dict | None = None):
 
 def analyze_market_sentinel(price_series: pd.Series, volume_series: pd.Series | None, news_items: list[dict], ticker: str):
     indicators = build_indicator_frame(price_series)
+    if indicators.empty:
+        return empty_analysis_payload(ticker, indicators=indicators, news_items=news_items)
+
     latest = indicators.iloc[-1]
-    last_price = latest["Price"]
-    sma20 = latest["SMA 20"]
-    sma50 = latest["SMA 50"]
-    sma200 = latest["SMA 200"]
-    rsi14 = latest["RSI 14"]
-    one_year_return = latest["1Y Return %"]
+    last_price = latest.get("Price", pd.NA)
+    sma20 = latest.get("SMA 20", pd.NA)
+    sma50 = latest.get("SMA 50", pd.NA)
+    sma200 = latest.get("SMA 200", pd.NA)
+    rsi14 = latest.get("RSI 14", pd.NA)
+    one_year_return = latest.get("1Y Return %", pd.NA)
+
+    numeric_fields = [last_price, sma20, sma50, sma200, rsi14, one_year_return]
+    if all(pd.isna(value) for value in numeric_fields):
+        return empty_analysis_payload(ticker, indicators=indicators, news_items=news_items)
 
     score = 0
     reasons = []
@@ -4810,18 +5191,19 @@ def analyze_market_sentinel(price_series: pd.Series, volume_series: pd.Series | 
 
     volume_status = "N/A"
     if volume_series is not None and not volume_series.empty:
-        volume_series = ensure_datetime_index(volume_series)
-        avg_volume_50 = volume_series.tail(50).mean()
-        vol_ratio = (volume_series.iloc[-1] / avg_volume_50) if pd.notna(avg_volume_50) and avg_volume_50 != 0 else pd.NA
-        if pd.notna(vol_ratio) and vol_ratio >= 1.2:
-            volume_status = "Elevated"
-            score += 1
-            reasons.append("Recent volume is above the 50-day average, giving the move more confirmation.")
-        elif pd.notna(vol_ratio) and vol_ratio <= 0.8:
-            volume_status = "Light"
-            reasons.append("Recent volume is light, so conviction behind the move is weaker.")
-        else:
-            volume_status = "Normal"
+        volume_numeric = to_numeric_series(volume_series).dropna()
+        if not volume_numeric.empty:
+            avg_volume_50 = volume_numeric.tail(50).mean()
+            vol_ratio = (volume_numeric.iloc[-1] / avg_volume_50) if pd.notna(avg_volume_50) and avg_volume_50 != 0 else pd.NA
+            if pd.notna(vol_ratio) and vol_ratio >= 1.2:
+                volume_status = "Elevated"
+                score += 1
+                reasons.append("Recent volume is above the 50-day average, giving the move more confirmation.")
+            elif pd.notna(vol_ratio) and vol_ratio <= 0.8:
+                volume_status = "Light"
+                reasons.append("Recent volume is light, so conviction behind the move is weaker.")
+            else:
+                volume_status = "Normal"
 
     news_pulse = build_news_pulse(news_items)
     if news_pulse["score"] >= 1.4:
@@ -4866,7 +5248,6 @@ def analyze_market_sentinel(price_series: pd.Series, volume_series: pd.Series | 
         "news_pulse": news_pulse,
         "ticker": ticker,
     }
-
 
 def signal_class(signal: str) -> str:
     return {"BUY": "chip-buy", "HOLD": "chip-hold", "SELL": "chip-sell"}.get(signal, "chip-info")
@@ -5546,6 +5927,108 @@ def render_opportunity_radar(bundles: list[dict], lens_meta: dict | None = None)
     render_html_block(radar_html)
 
 
+
+
+
+def render_comparison_overview_cards(bundles: list[dict], lens_meta: dict | None = None):
+    if not bundles:
+        return
+
+    if len(bundles) <= 4:
+        card_cols = st.columns(len(bundles))
+        for col, bundle in zip(card_cols, bundles):
+            analysis = bundle["analysis"]
+            intraday = bundle["intraday"]
+            signal = analysis["signal"]
+            signal_class_name = signal_css_class(signal)
+            pulse = analysis["news_pulse"]["label"]
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="compare-card">
+                        <div class="compare-card-kicker">{t("side_by_side_profile")}</div>
+                        <div style="margin-top:10px;"><span class="crypto-signal {signal_class_name}">{escape(tr_signal(signal))}</span></div>
+                        <div class="compare-card-title">{escape(display_ticker_label(bundle['ticker']))}</div>
+                        <div class="compare-card-price">{format_price(analysis['last_price'])}</div>
+                        <div class="compare-card-grid">
+                            <div class="compare-stat">
+                                <div class="compare-stat-label">{t("trend_1y")}</div>
+                                <div class="compare-stat-value">{format_percent(analysis['one_year_return'])}</div>
+                            </div>
+                            <div class="compare-stat">
+                                <div class="compare-stat-label">{t("confidence")}</div>
+                                <div class="compare-stat-value">{escape(tr_confidence(analysis["confidence"]))}</div>
+                            </div>
+                            <div class="compare-stat">
+                                <div class="compare-stat-label">{t("lens_score")}</div>
+                                <div class="compare-stat-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
+                            </div>
+                            <div class="compare-stat">
+                                <div class="compare-stat-label">RSI 14</div>
+                                <div class="compare-stat-value">{"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
+                            </div>
+                        </div>
+                        <div class="compare-card-meta">
+                            {t('intraday')} <strong>{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</strong> · {t('news_pulse')} <strong>{escape(tr_news_label(pulse))}</strong>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        return
+
+    sorted_bundles = sorted(
+        bundles,
+        key=lambda bundle: (
+            compute_lens_winner_fields(bundle, lens_meta)["lens_score"],
+            bundle["analysis"]["one_year_return"] if pd.notna(bundle["analysis"]["one_year_return"]) else -10**9,
+        ),
+        reverse=True,
+    )
+
+    card_html_parts: list[str] = []
+    for rank, bundle in enumerate(sorted_bundles, start=1):
+        analysis = bundle["analysis"]
+        intraday = bundle["intraday"]
+        pulse = tr_news_label(analysis["news_pulse"]["label"])
+        signal_class_name = signal_css_class(analysis["signal"])
+        card_html_parts.append(
+            "".join(
+                [
+                    '<div class="compare-mosaic-card">',
+                    f'<div class="compare-mosaic-rank">#{rank}</div>',
+                    f'<div style="margin-top:12px;"><span class="crypto-signal {signal_class_name}">{escape(tr_signal(analysis["signal"]))}</span></div>',
+                    f'<div class="compare-mosaic-title">{escape(display_ticker_label(bundle["ticker"]))}</div>',
+                    f'<div class="compare-mosaic-price">{format_price(analysis["last_price"])}</div>',
+                    '<div class="compare-mosaic-grid">',
+                    f'<div><div class="compare-mosaic-stat-label">{t("trend_1y")}</div><div class="compare-mosaic-stat-value">{format_percent(analysis["one_year_return"])}</div></div>',
+                    f'<div><div class="compare-mosaic-stat-label">{t("confidence")}</div><div class="compare-mosaic-stat-value">{escape(tr_confidence(analysis["confidence"]))}</div></div>',
+                    f'<div><div class="compare-mosaic-stat-label">{t("lens_score")}</div><div class="compare-mosaic-stat-value">{compute_lens_winner_fields(bundle, lens_meta)["lens_score"]:+d}</div></div>',
+                    f'<div><div class="compare-mosaic-stat-label">RSI 14</div><div class="compare-mosaic-stat-value">{"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis["rsi14"]:.2f}"}</div></div>',
+                    '</div>',
+                    f'<div class="compare-mosaic-meta">{t("intraday")} <strong>{format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A"}</strong> · {t("news_pulse")} <strong>{escape(pulse)}</strong></div>',
+                    '</div>',
+                ]
+            )
+        )
+
+    layout_note = (
+        "已選超過 4 檔，自動切換為網格化比較，避免卡片互相擠壓。"
+        if get_language() == "zh_TW"
+        else "More than four names selected, so the comparison switches to a ranked mosaic layout to preserve readability."
+    )
+    render_html_block(
+        "".join(
+            [
+                '<div class="compare-mosaic">',
+                "".join(card_html_parts),
+                '</div>',
+                f'<div class="compare-layout-note">{escape(layout_note)}</div>',
+            ]
+        )
+    )
+
+
 def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
     if len(tickers) < 2:
         return
@@ -5597,55 +6080,86 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         unsafe_allow_html=True,
     )
 
-    card_cols = st.columns(len(bundles))
-    for col, bundle in zip(card_cols, bundles):
-        analysis = bundle["analysis"]
-        intraday = bundle["intraday"]
-        signal = analysis["signal"]
-        signal_class_name = signal_css_class(signal)
-        pulse = analysis["news_pulse"]["label"]
-        with col:
-            st.markdown(
-                f"""
-                <div class="compare-card">
-                    <div class="compare-card-kicker">{t("side_by_side_profile")}</div>
-                    <div style="margin-top:10px;"><span class="crypto-signal {signal_class_name}">{escape(tr_signal(signal))}</span></div>
-                    <div class="compare-card-title">{escape(display_ticker_label(bundle['ticker']))}</div>
-                    <div class="compare-card-price">{format_price(analysis['last_price'])}</div>
-                    <div class="compare-card-grid">
-                        <div class="compare-stat">
-                            <div class="compare-stat-label">{t("trend_1y")}</div>
-                            <div class="compare-stat-value">{format_percent(analysis['one_year_return'])}</div>
-                        </div>
-                        <div class="compare-stat">
-                            <div class="compare-stat-label">{t("confidence")}</div>
-                            <div class="compare-stat-value">{escape(tr_confidence(analysis["confidence"]))}</div>
-                        </div>
-                        <div class="compare-stat">
-                            <div class="compare-stat-label">{t("lens_score")}</div>
-                            <div class="compare-stat-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
-                        </div>
-                        <div class="compare-stat">
-                            <div class="compare-stat-label">RSI 14</div>
-                            <div class="compare-stat-value">{"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
-                        </div>
-                    </div>
-                    <div class="compare-card-meta">
-                        {t('intraday')} <strong>{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</strong> · {t('news_pulse')} <strong>{escape(tr_news_label(pulse))}</strong>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    render_comparison_overview_cards(bundles, lens_meta=lens_meta)
 
-    row_html_parts = []
-    candle_card_parts = []
+    row_html_parts: list[str] = []
+
+    st.markdown(
+        """
+        <div class="compare-chart-shell">
+            <div class="compare-chart-title">Candlestick comparison</div>
+            <div class="compare-chart-copy">The line race is replaced with candle structure so each selected stock keeps the same premium chart language as the rest of the dashboard.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    candle_bundles = bundles
+    if len(bundles) > 4:
+        candle_focus_key = "comparison_candle_focus_tickers"
+        candle_options = [bundle["ticker"] for bundle in bundles]
+        previous_focus = st.session_state.get(candle_focus_key, [])
+        previous_focus = [ticker for ticker in previous_focus if ticker in candle_options]
+
+        if not previous_focus:
+            previous_focus = candle_options[:4]
+
+        if candle_focus_key not in st.session_state or st.session_state.get(candle_focus_key) != previous_focus:
+            st.session_state[candle_focus_key] = previous_focus
+
+        selected_candle_tickers = st.multiselect(
+            "K 線比較焦點" if get_language() == "zh_TW" else "Candlestick comparison focus",
+            options=candle_options,
+            format_func=display_ticker_label,
+            max_selections=4,
+            help="最多選擇 4 檔做 K 線比較。" if get_language() == "zh_TW" else "Choose up to 4 names for candle comparison.",
+            key=candle_focus_key,
+            placeholder="請選擇最多 4 檔" if get_language() == "zh_TW" else "Select up to 4 names",
+        )
+
+        if not selected_candle_tickers:
+            selected_candle_tickers = candle_options[:4]
+            st.session_state[candle_focus_key] = selected_candle_tickers
+
+        candle_bundles = [bundle for bundle in bundles if bundle["ticker"] in selected_candle_tickers]
+
+        focus_preview_html = "".join(
+            f'<span class="comparison-focus-chip">{escape(display_ticker_label(ticker))}</span>'
+            for ticker in selected_candle_tickers
+        )
+        focus_note = (
+            "目前焦點 K 線比較。已加入的股票會立即同步到下方圖表。"
+            if get_language() == "zh_TW"
+            else "Current candle-comparison focus. Selected names sync directly to the charts below."
+        )
+        render_html_block(
+            f'<div class="comparison-focus-preview">{focus_preview_html}</div>'
+            f'<div class="comparison-focus-note">{escape(focus_note)}</div>'
+        )
+
+    render_html_block('<div class="mini-candle-grid">')
+    for bundle in candle_bundles:
+        st.markdown(
+            f"""
+            <div class="mini-candle-card">
+                <div class="mini-candle-name">{escape(display_ticker_label(bundle['ticker']))}</div>
+                <div class="mini-candle-sub">{escape(bundle['analysis']['signal'])} · {escape(bundle['analysis']['trend'])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_candlestick_chart(
+            bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
+            t("recent_structure", ticker=display_ticker_label(bundle["ticker"])),
+            "Recent daily candles in the shared dashboard theme.",
+            height=220,
+            show_ma=False,
+        )
+    render_html_block('</div>')
 
     for bundle in bundles:
         analysis = bundle["analysis"]
         intraday = bundle["intraday"]
-        daily_ohlc = bundle.get("daily_ohlc", pd.DataFrame())
-
         signal = analysis["signal"]
         signal_class_name = signal_css_class(signal)
         row_html_parts.append(textwrap.dedent(f"""<div class="compare-table-row">
@@ -5683,36 +6197,6 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     </div>
 </div>
 """))
-
-    st.markdown(
-        """
-        <div class="compare-chart-shell">
-            <div class="compare-chart-title">Candlestick comparison</div>
-            <div class="compare-chart-copy">The line race is replaced with candle structure so each selected stock keeps the same premium chart language as the rest of the dashboard.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    render_html_block('<div class="mini-candle-grid">')
-    for bundle in bundles:
-        st.markdown(
-            f"""
-            <div class="mini-candle-card">
-                <div class="mini-candle-name">{escape(display_ticker_label(bundle['ticker']))}</div>
-                <div class="mini-candle-sub">{escape(bundle['analysis']['signal'])} · {escape(bundle['analysis']['trend'])}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        render_candlestick_chart(
-            bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
-            t("recent_structure", ticker=display_ticker_label(bundle["ticker"])),
-            "Recent daily candles in the shared dashboard theme.",
-            height=220,
-            show_ma=False,
-        )
-    render_html_block('</div>')
 
     board_html = (
         '<div class="compare-table-shell">'
@@ -6359,60 +6843,194 @@ def generate_dashboard():
         st.session_state["dashboard_market_scope"] = selected_market_scope
         st.caption(t("market_scope_note"))
 
-        scope_group_options = market_scope_group_options(selected_market_scope)
-        stored_groups = st.session_state.get("dashboard_selected_groups", [])
-        valid_default_groups = [group for group in stored_groups if group in scope_group_options]
-        if not valid_default_groups:
-            valid_default_groups = [group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope] if group in scope_group_options]
 
-        selected_groups = st.multiselect(
-            t("preset_groups"),
-            options=scope_group_options,
-            format_func=tr_group,
-            default=valid_default_groups,
-            placeholder=t("expand_by_sector"),
-            label_visibility="collapsed",
+        scope_group_options = market_scope_group_options(selected_market_scope)
+        is_zh = selected_lang == "繁體中文"
+        selector_title = "專業選股器" if is_zh else "Professional Selector"
+        selector_copy = (
+            "用搜尋、產業、可見清單三段式管理，先加入，再整理已選股票。"
+            if is_zh
+            else "Use a cleaner add-manage flow: search, sector actions, then maintain the selected watchlist."
         )
+        sector_action_label = "依產業加入" if is_zh else "Add by sector"
+        selected_groups_label = "目前產業" if is_zh else "Active groups"
+        add_group_label = "加入此產業" if is_zh else "Add group"
+        apply_group_label = "套用此產業全部加入" if is_zh else "Add entire group"
+        select_all_groups_label = "全部產業" if is_zh else "Select all groups"
+        clear_groups_label = "清空產業" if is_zh else "Clear groups"
+        custom_add_label = "加入自訂代號" if is_zh else "Add custom symbols"
+        available_tickers_label = "可加入股票" if is_zh else "Available symbols"
+        add_visible_label = "加入勾選股票" if is_zh else "Add highlighted"
+        select_all_visible_label = "全選目前可見" if is_zh else "Add all visible"
+        selected_watchlist_label = "已選股票管理" if is_zh else "Selected watchlist"
+        remove_selected_label = "移除勾選" if is_zh else "Remove highlighted"
+        clear_selected_label = "清空已選" if is_zh else "Clear selected"
+        selected_count_label = "已選 {count} 檔" if is_zh else "{count} selected"
+        search_add_label = "加入搜尋結果" if is_zh else "Add search results"
+
+        previous_scope = st.session_state.get("dashboard_market_scope_previous")
+        stored_groups = [
+            group for group in st.session_state.get("dashboard_selected_groups", [])
+            if group in scope_group_options
+        ]
+        if previous_scope != selected_market_scope and not stored_groups:
+            stored_groups = [
+                group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]
+                if group in scope_group_options
+            ]
+        elif not stored_groups:
+            stored_groups = [
+                group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]
+                if group in scope_group_options
+            ]
+        selected_groups = dedupe_keep_order(stored_groups)
         st.session_state["dashboard_selected_groups"] = selected_groups
 
+        stored_ticker_picks = filter_tickers_for_market_scope(
+            st.session_state.get("dashboard_selected_tickers", []),
+            selected_market_scope,
+        )
+        default_ticker_pool = [
+            ticker for ticker in default_tickers_for_market_scope(selected_market_scope)
+            if ticker
+        ]
+        tickers_initialized = bool(st.session_state.get("dashboard_selected_tickers_initialized", False))
+        has_explicit_ticker_state = "dashboard_selected_tickers" in st.session_state
+
+        if not tickers_initialized and not has_explicit_ticker_state:
+            stored_ticker_picks = default_ticker_pool
+        elif previous_scope != selected_market_scope and not stored_ticker_picks and not tickers_initialized:
+            stored_ticker_picks = default_ticker_pool
+
+        selected_ticker_picks = dedupe_keep_order(stored_ticker_picks)
+        st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
+        st.session_state["dashboard_market_scope_previous"] = selected_market_scope
+
+        render_html_block(
+            f"""
+            <div class="side-group-label">{selector_title}</div>
+            <div class="side-copy" style="margin-top:6px; margin-bottom:10px;">{selector_copy}</div>
+            """
+        )
+
+        group_action_widget_key = "dashboard_group_action_picker"
+        if group_action_widget_key not in st.session_state or st.session_state[group_action_widget_key] not in scope_group_options:
+            st.session_state[group_action_widget_key] = scope_group_options[0] if scope_group_options else ""
+        group_focus = st.selectbox(
+            sector_action_label,
+            options=scope_group_options,
+            format_func=tr_group,
+            key=group_action_widget_key,
+        )
+        group_action_cols = st.columns(2)
+        if group_action_cols[0].button(add_group_label, use_container_width=True):
+            st.session_state["dashboard_selected_groups"] = dedupe_keep_order(selected_groups + [group_focus])
+            st.rerun()
+        if group_action_cols[1].button(apply_group_label, use_container_width=True):
+            st.session_state["dashboard_selected_groups"] = dedupe_keep_order(selected_groups + [group_focus])
+            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+                selected_ticker_picks,
+                WATCHLIST_PRESETS.get(group_focus, []),
+                selected_market_scope,
+            )
+            st.session_state["dashboard_selected_tickers_initialized"] = True
+            st.rerun()
+
+        group_scope_cols = st.columns(2)
+        if group_scope_cols[0].button(select_all_groups_label, use_container_width=True):
+            st.session_state["dashboard_selected_groups"] = scope_group_options.copy()
+            st.rerun()
+        if group_scope_cols[1].button(clear_groups_label, use_container_width=True):
+            st.session_state["dashboard_selected_groups"] = []
+            st.rerun()
+
+        selected_groups = [
+            group for group in st.session_state.get("dashboard_selected_groups", [])
+            if group in scope_group_options
+        ]
+        st.session_state["dashboard_selected_groups"] = selected_groups
+        if selected_groups:
+            st.caption(
+                f"{selected_groups_label}: " + " · ".join(tr_group(group) for group in selected_groups)
+            )
+        else:
+            st.caption(
+                f"{selected_groups_label}: " + ("未限制，顯示目前市場所有預設群組" if is_zh else "Not limited. Showing all preset groups in this market scope.")
+            )
+
+        custom_symbol_widget_key = "dashboard_custom_symbols_widget"
+        if custom_symbol_widget_key not in st.session_state:
+            st.session_state[custom_symbol_widget_key] = st.session_state.get("dashboard_custom_symbols", "")
         custom_ticker_text = st.text_input(
             t("custom_symbols"),
-            value=st.session_state.get("dashboard_custom_symbols", ""),
             placeholder=t("custom_symbols_placeholder"),
+            key=custom_symbol_widget_key,
         )
         st.session_state["dashboard_custom_symbols"] = custom_ticker_text
 
         custom_tickers = [
             normalize_dashboard_ticker(ticker)
-            for ticker in custom_ticker_text.replace("\\n", ",").split(",")
+            for ticker in custom_ticker_text.replace("\n", ",").split(",")
             if ticker.strip()
         ]
+        custom_tickers = filter_tickers_for_market_scope(custom_tickers, selected_market_scope)
+        if st.button(custom_add_label, use_container_width=True) and custom_tickers:
+            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+                selected_ticker_picks,
+                custom_tickers,
+                selected_market_scope,
+            )
+            st.session_state["dashboard_selected_tickers_initialized"] = True
+            st.rerun()
 
+        symbol_search_widget_key = "dashboard_symbol_search_widget"
+        if symbol_search_widget_key not in st.session_state:
+            st.session_state[symbol_search_widget_key] = st.session_state.get("dashboard_symbol_search", "")
         symbol_search_query = st.text_input(
             t("symbol_search"),
-            value=st.session_state.get("dashboard_symbol_search", ""),
             placeholder=t("symbol_search_placeholder"),
+            key=symbol_search_widget_key,
         )
         st.session_state["dashboard_symbol_search"] = symbol_search_query
 
         symbol_search_matches: list[str] = []
+        search_results: list[str] = []
+        search_matches_widget_key = "dashboard_symbol_search_matches_widget"
         if symbol_search_query.strip():
-            search_results = build_symbol_search_results(symbol_search_query, selected_market_scope, max_results=12)
+            search_results = sort_ticker_options(
+                build_symbol_search_results(symbol_search_query, selected_market_scope, max_results=12)
+            )
             st.caption(t("search_results_help"))
             if search_results:
-                stored_search_matches = [
+                if search_matches_widget_key not in st.session_state:
+                    st.session_state[search_matches_widget_key] = []
+                valid_search_matches = [
                     normalize_dashboard_ticker(value)
-                    for value in st.session_state.get("dashboard_symbol_search_matches", [])
+                    for value in st.session_state.get(search_matches_widget_key, [])
+                    if normalize_dashboard_ticker(value) in set(search_results)
                 ]
-                default_search_matches = [value for value in stored_search_matches if value in search_results]
+                st.session_state[search_matches_widget_key] = valid_search_matches
                 symbol_search_matches = st.multiselect(
                     t("search_results"),
                     options=search_results,
-                    default=default_search_matches,
                     format_func=display_ticker_label,
                     help=t("search_results_help"),
-                    key="dashboard_symbol_search_matches",
+                    key=search_matches_widget_key,
                 )
+                symbol_search_matches = [
+                    normalize_dashboard_ticker(value)
+                    for value in symbol_search_matches
+                    if normalize_dashboard_ticker(value) in set(search_results)
+                ]
+                st.session_state["dashboard_symbol_search_matches"] = symbol_search_matches
+                if st.button(search_add_label, use_container_width=True):
+                    st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+                        selected_ticker_picks,
+                        symbol_search_matches,
+                        selected_market_scope,
+                    )
+                    st.session_state["dashboard_selected_tickers_initialized"] = True
+                    st.rerun()
             else:
                 st.session_state["dashboard_symbol_search_matches"] = []
                 st.caption(t("search_results_empty"))
@@ -6427,7 +7045,7 @@ def generate_dashboard():
             ticker for ticker in DEFAULT_TICKERS
             if selected_market_scope != "Taiwan only" or is_taiwan_ticker(ticker)
         )
-        for ticker in custom_tickers + symbol_search_matches:
+        for ticker in custom_tickers + st.session_state.get("dashboard_symbol_search_matches", []) + selected_ticker_picks:
             if not ticker:
                 continue
             if selected_market_scope == "Taiwan only" and not is_taiwan_ticker(ticker):
@@ -6435,43 +7053,110 @@ def generate_dashboard():
             if selected_market_scope == "U.S. only" and is_taiwan_ticker(ticker):
                 continue
             available_universe.add(ticker)
-        available_universe = sorted(available_universe)
-
-        default_ticker_pool = DEFAULT_TICKERS if selected_market_scope == "Mixed (U.S. + Taiwan)" else [
-            ticker for ticker in DEFAULT_TICKERS
-            if (selected_market_scope == "Taiwan only" and is_taiwan_ticker(ticker)) or (selected_market_scope == "U.S. only" and not is_taiwan_ticker(ticker))
+        available_universe = sort_ticker_options(available_universe)
+        selected_ticker_set = {normalize_dashboard_ticker(value) for value in selected_ticker_picks}
+        available_universe = [
+            ticker for ticker in available_universe
+            if normalize_dashboard_ticker(ticker) not in selected_ticker_set
         ]
-        stored_ticker_picks = st.session_state.get("dashboard_selected_tickers", [])
-        valid_default_tickers = [ticker for ticker in stored_ticker_picks if ticker in available_universe]
-        if not valid_default_tickers:
-            valid_default_tickers = [ticker for ticker in default_ticker_pool if ticker in available_universe]
-        for ticker in custom_tickers + symbol_search_matches:
-            if ticker in available_universe and ticker not in valid_default_tickers:
-                valid_default_tickers.append(ticker)
 
-        selected_ticker_picks = st.multiselect(
-            t("tickers"),
+        candidate_widget_key = "dashboard_candidate_tickers_widget"
+        if candidate_widget_key not in st.session_state:
+            st.session_state[candidate_widget_key] = []
+        st.session_state[candidate_widget_key] = [
+            normalize_dashboard_ticker(value)
+            for value in st.session_state.get(candidate_widget_key, [])
+            if normalize_dashboard_ticker(value) in set(available_universe)
+        ]
+        candidate_tickers = st.multiselect(
+            available_tickers_label,
             options=available_universe,
-            default=valid_default_tickers,
             placeholder=t("pick_watchlist_symbols"),
             format_func=display_ticker_label,
+            key=candidate_widget_key,
+        )
+
+        candidate_action_cols = st.columns(2)
+        if candidate_action_cols[0].button(add_visible_label, use_container_width=True):
+            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+                selected_ticker_picks,
+                candidate_tickers,
+                selected_market_scope,
+            )
+            st.session_state["dashboard_selected_tickers_initialized"] = True
+            st.rerun()
+        if candidate_action_cols[1].button(select_all_visible_label, use_container_width=True):
+            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+                selected_ticker_picks,
+                available_universe,
+                selected_market_scope,
+            )
+            st.session_state["dashboard_selected_tickers_initialized"] = True
+            st.rerun()
+
+        selected_ticker_picks = filter_tickers_for_market_scope(
+            st.session_state.get("dashboard_selected_tickers", []),
+            selected_market_scope,
         )
         st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
 
-        final_tickers = []
-        for ticker in selected_ticker_picks + custom_tickers + symbol_search_matches:
-            normalized = normalize_dashboard_ticker(ticker)
-            if not normalized:
-                continue
-            if selected_market_scope == "Taiwan only" and not is_taiwan_ticker(normalized):
-                continue
-            if selected_market_scope == "U.S. only" and is_taiwan_ticker(normalized):
-                continue
-            if normalized not in final_tickers:
-                final_tickers.append(normalized)
-        tickers = final_tickers
-        st.session_state["dashboard_final_tickers"] = tickers
+        render_html_block(
+            f'<div class="side-group-label">{selected_watchlist_label}</div>'
+        )
+        st.caption(selected_count_label.format(count=len(selected_ticker_picks)))
 
+        remove_widget_key = "dashboard_selected_remove_widget"
+        if remove_widget_key not in st.session_state:
+            st.session_state[remove_widget_key] = []
+        st.session_state[remove_widget_key] = [
+            normalize_dashboard_ticker(value)
+            for value in st.session_state.get(remove_widget_key, [])
+            if normalize_dashboard_ticker(value) in set(selected_ticker_picks)
+        ]
+        remove_candidates = st.multiselect(
+            selected_watchlist_label,
+            options=selected_ticker_picks,
+            format_func=display_ticker_label,
+            placeholder=t("pick_watchlist_symbols"),
+            key=remove_widget_key,
+        )
+
+        selected_action_cols = st.columns(2)
+        if selected_action_cols[0].button(remove_selected_label, use_container_width=True):
+            removal_set = {normalize_dashboard_ticker(value) for value in remove_candidates}
+            st.session_state["dashboard_selected_tickers"] = [
+                ticker for ticker in selected_ticker_picks
+                if normalize_dashboard_ticker(ticker) not in removal_set
+            ]
+            st.session_state["dashboard_selected_tickers_initialized"] = True
+            st.rerun()
+        if selected_action_cols[1].button(clear_selected_label, use_container_width=True):
+            st.session_state["dashboard_selected_tickers"] = []
+            st.session_state["dashboard_selected_tickers_initialized"] = True
+            st.rerun()
+
+        selected_ticker_picks = filter_tickers_for_market_scope(
+            st.session_state.get("dashboard_selected_tickers", []),
+            selected_market_scope,
+        )
+        st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+
+        if selected_ticker_picks:
+            preview_items = "".join(
+                f'<span class="chip chip-info" style="margin-right:6px; margin-bottom:6px;">{escape(display_ticker_label(ticker))}</span>'
+                for ticker in selected_ticker_picks[:10]
+            )
+            if len(selected_ticker_picks) > 10:
+                preview_items += (
+                    f'<span class="chip" style="margin-right:6px; margin-bottom:6px;">+{len(selected_ticker_picks) - 10}</span>'
+                )
+            render_html_block(f'<div class="chip-row" style="margin-top:8px;">{preview_items}</div>')
+        else:
+            st.caption("目前尚未加入股票，請先從上方加入。" if is_zh else "No symbols added yet. Add symbols from the sections above.")
+
+        tickers = dedupe_keep_order(selected_ticker_picks)
+        st.session_state["dashboard_final_tickers"] = tickers
         st.caption(t("watchlist_caption"))
         render_html_block(f'<div class="side-group-label">{t("trend_lens")}</div>')
 
@@ -6532,7 +7217,12 @@ def generate_dashboard():
                 "news": selected_news_mode,
                 "scope": selected_market_scope,
                 "groups": _csv_encode(selected_groups),
-                "picks": _csv_encode(selected_ticker_picks),
+                "picks": _csv_encode(
+                    selected_ticker_picks,
+                    empty_sentinel=EMPTY_SELECTION_SENTINEL
+                    if st.session_state.get("dashboard_selected_tickers_initialized", False)
+                    else None,
+                ),
                 "custom": custom_ticker_text.strip(),
                 "search": symbol_search_query.strip(),
                 "lens": lens_name,
