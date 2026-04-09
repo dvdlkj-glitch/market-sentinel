@@ -3329,6 +3329,15 @@ def inject_css():
             margin-bottom: 14px;
         }
 
+        .comparison-focus-preview {
+            padding: 2px 0 0 0;
+        }
+
+        .comparison-focus-chip {
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 8px 18px rgba(0,0,0,.14);
+        }
+
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -3442,6 +3451,82 @@ def inject_premium_overrides():
             box-shadow: 0 10px 24px rgba(0,0,0,.18);
             transform: translateY(-1px);
         }
+
+        .stMultiSelect [data-baseweb="select"] > div,
+        .stSelectbox [data-baseweb="select"] > div,
+        .stTextInput > div > div,
+        .stNumberInput > div > div {
+            background: linear-gradient(180deg, rgba(18, 27, 45, 0.96) 0%, rgba(10, 16, 29, 0.98) 100%) !important;
+            border: 1px solid rgba(255, 215, 128, 0.18) !important;
+            border-radius: 18px !important;
+            min-height: 52px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 12px 28px rgba(0,0,0,.20);
+            transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+        }
+
+        .stMultiSelect [data-baseweb="select"] > div:hover,
+        .stSelectbox [data-baseweb="select"] > div:hover,
+        .stTextInput > div > div:hover,
+        .stNumberInput > div > div:hover {
+            border-color: rgba(255, 215, 128, 0.28) !important;
+            box-shadow: 0 14px 30px rgba(0,0,0,.24);
+            transform: translateY(-1px);
+        }
+
+        .stMultiSelect [data-baseweb="tag"],
+        .stSelectbox [data-baseweb="tag"] {
+            background: linear-gradient(135deg, rgba(227,184,102,.18) 0%, rgba(170,126,53,.24) 100%) !important;
+            border: 1px solid rgba(255, 215, 128, 0.24) !important;
+            color: #fff4df !important;
+            border-radius: 999px !important;
+            font-weight: 800 !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+        }
+
+        .stMultiSelect [data-baseweb="select"] input,
+        .stSelectbox [data-baseweb="select"] input,
+        .stTextInput input,
+        .stNumberInput input {
+            color: #f7f9ff !important;
+        }
+
+        .stMultiSelect [data-baseweb="select"] svg,
+        .stSelectbox [data-baseweb="select"] svg {
+            color: #d8c29a !important;
+            fill: #d8c29a !important;
+        }
+
+        .stMultiSelect [data-baseweb="select"] [aria-invalid="true"],
+        .stMultiSelect [data-baseweb="select"] > div[aria-invalid="true"] {
+            border-color: rgba(255, 215, 128, 0.28) !important;
+            box-shadow: 0 0 0 1px rgba(255, 215, 128, 0.18), 0 14px 30px rgba(0,0,0,.24) !important;
+        }
+
+        div[data-baseweb="popover"] [role="listbox"],
+        div[data-baseweb="menu"] {
+            background: linear-gradient(180deg, rgba(18, 27, 45, 0.98) 0%, rgba(9, 14, 26, 1.0) 100%) !important;
+            border: 1px solid rgba(255, 215, 128, 0.16) !important;
+            border-radius: 18px !important;
+            box-shadow: 0 24px 60px rgba(0,0,0,.30) !important;
+        }
+
+        div[data-baseweb="popover"] [role="option"],
+        div[data-baseweb="menu"] [role="option"] {
+            color: #edf2ff !important;
+            background: transparent !important;
+        }
+
+        div[data-baseweb="popover"] [role="option"][aria-selected="true"],
+        div[data-baseweb="menu"] [role="option"][aria-selected="true"] {
+            background: rgba(227,184,102,.12) !important;
+            color: #fff4df !important;
+        }
+
+        div[data-baseweb="popover"] [role="option"]:hover,
+        div[data-baseweb="menu"] [role="option"]:hover {
+            background: rgba(122,149,255,.10) !important;
+        }
+
 
         section[data-testid="stSidebar"] .stButton > button,
         .stButton > button {
@@ -6029,6 +6114,36 @@ def render_comparison_overview_cards(bundles: list[dict], lens_meta: dict | None
     )
 
 
+
+def sync_comparison_candle_focus(candle_options: list[str], key: str, max_items: int = 4) -> list[str]:
+    normalized_options = [normalize_dashboard_ticker(ticker) for ticker in candle_options if ticker]
+    if not normalized_options:
+        return []
+
+    previous_focus = st.session_state.get(key, [])
+    if not isinstance(previous_focus, list):
+        previous_focus = []
+
+    previous_focus = [
+        normalize_dashboard_ticker(ticker)
+        for ticker in previous_focus
+        if normalize_dashboard_ticker(ticker) in normalized_options
+    ]
+
+    target_count = min(max_items, len(normalized_options))
+    for ticker in normalized_options:
+        if ticker not in previous_focus:
+            previous_focus.append(ticker)
+        if len(previous_focus) >= target_count:
+            break
+
+    desired_focus = previous_focus[:target_count]
+    if st.session_state.get(key) != desired_focus:
+        st.session_state[key] = desired_focus
+
+    return desired_focus
+
+
 def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
     if len(tickers) < 2:
         return
@@ -6097,19 +6212,13 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     candle_bundles = bundles
     if len(bundles) > 4:
         candle_focus_key = "comparison_candle_focus_tickers"
-        candle_options = [bundle["ticker"] for bundle in bundles]
-        previous_focus = st.session_state.get(candle_focus_key, [])
-        previous_focus = [ticker for ticker in previous_focus if ticker in candle_options]
-
-        if not previous_focus:
-            previous_focus = candle_options[:4]
-
-        if candle_focus_key not in st.session_state or st.session_state.get(candle_focus_key) != previous_focus:
-            st.session_state[candle_focus_key] = previous_focus
+        candle_options = [normalize_dashboard_ticker(bundle["ticker"]) for bundle in bundles]
+        default_focus = sync_comparison_candle_focus(candle_options, candle_focus_key, max_items=4)
 
         selected_candle_tickers = st.multiselect(
             "K 線比較焦點" if get_language() == "zh_TW" else "Candlestick comparison focus",
             options=candle_options,
+            default=default_focus,
             format_func=display_ticker_label,
             max_selections=4,
             help="最多選擇 4 檔做 K 線比較。" if get_language() == "zh_TW" else "Choose up to 4 names for candle comparison.",
@@ -6117,20 +6226,25 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
             placeholder="請選擇最多 4 檔" if get_language() == "zh_TW" else "Select up to 4 names",
         )
 
-        if not selected_candle_tickers:
-            selected_candle_tickers = candle_options[:4]
-            st.session_state[candle_focus_key] = selected_candle_tickers
+        selected_candle_tickers = [
+            normalize_dashboard_ticker(ticker)
+            for ticker in selected_candle_tickers
+            if normalize_dashboard_ticker(ticker) in candle_options
+        ]
 
-        candle_bundles = [bundle for bundle in bundles if bundle["ticker"] in selected_candle_tickers]
+        if not selected_candle_tickers:
+            selected_candle_tickers = default_focus
+
+        candle_bundles = [bundle for bundle in bundles if normalize_dashboard_ticker(bundle["ticker"]) in selected_candle_tickers]
 
         focus_preview_html = "".join(
             f'<span class="comparison-focus-chip">{escape(display_ticker_label(ticker))}</span>'
             for ticker in selected_candle_tickers
         )
         focus_note = (
-            "目前焦點 K 線比較。已加入的股票會立即同步到下方圖表。"
+            f"目前已選 {len(selected_candle_tickers)} / 4 檔。下方只顯示這些股票的 K 線比較。"
             if get_language() == "zh_TW"
-            else "Current candle-comparison focus. Selected names sync directly to the charts below."
+            else f"{len(selected_candle_tickers)} / 4 names selected. Only these charts appear below."
         )
         render_html_block(
             f'<div class="comparison-focus-preview">{focus_preview_html}</div>'
