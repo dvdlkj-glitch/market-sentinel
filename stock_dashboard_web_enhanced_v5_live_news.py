@@ -26,6 +26,18 @@ DEFAULT_INTERVAL = "1d"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
 
+PLANNER_TIMEFRAME_OPTIONS = ["2w", "1m", "3m", "6m", "9m", "1y"]
+PLANNER_TIMEFRAME_MONTHS = {"2w": 0.5, "1m": 1.0, "3m": 3.0, "6m": 6.0, "9m": 9.0, "1y": 12.0}
+PLANNER_UPSIDE_MULTIPLIERS = {"2w": 0.42, "1m": 0.55, "3m": 0.72, "6m": 1.0, "9m": 1.18, "1y": 1.32}
+PLANNER_STOP_MULTIPLIERS = {"2w": 0.62, "1m": 0.74, "3m": 0.84, "6m": 1.0, "9m": 1.10, "1y": 1.18}
+PLANNER_TARGET_PROGRESS = {"2w": 0.28, "1m": 0.40, "3m": 0.62, "6m": 0.82, "9m": 0.92, "1y": 1.00}
+PLANNER_CONSERVATIVE_CAPS = {"2w": 10.0, "1m": 12.0, "3m": 16.0, "6m": 20.0, "9m": 23.0, "1y": 26.0}
+PLANNER_BASE_CAPS = {"2w": 18.0, "1m": 22.0, "3m": 26.0, "6m": 32.0, "9m": 36.0, "1y": 40.0}
+PLANNER_STRETCH_CAPS = {"2w": 26.0, "1m": 32.0, "3m": 36.0, "6m": 46.0, "9m": 52.0, "1y": 58.0}
+PLANNER_STOP_TIGHT_CAPS = {"2w": 7.0, "1m": 8.0, "3m": 9.0, "6m": 10.5, "9m": 12.0, "1y": 13.5}
+PLANNER_STOP_BALANCED_CAPS = {"2w": 9.0, "1m": 10.5, "3m": 12.0, "6m": 15.0, "9m": 16.8, "1y": 18.5}
+PLANNER_STOP_WIDE_CAPS = {"2w": 12.0, "1m": 14.0, "3m": 16.0, "6m": 20.0, "9m": 22.0, "1y": 24.0}
+
 TREND_LENSES = {
     "Fast Read": {
         "period": "3mo",
@@ -1073,7 +1085,8 @@ def fetch_analyst_target_snapshot(ticker: str) -> dict:
 
     return snapshot
 
-def build_target_watch_context(ticker: str, price_series: pd.Series, news_items: list[dict]) -> dict:
+def build_target_watch_context(ticker: str, price_series: pd.Series, news_items: list[dict], timeframe: str = "6m") -> dict:
+    timeframe = normalize_planner_timeframe(timeframe)
     snapshot = fetch_analyst_target_snapshot(ticker)
     current_price = coerce_float(snapshot.get("current_price"))
     if pd.isna(current_price) and price_series is not None and not price_series.empty:
@@ -1085,26 +1098,48 @@ def build_target_watch_context(ticker: str, price_series: pd.Series, news_items:
     analyst_count = snapshot.get("analyst_count")
     target_headlines = extract_target_headlines(news_items)
 
+    progress = PLANNER_TARGET_PROGRESS.get(timeframe, PLANNER_TARGET_PROGRESS["6m"])
+
+    def _project_target(level):
+        level = coerce_float(level)
+        if pd.isna(level) or pd.isna(current_price):
+            return level
+        return float(current_price + (level - current_price) * progress)
+
+    projected_mean_target = _project_target(mean_target)
+    projected_high_target = _project_target(high_target)
+    projected_low_target = _project_target(low_target)
+
     upside_to_mean = pd.NA
     downside_to_low = pd.NA
     if pd.notna(current_price) and current_price != 0:
-        if pd.notna(mean_target):
-            upside_to_mean = ((mean_target / current_price) - 1) * 100
-        if pd.notna(low_target):
-            downside_to_low = ((low_target / current_price) - 1) * 100
+        if pd.notna(projected_mean_target):
+            upside_to_mean = ((projected_mean_target / current_price) - 1) * 100
+        if pd.notna(projected_low_target):
+            downside_to_low = ((projected_low_target / current_price) - 1) * 100
 
     band_text = (
-        f"{format_local_price(low_target, ticker)} → {format_local_price(high_target, ticker)}"
-        if pd.notna(low_target) or pd.notna(high_target)
+        f"{format_local_price(projected_low_target, ticker)} → {format_local_price(projected_high_target, ticker)}"
+        if pd.notna(projected_low_target) or pd.notna(projected_high_target)
         else "N/A"
     )
 
+    if get_language() == "zh_TW":
+        horizon_note = f"已按 {planner_timeframe_label(timeframe)} 投資期限調整目標價區間。"
+    else:
+        horizon_note = f"Target band scaled to a {planner_timeframe_label(timeframe)} investment horizon."
+
     return {
-        "available": pd.notna(mean_target) or bool(target_headlines) or bool(snapshot.get("latest_revision")),
+        "available": pd.notna(projected_mean_target) or bool(target_headlines) or bool(snapshot.get("latest_revision")),
+        "timeframe": timeframe,
+        "timeframe_label": planner_timeframe_label(timeframe),
         "current_price": current_price,
-        "mean_target": mean_target,
-        "high_target": high_target,
-        "low_target": low_target,
+        "mean_target": projected_mean_target,
+        "high_target": projected_high_target,
+        "low_target": projected_low_target,
+        "full_mean_target": mean_target,
+        "full_high_target": high_target,
+        "full_low_target": low_target,
         "upside_to_mean": upside_to_mean,
         "downside_to_low": downside_to_low,
         "band_text": band_text,
@@ -1113,9 +1148,9 @@ def build_target_watch_context(ticker: str, price_series: pd.Series, news_items:
         "latest_revision": str(snapshot.get("latest_revision", "") or "").strip(),
         "target_headlines": target_headlines,
         "source_note": t("target_reference_source"),
-        "warning": t("no_structured_target") if not pd.notna(mean_target) else "",
+        "warning": t("no_structured_target") if not pd.notna(projected_mean_target) else "",
+        "horizon_note": horizon_note,
     }
-
 def build_news_helper_text(item: dict, ticker: str, probability: int) -> str:
     direction_text, _, _ = article_direction_meta(item)
     confidence = tr_confidence(item.get("confidence", "N/A"))
@@ -2277,6 +2312,29 @@ def inject_css():
             border-radius: 18px !important;
             min-height: 54px;
             box-shadow: inset 0 1px 0 rgba(255,255,255,.02), 0 10px 24px rgba(0,0,0,.18);
+        }
+
+        section[data-testid="stSidebar"] [data-baseweb="input"] input,
+        section[data-testid="stSidebar"] .stTextInput input,
+        section[data-testid="stSidebar"] .stNumberInput input {
+            background: transparent !important;
+            color: #0f1728 !important;
+            -webkit-text-fill-color: #0f1728 !important;
+            caret-color: #0f1728 !important;
+            font-weight: 700 !important;
+        }
+
+        section[data-testid="stSidebar"] [data-baseweb="input"] input::placeholder,
+        section[data-testid="stSidebar"] .stTextInput input::placeholder,
+        section[data-testid="stSidebar"] .stNumberInput input::placeholder {
+            color: rgba(15,23,40,.42) !important;
+            -webkit-text-fill-color: rgba(15,23,40,.42) !important;
+            opacity: 1 !important;
+        }
+
+        section[data-testid="stSidebar"] [data-baseweb="select"] span,
+        section[data-testid="stSidebar"] [data-baseweb="select"] div {
+            color: #eef2ff !important;
         }
 
         section[data-testid="stSidebar"] [data-baseweb="tag"] {
@@ -6392,18 +6450,36 @@ def planner_stop_profile_label(profile: str) -> str:
     }.get(profile, profile)
 
 
+def normalize_planner_timeframe(timeframe: str) -> str:
+    timeframe = str(timeframe or "6m").strip()
+    return timeframe if timeframe in PLANNER_TIMEFRAME_OPTIONS else "6m"
+
+
 def planner_timeframe_label(timeframe: str) -> str:
+    timeframe = normalize_planner_timeframe(timeframe)
     if get_language() == "zh_TW":
         return {
+            "2w": "2 週",
+            "1m": "1 個月",
             "3m": "3 個月",
             "6m": "6 個月",
+            "9m": "9 個月",
             "1y": "1 年",
         }.get(timeframe, timeframe)
     return {
+        "2w": "2 weeks",
+        "1m": "1 month",
         "3m": "3 months",
         "6m": "6 months",
+        "9m": "9 months",
         "1y": "1 year",
     }.get(timeframe, timeframe)
+
+
+def active_target_watch_timeframe(ticker: str) -> str:
+    currency = planner_market_currency(ticker)
+    session_key = "scenario_planner_twd_timeframe" if currency == "TWD" else "scenario_planner_usd_timeframe"
+    return normalize_planner_timeframe(st.session_state.get(session_key, st.session_state.get("dashboard_target_watch_timeframe", "6m")))
 
 
 def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
@@ -6411,7 +6487,7 @@ def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
     price_series = bundle.get("price_series")
     analysis = bundle.get("analysis", {})
     trading_lab = analysis.get("trading_lab", {}) or {}
-    target_ctx = build_target_watch_context(ticker, price_series, bundle.get("news_items", []))
+    target_ctx = build_target_watch_context(ticker, price_series, bundle.get("news_items", []), timeframe=timeframe)
 
     current_price = coerce_float(analysis.get("last_price"))
     if pd.isna(current_price) and price_series is not None and not price_series.empty:
@@ -6425,10 +6501,10 @@ def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
             monthly_vol = float(pct.tail(20).std() * np.sqrt(20) * 100)
 
     signal = str(analysis.get("signal", "HOLD") or "HOLD").upper()
-    timeframe = timeframe if timeframe in {"3m", "6m", "1y"} else "6m"
-    upside_time_multiplier = {"3m": 0.72, "6m": 1.0, "1y": 1.32}[timeframe]
-    stop_time_multiplier = {"3m": 0.84, "6m": 1.0, "1y": 1.18}[timeframe]
-    months = {"3m": 3, "6m": 6, "1y": 12}[timeframe]
+    timeframe = normalize_planner_timeframe(timeframe)
+    upside_time_multiplier = PLANNER_UPSIDE_MULTIPLIERS[timeframe]
+    stop_time_multiplier = PLANNER_STOP_MULTIPLIERS[timeframe]
+    months = PLANNER_TIMEFRAME_MONTHS[timeframe]
 
     base_defaults = {
         "BUY": (6.0, 12.0, 20.0, 5.5),
@@ -6444,9 +6520,9 @@ def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
     if pd.notna(monthly_vol):
         horizon_vol = float(monthly_vol * np.sqrt(months / 6.0))
         cons_default = float(np.clip(horizon_vol * 0.65, 2.5, 16.0))
-        base_default = float(np.clip(horizon_vol * 1.0, cons_default + 1.0, 26.0 if timeframe == "3m" else 32.0 if timeframe == "6m" else 40.0))
-        stretch_default = float(np.clip(horizon_vol * 1.45, base_default + 1.0, 36.0 if timeframe == "3m" else 46.0 if timeframe == "6m" else 58.0))
-        stop_default = float(np.clip(horizon_vol * 0.55, 3.0, 11.0 if timeframe == "3m" else 14.0 if timeframe == "6m" else 18.0))
+        base_default = float(np.clip(horizon_vol * 1.0, cons_default + 1.0, PLANNER_BASE_CAPS[timeframe]))
+        stretch_default = float(np.clip(horizon_vol * 1.45, base_default + 1.0, PLANNER_STRETCH_CAPS[timeframe]))
+        stop_default = float(np.clip(horizon_vol * 0.55, 3.0, PLANNER_STOP_BALANCED_CAPS[timeframe]))
 
     def _pct_to_level(level) -> float:
         level = coerce_float(level)
@@ -6468,9 +6544,9 @@ def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
 
     if positive_candidates:
         positive_candidates_sorted = [float(x) * upside_time_multiplier for x in sorted(positive_candidates)]
-        conservative_up = float(np.clip(0.55 * cons_default + 0.45 * positive_candidates_sorted[0], 2.0, 14.0 if timeframe == "3m" else 20.0 if timeframe == "6m" else 26.0))
-        base_up = float(np.clip(np.median(positive_candidates_sorted + [base_default]), conservative_up + 0.5, 24.0 if timeframe == "3m" else 32.0 if timeframe == "6m" else 42.0))
-        stretch_up = float(np.clip(max(max(positive_candidates_sorted), stretch_default), base_up + 0.5, 34.0 if timeframe == "3m" else 46.0 if timeframe == "6m" else 60.0))
+        conservative_up = float(np.clip(0.55 * cons_default + 0.45 * positive_candidates_sorted[0], 2.0, PLANNER_CONSERVATIVE_CAPS[timeframe]))
+        base_up = float(np.clip(np.median(positive_candidates_sorted + [base_default]), conservative_up + 0.5, PLANNER_BASE_CAPS[timeframe] + 10.0))
+        stretch_up = float(np.clip(max(max(positive_candidates_sorted), stretch_default), base_up + 0.5, PLANNER_STRETCH_CAPS[timeframe] + 2.0))
     else:
         base_up = max(base_up, conservative_up + 0.5)
         stretch_up = max(stretch_up, base_up + 0.5)
@@ -6482,9 +6558,9 @@ def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
             negative_candidates.append(abs(float(pct)))
 
     scaled_negative_candidates = [float(x) * stop_time_multiplier for x in negative_candidates]
-    stop_tight = float(np.clip(min(scaled_negative_candidates) if scaled_negative_candidates else stop_default * 0.85, 2.5, 9.0 if timeframe == "3m" else 10.5 if timeframe == "6m" else 13.5))
-    stop_balanced = float(np.clip(np.median(scaled_negative_candidates + [stop_default]) if scaled_negative_candidates else stop_default, stop_tight + 0.5, 12.0 if timeframe == "3m" else 15.0 if timeframe == "6m" else 18.5))
-    stop_wide = float(np.clip(max(scaled_negative_candidates) if scaled_negative_candidates else stop_default * 1.35, stop_balanced + 0.5, 16.0 if timeframe == "3m" else 20.0 if timeframe == "6m" else 24.0))
+    stop_tight = float(np.clip(min(scaled_negative_candidates) if scaled_negative_candidates else stop_default * 0.85, 2.5, PLANNER_STOP_TIGHT_CAPS[timeframe]))
+    stop_balanced = float(np.clip(np.median(scaled_negative_candidates + [stop_default]) if scaled_negative_candidates else stop_default, stop_tight + 0.5, PLANNER_STOP_BALANCED_CAPS[timeframe]))
+    stop_wide = float(np.clip(max(scaled_negative_candidates) if scaled_negative_candidates else stop_default * 1.35, stop_balanced + 0.5, PLANNER_STOP_WIDE_CAPS[timeframe]))
 
     quality = 0
     quality += 1 if signal == "BUY" else -1 if signal == "SELL" else 0
@@ -6753,11 +6829,12 @@ def render_position_scenario_planner(bundles: list[dict]):
         with control_cols[3]:
             timeframe = st.selectbox(
                 "投資期限" if lang_zh else "Time frame",
-                options=["3m", "6m", "1y"],
+                options=PLANNER_TIMEFRAME_OPTIONS,
                 format_func=planner_timeframe_label,
-                index=1,
+                index=PLANNER_TIMEFRAME_OPTIONS.index("6m"),
                 key=f"{key_prefix}_timeframe",
             )
+            st.session_state["dashboard_target_watch_timeframe"] = normalize_planner_timeframe(timeframe)
 
         scenario_df, summary = build_position_scenario_rows(
             group_bundles,
@@ -7066,7 +7143,7 @@ def render_target_watch_section(ticker: str, context: dict):
             f'<div class="target-watch-title">{t("target_watch")}</div>',
             f'<div class="target-watch-copy">{t("target_watch_copy")}</div>',
             '</div>',
-            f'<div class="target-watch-pill">{escape(context.get("source_note", t("target_reference_source")))}</div>',
+            f'<div class="target-watch-pill">{escape(context.get("source_note", t("target_reference_source")))} · {escape(context.get("timeframe_label", planner_timeframe_label("6m")))}</div>',
             '</div>',
             '<div class="target-watch-grid">',
             '<div class="target-watch-card">',
@@ -7097,7 +7174,7 @@ def render_target_watch_section(ticker: str, context: dict):
             headlines_html,
             '</div>',
             '</div>',
-            f'<div class="target-watch-note">{t("target_reference_note")}</div>',
+            f'<div class="target-watch-note">{escape(context.get("horizon_note", ""))} {t("target_reference_note")}</div>',
             '</div>',
         ]
     )
@@ -7122,7 +7199,7 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
 
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
-    render_target_watch_section(ticker, build_target_watch_context(ticker, bundle["price_series"], news_items))
+    render_target_watch_section(ticker, build_target_watch_context(ticker, bundle["price_series"], news_items, timeframe=active_target_watch_timeframe(ticker)))
 
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
