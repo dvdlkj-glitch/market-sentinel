@@ -2962,6 +2962,181 @@ def inject_css():
             overflow: hidden;
         }
 
+        .stNumberInput [data-baseweb="input"] > div {
+            background: #ffffff !important;
+            border: 1px solid rgba(214,164,67,0.24) !important;
+            border-radius: 18px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.72), 0 10px 24px rgba(0,0,0,.12);
+        }
+
+        .stNumberInput input,
+        .stNumberInput [data-baseweb="input"] input {
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+            caret-color: #111827 !important;
+            font-weight: 800 !important;
+        }
+
+        .stNumberInput input::placeholder,
+        .stNumberInput [data-baseweb="input"] input::placeholder {
+            color: #6b7280 !important;
+            opacity: 1 !important;
+        }
+
+        .stNumberInput button {
+            color: #0f1728 !important;
+        }
+
+        .scenario-table-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(84,104,255,.12) 0%, rgba(84,104,255,0) 32%),
+                linear-gradient(180deg, rgba(20, 29, 56, 0.94) 0%, rgba(10, 16, 33, 0.98) 100%);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: var(--radius-xl);
+            box-shadow: 0 24px 52px rgba(0,0,0,.22);
+            margin-top: 14px;
+            overflow-x: auto;
+        }
+
+        .scenario-table-shell::after {
+            content: "";
+            position: absolute;
+            right: -90px;
+            top: -80px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(69,184,255,0.10) 0%, rgba(69,184,255,0) 72%);
+            pointer-events: none;
+        }
+
+        .scenario-table-scroll {
+            overflow-x: auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .scenario-table {
+            width: 100%;
+            min-width: 1060px;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        .scenario-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: linear-gradient(180deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.04) 100%);
+            color: #d8c39a;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            padding: 14px 14px 12px 14px;
+            border-bottom: 1px solid rgba(255,255,255,.08);
+            white-space: nowrap;
+            text-align: left;
+        }
+
+        .scenario-table tbody td {
+            padding: 14px;
+            border-bottom: 1px solid rgba(255,255,255,.07);
+            color: #eef2ff;
+            font-size: 14px;
+            line-height: 1.45;
+            vertical-align: top;
+            white-space: nowrap;
+        }
+
+        .scenario-table tbody tr:hover td {
+            background: rgba(255,255,255,.035);
+        }
+
+        .scenario-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .scenario-table-primary {
+            font-size: 16px;
+            font-weight: 900;
+            color: #ffffff;
+            line-height: 1.15;
+        }
+
+        .scenario-table-secondary {
+            font-size: 12px;
+            color: rgba(238,242,255,.72);
+            margin-top: 5px;
+            line-height: 1.45;
+            white-space: normal;
+        }
+
+        .scenario-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 7px 11px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            border: 1px solid rgba(255,255,255,.10);
+        }
+
+        .scenario-pill-up {
+            background: rgba(16,163,111,0.12);
+            border-color: rgba(16,163,111,0.24);
+            color: #9ae7c4;
+        }
+
+        .scenario-pill-neutral {
+            background: rgba(214,164,67,0.12);
+            border-color: rgba(214,164,67,0.22);
+            color: #ffe3a3;
+        }
+
+        .scenario-pill-down {
+            background: rgba(217,89,89,0.12);
+            border-color: rgba(217,89,89,0.22);
+            color: #ffc0c0;
+        }
+
+        .scenario-num {
+            font-size: 16px;
+            font-weight: 900;
+            color: #ffffff;
+        }
+
+        .scenario-num-muted {
+            font-size: 13px;
+            font-weight: 800;
+            color: rgba(238,242,255,.80);
+        }
+
+        .scenario-text-wrap {
+            white-space: normal;
+            min-width: 220px;
+        }
+
+        @media (max-width: 768px) {
+            .scenario-table-shell {
+                border-radius: 18px;
+            }
+            .scenario-table {
+                min-width: 920px;
+            }
+            .scenario-table thead th,
+            .scenario-table tbody td {
+                padding: 12px;
+            }
+            .scenario-table-primary {
+                font-size: 15px;
+            }
+        }
+
         @media (max-width: 980px) {
             .block-container {
                 padding-left: 0.7rem;
@@ -3488,6 +3663,31 @@ def inject_premium_overrides():
         .stTextInput input,
         .stNumberInput input {
             color: #f7f9ff !important;
+            -webkit-text-fill-color: #f7f9ff !important;
+            caret-color: #f7f9ff !important;
+        }
+
+        .stSelectbox [data-baseweb="select"] > div [data-testid="stMarkdownContainer"],
+        .stSelectbox [data-baseweb="select"] > div [data-testid="stMarkdownContainer"] p,
+        .stSelectbox [data-baseweb="select"] > div span,
+        .stSelectbox [data-baseweb="select"] > div div,
+        .stSelectbox [data-baseweb="select"] > div * {
+            color: #f7f9ff !important;
+            -webkit-text-fill-color: #f7f9ff !important;
+        }
+
+        .stSelectbox [data-baseweb="select"] > div [aria-selected="true"],
+        .stSelectbox [data-baseweb="select"] > div [data-baseweb="select"] * {
+            color: #fff4df !important;
+            -webkit-text-fill-color: #fff4df !important;
+        }
+
+        .stSelectbox [data-baseweb="select"] > div input::placeholder,
+        .stTextInput input::placeholder,
+        .stNumberInput input::placeholder {
+            color: rgba(229, 236, 249, 0.56) !important;
+            -webkit-text-fill-color: rgba(229, 236, 249, 0.56) !important;
+            opacity: 1 !important;
         }
 
         .stMultiSelect [data-baseweb="select"] svg,
@@ -6144,6 +6344,494 @@ def sync_comparison_candle_focus(candle_options: list[str], key: str, max_items:
     return desired_focus
 
 
+
+
+def planner_market_currency(ticker: str) -> str:
+    return "TWD" if is_taiwan_ticker(ticker) else "USD"
+
+
+def planner_currency_symbol(currency: str) -> str:
+    return "NT$" if currency == "TWD" else "$"
+
+
+def planner_market_title(currency: str) -> str:
+    if get_language() == "zh_TW":
+        return "台股情境試算" if currency == "TWD" else "美股情境試算"
+    return "Taiwan scenario planner" if currency == "TWD" else "U.S. scenario planner"
+
+
+def planner_market_caption(currency: str) -> str:
+    if get_language() == "zh_TW":
+        return "金額會以新台幣試算，漲幅區間與止損區間都只是參考情境，不是保證。"
+    return "Capital is modeled in local currency. Upside and stop ranges are scenario references, not guarantees."
+
+
+def planner_allocation_label(method: str) -> str:
+    if get_language() == "zh_TW":
+        return {
+            "equal": "平均分配",
+            "score_weighted": "依訊號強度分配",
+        }.get(method, method)
+    return {
+        "equal": "Equal weight",
+        "score_weighted": "Signal-weighted",
+    }.get(method, method)
+
+
+def planner_stop_profile_label(profile: str) -> str:
+    if get_language() == "zh_TW":
+        return {
+            "tight": "偏緊止損",
+            "balanced": "平衡止損",
+            "wide": "寬鬆止損",
+        }.get(profile, profile)
+    return {
+        "tight": "Tight stop",
+        "balanced": "Balanced stop",
+        "wide": "Wide stop",
+    }.get(profile, profile)
+
+
+def planner_timeframe_label(timeframe: str) -> str:
+    if get_language() == "zh_TW":
+        return {
+            "3m": "3 個月",
+            "6m": "6 個月",
+            "1y": "1 年",
+        }.get(timeframe, timeframe)
+    return {
+        "3m": "3 months",
+        "6m": "6 months",
+        "1y": "1 year",
+    }.get(timeframe, timeframe)
+
+
+def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
+    ticker = bundle["ticker"]
+    price_series = bundle.get("price_series")
+    analysis = bundle.get("analysis", {})
+    trading_lab = analysis.get("trading_lab", {}) or {}
+    target_ctx = build_target_watch_context(ticker, price_series, bundle.get("news_items", []))
+
+    current_price = coerce_float(analysis.get("last_price"))
+    if pd.isna(current_price) and price_series is not None and not price_series.empty:
+        current_price = coerce_float(price_series.iloc[-1])
+
+    series = to_numeric_series(price_series).dropna() if price_series is not None else pd.Series(dtype="float64")
+    monthly_vol = np.nan
+    if len(series) >= 20:
+        pct = series.pct_change().dropna()
+        if not pct.empty:
+            monthly_vol = float(pct.tail(20).std() * np.sqrt(20) * 100)
+
+    signal = str(analysis.get("signal", "HOLD") or "HOLD").upper()
+    timeframe = timeframe if timeframe in {"3m", "6m", "1y"} else "6m"
+    upside_time_multiplier = {"3m": 0.72, "6m": 1.0, "1y": 1.32}[timeframe]
+    stop_time_multiplier = {"3m": 0.84, "6m": 1.0, "1y": 1.18}[timeframe]
+    months = {"3m": 3, "6m": 6, "1y": 12}[timeframe]
+
+    base_defaults = {
+        "BUY": (6.0, 12.0, 20.0, 5.5),
+        "HOLD": (4.0, 8.5, 14.0, 6.5),
+        "SELL": (2.0, 5.0, 9.0, 5.0),
+    }
+    cons_default, base_default, stretch_default, stop_default = base_defaults.get(signal, base_defaults["HOLD"])
+    cons_default *= upside_time_multiplier
+    base_default *= upside_time_multiplier
+    stretch_default *= upside_time_multiplier
+    stop_default *= stop_time_multiplier
+
+    if pd.notna(monthly_vol):
+        horizon_vol = float(monthly_vol * np.sqrt(months / 6.0))
+        cons_default = float(np.clip(horizon_vol * 0.65, 2.5, 16.0))
+        base_default = float(np.clip(horizon_vol * 1.0, cons_default + 1.0, 26.0 if timeframe == "3m" else 32.0 if timeframe == "6m" else 40.0))
+        stretch_default = float(np.clip(horizon_vol * 1.45, base_default + 1.0, 36.0 if timeframe == "3m" else 46.0 if timeframe == "6m" else 58.0))
+        stop_default = float(np.clip(horizon_vol * 0.55, 3.0, 11.0 if timeframe == "3m" else 14.0 if timeframe == "6m" else 18.0))
+
+    def _pct_to_level(level) -> float:
+        level = coerce_float(level)
+        if pd.isna(current_price) or pd.isna(level) or current_price == 0:
+            return np.nan
+        return float(((level / current_price) - 1) * 100)
+
+    positive_candidates = [
+        _pct_to_level(trading_lab.get("resistance")),
+        _pct_to_level(trading_lab.get("bb_upper")),
+        coerce_float(target_ctx.get("upside_to_mean")),
+        _pct_to_level(target_ctx.get("high_target")),
+    ]
+    positive_candidates = [float(x) for x in positive_candidates if pd.notna(x) and x > 0]
+
+    conservative_up = cons_default
+    base_up = base_default
+    stretch_up = stretch_default
+
+    if positive_candidates:
+        positive_candidates_sorted = [float(x) * upside_time_multiplier for x in sorted(positive_candidates)]
+        conservative_up = float(np.clip(0.55 * cons_default + 0.45 * positive_candidates_sorted[0], 2.0, 14.0 if timeframe == "3m" else 20.0 if timeframe == "6m" else 26.0))
+        base_up = float(np.clip(np.median(positive_candidates_sorted + [base_default]), conservative_up + 0.5, 24.0 if timeframe == "3m" else 32.0 if timeframe == "6m" else 42.0))
+        stretch_up = float(np.clip(max(max(positive_candidates_sorted), stretch_default), base_up + 0.5, 34.0 if timeframe == "3m" else 46.0 if timeframe == "6m" else 60.0))
+    else:
+        base_up = max(base_up, conservative_up + 0.5)
+        stretch_up = max(stretch_up, base_up + 0.5)
+
+    negative_candidates = []
+    for level in (trading_lab.get("support"), trading_lab.get("bb_lower"), target_ctx.get("low_target")):
+        pct = _pct_to_level(level)
+        if pd.notna(pct) and pct < 0:
+            negative_candidates.append(abs(float(pct)))
+
+    scaled_negative_candidates = [float(x) * stop_time_multiplier for x in negative_candidates]
+    stop_tight = float(np.clip(min(scaled_negative_candidates) if scaled_negative_candidates else stop_default * 0.85, 2.5, 9.0 if timeframe == "3m" else 10.5 if timeframe == "6m" else 13.5))
+    stop_balanced = float(np.clip(np.median(scaled_negative_candidates + [stop_default]) if scaled_negative_candidates else stop_default, stop_tight + 0.5, 12.0 if timeframe == "3m" else 15.0 if timeframe == "6m" else 18.5))
+    stop_wide = float(np.clip(max(scaled_negative_candidates) if scaled_negative_candidates else stop_default * 1.35, stop_balanced + 0.5, 16.0 if timeframe == "3m" else 20.0 if timeframe == "6m" else 24.0))
+
+    quality = 0
+    quality += 1 if signal == "BUY" else -1 if signal == "SELL" else 0
+    quality += 1 if str(analysis.get("confidence", "")).lower() == "high" else 0
+    quality += 1 if analysis.get("news_pulse", {}).get("score", 0) >= 1.4 else -1 if analysis.get("news_pulse", {}).get("score", 0) <= -1.4 else 0
+    quality += 1 if trading_lab.get("setup") == "Momentum-led" else -1 if trading_lab.get("setup") == "Risk-off" else 0
+
+    reference_note = (
+        "Analyst target + technical resistance blend"
+        if positive_candidates
+        else "Volatility-derived reference band"
+    )
+    if get_language() == "zh_TW":
+        reference_note = (
+            "分析師目標價 + 技術壓力區綜合"
+            if positive_candidates
+            else "依近期波動推估的參考區間"
+        )
+
+    timeframe_note = planner_timeframe_label(timeframe)
+    if get_language() == "zh_TW":
+        reference_note = f"{reference_note} · {timeframe_note} 期限"
+    else:
+        reference_note = f"{reference_note} · {timeframe_note} horizon"
+
+    return {
+        "ticker": ticker,
+        "timeframe": timeframe,
+        "current_price": current_price,
+        "conservative_up": conservative_up,
+        "base_up": base_up,
+        "stretch_up": stretch_up,
+        "stop_tight": stop_tight,
+        "stop_balanced": stop_balanced,
+        "stop_wide": stop_wide,
+        "reference_note": reference_note,
+        "quality_score": quality,
+        "signal": signal,
+        "target_context": target_ctx,
+    }
+
+
+def build_position_scenario_rows(
+    bundles: list[dict],
+    total_capital: float,
+    allocation_method: str = "equal",
+    stop_profile: str = "balanced",
+    timeframe: str = "6m",
+) -> tuple[pd.DataFrame, dict]:
+    valid_bundles = [bundle for bundle in bundles if pd.notna(coerce_float(bundle.get("analysis", {}).get("last_price")))]
+    if not valid_bundles or total_capital <= 0:
+        return pd.DataFrame(), {}
+
+    scenario_map = {bundle["ticker"]: estimate_position_scenario(bundle, timeframe=timeframe) for bundle in valid_bundles}
+    if allocation_method == "score_weighted":
+        weights = []
+        for bundle in valid_bundles:
+            score = bundle.get("analysis", {}).get("pro_score", bundle.get("analysis", {}).get("score", 0))
+            weights.append(max(float(score) + 6.0, 1.0))
+    else:
+        weights = [1.0] * len(valid_bundles)
+
+    weight_sum = sum(weights) or float(len(valid_bundles))
+    rows: list[dict] = []
+    base_profit_total = 0.0
+    conservative_profit_total = 0.0
+    stretch_profit_total = 0.0
+    stop_loss_total = 0.0
+
+    stop_key = {
+        "tight": "stop_tight",
+        "balanced": "stop_balanced",
+        "wide": "stop_wide",
+    }.get(stop_profile, "stop_balanced")
+
+    for bundle, weight in zip(valid_bundles, weights):
+        ticker = bundle["ticker"]
+        plan = scenario_map[ticker]
+        current_price = coerce_float(plan["current_price"])
+        if pd.isna(current_price) or current_price <= 0:
+            continue
+        allocation = float(total_capital) * float(weight / weight_sum)
+        est_units = allocation / current_price if current_price else np.nan
+
+        conservative_profit = allocation * plan["conservative_up"] / 100.0
+        base_profit = allocation * plan["base_up"] / 100.0
+        stretch_profit = allocation * plan["stretch_up"] / 100.0
+        stop_loss = allocation * plan[stop_key] / 100.0
+
+        conservative_profit_total += conservative_profit
+        base_profit_total += base_profit
+        stretch_profit_total += stretch_profit
+        stop_loss_total += stop_loss
+
+        rows.append(
+            {
+                "ticker": ticker,
+                "ticker_label": display_ticker_label(ticker),
+                "signal": tr_signal(plan["signal"]),
+                "allocation_pct": float(weight / weight_sum * 100.0),
+                "allocation_amount": allocation,
+                "price": current_price,
+                "units": est_units,
+                "upside_range": f"+{plan['conservative_up']:.1f}% / +{plan['base_up']:.1f}% / +{plan['stretch_up']:.1f}%",
+                "stop_range": f"-{plan['stop_tight']:.1f}% / -{plan['stop_balanced']:.1f}% / -{plan['stop_wide']:.1f}%",
+                "base_profit": base_profit,
+                "stop_loss": stop_loss,
+                "reference_note": plan["reference_note"],
+                "quality_score": plan["quality_score"],
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    summary = {
+        "capital": float(total_capital),
+        "base_profit_total": base_profit_total,
+        "conservative_profit_total": conservative_profit_total,
+        "stretch_profit_total": stretch_profit_total,
+        "stop_loss_total": stop_loss_total,
+        "row_count": len(rows),
+        "allocation_method": allocation_method,
+        "stop_profile": stop_profile,
+        "timeframe": timeframe,
+    }
+    return table, summary
+
+
+
+def scenario_signal_pill_class(signal_value: str) -> str:
+    signal_upper = str(signal_value or "").upper()
+    if signal_upper == "BUY" or signal_value in ("買進",):
+        return "scenario-pill scenario-pill-up"
+    if signal_upper == "SELL" or signal_value in ("賣出",):
+        return "scenario-pill scenario-pill-down"
+    return "scenario-pill scenario-pill-neutral"
+
+
+def render_scenario_planner_table(display_df: pd.DataFrame):
+    if display_df is None or display_df.empty:
+        return
+
+    headers = "".join(f"<th>{escape(str(column))}</th>" for column in display_df.columns)
+    rows_html = []
+
+    for _, row in display_df.iterrows():
+        ticker_col = str(row.iloc[0])
+        signal_col = str(row.iloc[1])
+        weight_col = str(row.iloc[2])
+        capital_col = str(row.iloc[3])
+        price_col = str(row.iloc[4])
+        units_col = str(row.iloc[5])
+        upside_col = str(row.iloc[6])
+        stop_col = str(row.iloc[7])
+        base_profit_col = str(row.iloc[8])
+        stop_loss_col = str(row.iloc[9])
+        reference_col = str(row.iloc[10])
+
+        row_html = f'''
+        <tr>
+            <td>
+                <div class="scenario-table-primary">{escape(ticker_col)}</div>
+            </td>
+            <td>
+                <span class="{scenario_signal_pill_class(signal_col)}">{escape(signal_col)}</span>
+            </td>
+            <td><div class="scenario-num">{escape(weight_col)}</div></td>
+            <td><div class="scenario-num">{escape(capital_col)}</div></td>
+            <td><div class="scenario-num">{escape(price_col)}</div></td>
+            <td><div class="scenario-num-muted">{escape(units_col)}</div></td>
+            <td>
+                <div class="scenario-num">{escape(upside_col)}</div>
+                <div class="scenario-table-secondary">{"保守 / 基準 / 延伸" if get_language() == "zh_TW" else "Conservative / Base / Stretch"}</div>
+            </td>
+            <td>
+                <div class="scenario-num">{escape(stop_col)}</div>
+                <div class="scenario-table-secondary">{"緊 / 平衡 / 寬" if get_language() == "zh_TW" else "Tight / Balanced / Wide"}</div>
+            </td>
+            <td><div class="scenario-num">{escape(base_profit_col)}</div></td>
+            <td><div class="scenario-num">{escape(stop_loss_col)}</div></td>
+            <td class="scenario-text-wrap">
+                <div class="scenario-table-secondary">{escape(reference_col)}</div>
+            </td>
+        </tr>
+        '''
+        rows_html.append(textwrap.dedent(row_html).strip())
+
+    html = f'''
+    <div class="scenario-table-shell">
+        <div class="scenario-table-scroll">
+            <table class="scenario-table">
+                <thead>
+                    <tr>{headers}</tr>
+                </thead>
+                <tbody>
+                    {"".join(rows_html)}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    '''
+    render_html_block(html)
+
+def render_position_scenario_planner(bundles: list[dict]):
+    if not bundles:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    header_html = f"""
+    <div class="guide-shell">
+        <div class="section-header" style="margin:0; color:#f5ead8;">{"投資情境試算" if lang_zh else "Investment Scenario Planner"}</div>
+        <div class="guide-title">{"投入金額後，自動推估漲幅區間與止損參考" if lang_zh else "Model upside bands and stop-loss references from your selected list"}</div>
+        <div class="guide-copy">{"這不是報酬保證，而是把目前的技術結構、分析師目標價、阻力/支撐區與訊號強度，整理成可操作的金額情境。若同時選到美股與台股，系統會分開用各自市場幣別試算。" if lang_zh else "This is not a return guarantee. It turns current structure, analyst targets, support/resistance, and signal quality into a practical scenario model. If you selected both U.S. and Taiwan names, the planner splits them by local currency."}</div>
+    </div>
+    """
+    render_html_block(header_html)
+
+    grouped: dict[str, list[dict]] = {"USD": [], "TWD": []}
+    for bundle in bundles:
+        grouped[planner_market_currency(bundle["ticker"])].append(bundle)
+
+    active_groups = [(currency, rows) for currency, rows in grouped.items() if rows]
+    for currency, group_bundles in active_groups:
+        key_prefix = f"scenario_planner_{currency.lower()}"
+        symbol = planner_currency_symbol(currency)
+
+        render_html_block(
+            f"""
+            <div class="compare-shell">
+                <div class="compare-topline">
+                    <div>
+                        <div class="section-header" style="margin:0; color:#eef4ff;">{"情境試算" if lang_zh else "Scenario model"}</div>
+                        <div class="compare-title">{escape(planner_market_title(currency))}</div>
+                        <div class="compare-copy">{escape(planner_market_caption(currency))}</div>
+                    </div>
+                </div>
+            </div>
+            """
+        )
+
+        control_cols = st.columns([1.2, 0.95, 0.95, 0.9])
+        with control_cols[0]:
+            capital = st.number_input(
+                "投入金額" if lang_zh else "Investment amount",
+                min_value=0.0,
+                value=100000.0 if currency == "TWD" else 10000.0,
+                step=1000.0 if currency == "TWD" else 500.0,
+                format="%.2f",
+                key=f"{key_prefix}_capital",
+                help="系統會依你選的配置方式，把金額分配到目前已選股票。" if lang_zh else "The planner allocates this capital across the currently selected names.",
+            )
+        with control_cols[1]:
+            allocation_method = st.selectbox(
+                "配置方式" if lang_zh else "Allocation method",
+                options=["equal", "score_weighted"],
+                format_func=planner_allocation_label,
+                key=f"{key_prefix}_allocation",
+            )
+        with control_cols[2]:
+            stop_profile = st.selectbox(
+                "止損參考" if lang_zh else "Stop reference",
+                options=["tight", "balanced", "wide"],
+                format_func=planner_stop_profile_label,
+                index=1,
+                key=f"{key_prefix}_stop",
+            )
+        with control_cols[3]:
+            timeframe = st.selectbox(
+                "投資期限" if lang_zh else "Time frame",
+                options=["3m", "6m", "1y"],
+                format_func=planner_timeframe_label,
+                index=1,
+                key=f"{key_prefix}_timeframe",
+            )
+
+        scenario_df, summary = build_position_scenario_rows(
+            group_bundles,
+            total_capital=float(capital or 0.0),
+            allocation_method=allocation_method,
+            stop_profile=stop_profile,
+            timeframe=timeframe,
+        )
+
+        if scenario_df.empty:
+            st.info("請先輸入有效金額，且所選股票必須有可用價格。" if lang_zh else "Enter a valid capital amount and make sure the selected tickers have usable prices.")
+            continue
+
+        summary_cols = st.columns(4)
+        summary_cols[0].metric("投入本金" if lang_zh else "Capital", f"{symbol}{summary['capital']:,.2f}")
+        summary_cols[1].metric(
+            "基準情境獲利" if lang_zh else "Base-case upside",
+            f"{symbol}{summary['base_profit_total']:,.2f}",
+            f"{planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} 檔" if lang_zh else f"{planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} names",
+        )
+        summary_cols[2].metric("保守情境獲利" if lang_zh else "Conservative upside", f"{symbol}{summary['conservative_profit_total']:,.2f}")
+        summary_cols[3].metric("止損風險" if lang_zh else "Stop-loss risk", f"-{symbol}{summary['stop_loss_total']:,.2f}", planner_stop_profile_label(summary["stop_profile"]))
+
+        display_df = scenario_df.copy()
+        display_df["allocation_pct"] = display_df["allocation_pct"].map(lambda x: f"{x:.1f}%")
+        display_df["allocation_amount"] = display_df["allocation_amount"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["price"] = display_df["price"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["units"] = display_df["units"].map(lambda x: f"{x:,.3f}")
+        display_df["base_profit"] = display_df["base_profit"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["stop_loss"] = display_df["stop_loss"].map(lambda x: f"-{symbol}{x:,.2f}")
+
+        if lang_zh:
+            display_df = display_df.rename(
+                columns={
+                    "ticker_label": "股票",
+                    "signal": "訊號",
+                    "allocation_pct": "配置比重",
+                    "allocation_amount": "配置金額",
+                    "price": "現價",
+                    "units": "估計股數",
+                    "upside_range": "漲幅區間",
+                    "stop_range": "止損區間",
+                    "base_profit": "基準情境獲利",
+                    "stop_loss": "止損情境損失",
+                    "reference_note": "推估依據",
+                }
+            )[["股票", "訊號", "配置比重", "配置金額", "現價", "估計股數", "漲幅區間", "止損區間", "基準情境獲利", "止損情境損失", "推估依據"]]
+        else:
+            display_df = display_df.rename(
+                columns={
+                    "ticker_label": "Ticker",
+                    "signal": "Signal",
+                    "allocation_pct": "Weight",
+                    "allocation_amount": "Capital",
+                    "price": "Price",
+                    "units": "Est. units",
+                    "upside_range": "Upside band",
+                    "stop_range": "Stop band",
+                    "base_profit": "Base-case P/L",
+                    "stop_loss": "Stop-loss P/L",
+                    "reference_note": "Reference",
+                }
+            )[["Ticker", "Signal", "Weight", "Capital", "Price", "Est. units", "Upside band", "Stop band", "Base-case P/L", "Stop-loss P/L", "Reference"]]
+
+        render_scenario_planner_table(display_df)
+
+        note = (
+            f"漲幅區間為 保守 / 基準 / 延伸 三種情境，並已按 {planner_timeframe_label(summary['timeframe'])} 的投資期限調整。止損區間為 緊 / 平衡 / 寬 三種參考。這些數值來自目標價、阻力支撐、布林區間與近期波動，請搭配你自己的部位與紀律使用。"
+            if lang_zh
+            else f"Upside bands are shown as conservative / base / stretch and are adjusted for a {planner_timeframe_label(summary['timeframe'])} investment horizon. Stop bands are shown as tight / balanced / wide. They blend analyst targets, resistance/support, Bollinger context, and recent volatility, and should be used alongside your own position sizing and discipline."
+        )
+        st.caption(note)
+
+
 def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
     if len(tickers) < 2:
         return
@@ -6155,6 +6843,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
 
     render_winner_card(bundles, lens_meta=lens_meta)
     render_opportunity_radar(bundles, lens_meta=lens_meta)
+    render_position_scenario_planner(bundles)
 
     strongest = max(bundles, key=lambda bundle: compute_lens_winner_fields(bundle, lens_meta)["lens_score"])
     best_return = max(
