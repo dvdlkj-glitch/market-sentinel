@@ -3465,6 +3465,335 @@ def inject_css():
             color: #ffc0c0;
         }
 
+        .scenario-ratio-shell {
+            background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.02) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 22px;
+            padding: 14px 16px 14px 16px;
+            margin-top: 12px;
+        }
+
+        .scenario-ratio-title {
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: rgba(244, 197, 106, 0.82);
+        }
+
+        .scenario-ratio-copy {
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: rgba(238,242,255,.72);
+            margin-top: 6px;
+        }
+
+        .scenario-ratio-value {
+            font-size: 22px;
+            font-weight: 900;
+            color: #ffffff;
+            margin-top: 10px;
+            line-height: 1.08;
+        }
+
+        .scenario-ratio-bars {
+            display: grid;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .scenario-ratio-bar {
+            display: grid;
+            grid-template-columns: 78px 1fr 56px;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .scenario-ratio-bar-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: rgba(238,242,255,.66);
+        }
+
+        .scenario-ratio-track {
+            height: 10px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(255,255,255,.08);
+        }
+
+        .scenario-ratio-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(244,197,106,0.72) 0%, rgba(84,104,255,0.82) 100%);
+        }
+
+        .scenario-ratio-fill-up {
+            background: linear-gradient(90deg, rgba(16,163,111,0.78) 0%, rgba(69,184,255,0.88) 100%);
+        }
+
+        .scenario-ratio-distribution {
+            display: flex;
+            width: 100%;
+            height: 16px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(255,255,255,.08);
+            border: 1px solid rgba(255,255,255,.08);
+            margin-top: 12px;
+        }
+
+        .scenario-ratio-segment {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+            font-size: 10px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            color: #ffffff;
+            white-space: nowrap;
+        }
+
+        .scenario-ratio-segment-1 {
+            background: linear-gradient(90deg, rgba(244,197,106,0.90) 0%, rgba(225,172,66,0.96) 100%);
+            color: #24190a;
+        }
+
+        .scenario-ratio-segment-2 {
+            background: linear-gradient(90deg, rgba(84,104,255,0.88) 0%, rgba(109,123,255,0.96) 100%);
+        }
+
+        .scenario-ratio-segment-3 {
+            background: linear-gradient(90deg, rgba(16,163,111,0.84) 0%, rgba(69,184,255,0.90) 100%);
+        }
+
+        .scenario-ratio-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .scenario-ratio-legend-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,.05);
+            border: 1px solid rgba(255,255,255,.08);
+            font-size: 11px;
+            font-weight: 800;
+            color: rgba(238,242,255,.86);
+        }
+
+        .scenario-ratio-legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            flex: 0 0 10px;
+        }
+
+        .scenario-ratio-legend-dot-1 {
+            background: rgba(244,197,106,0.92);
+        }
+
+        .scenario-ratio-legend-dot-2 {
+            background: rgba(96,113,255,0.94);
+        }
+
+        .scenario-ratio-legend-dot-3 {
+            background: rgba(27,176,134,0.94);
+        }
+
+        .scenario-ratio-pct {
+            font-size: 13px;
+            font-weight: 900;
+            color: #ffffff;
+            text-align: right;
+        }
+
+        .planner-decision-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top right, rgba(244,197,106,.12) 0%, rgba(244,197,106,0) 26%),
+                radial-gradient(circle at top left, rgba(84,104,255,.10) 0%, rgba(84,104,255,0) 30%),
+                linear-gradient(180deg, rgba(18, 28, 46, 0.96) 0%, rgba(10, 16, 31, 0.99) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 26px;
+            padding: 18px 18px 16px 18px;
+            box-shadow: 0 22px 52px rgba(0,0,0,.22);
+            margin: 12px 0 16px 0;
+        }
+
+        .planner-decision-head {
+            display: grid;
+            grid-template-columns: 1.2fr .9fr;
+            gap: 14px;
+            align-items: start;
+        }
+
+        .planner-decision-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .planner-decision-card {
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(255,255,255,.10);
+            border-radius: 22px;
+            padding: 15px 15px 13px 15px;
+            min-height: 136px;
+        }
+
+        .planner-decision-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: rgba(244,197,106,0.80);
+        }
+
+        .planner-decision-kpi {
+            font-size: 30px;
+            line-height: 1.02;
+            font-weight: 900;
+            color: #ffffff;
+            letter-spacing: -0.03em;
+            margin-top: 10px;
+        }
+
+        .planner-decision-kpi-up {
+            color: #9ae7c4;
+        }
+
+        .planner-decision-kpi-gold {
+            color: #f4c56a;
+        }
+
+        .planner-decision-copy {
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(238,242,255,.74);
+            margin-top: 8px;
+        }
+
+        .planner-decision-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .planner-decision-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            background: rgba(244,197,106,0.10);
+            border: 1px solid rgba(244,197,106,0.22);
+            color: #f6d695;
+        }
+
+        .planner-decision-chip-good {
+            background: rgba(16,163,111,0.12);
+            border-color: rgba(16,163,111,0.24);
+            color: #9ae7c4;
+        }
+
+        .planner-decision-chip-warn {
+            background: rgba(214,164,67,0.12);
+            border-color: rgba(214,164,67,0.22);
+            color: #ffe3a3;
+        }
+
+        .planner-decision-chip-bad {
+            background: rgba(217,89,89,0.12);
+            border-color: rgba(217,89,89,0.22);
+            color: #ffc0c0;
+        }
+
+        .planner-decision-action {
+            margin-top: 14px;
+            border-radius: 22px;
+            padding: 16px 16px 14px 16px;
+            border: 1px solid rgba(255,255,255,.10);
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.03) 100%);
+        }
+
+        .planner-decision-action-good {
+            background: linear-gradient(135deg, rgba(16,163,111,.16) 0%, rgba(16,163,111,.05) 100%);
+            border-color: rgba(16,163,111,.26);
+        }
+
+        .planner-decision-action-warn {
+            background: linear-gradient(135deg, rgba(214,164,67,.16) 0%, rgba(214,164,67,.05) 100%);
+            border-color: rgba(214,164,67,.24);
+        }
+
+        .planner-decision-action-bad {
+            background: linear-gradient(135deg, rgba(217,89,89,.15) 0%, rgba(217,89,89,.05) 100%);
+            border-color: rgba(217,89,89,.24);
+        }
+
+        .planner-decision-action-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: rgba(244,197,106,0.80);
+        }
+
+        .planner-decision-action-title {
+            font-size: 22px;
+            line-height: 1.08;
+            font-weight: 900;
+            color: #ffffff;
+            margin-top: 8px;
+            letter-spacing: -0.03em;
+        }
+
+        .planner-decision-action-copy {
+            font-size: 13px;
+            line-height: 1.6;
+            color: rgba(238,242,255,.78);
+            margin-top: 8px;
+            max-width: 960px;
+        }
+
+        .planner-decision-action-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .planner-decision-action-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 11px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            background: rgba(255,255,255,.07);
+            border: 1px solid rgba(255,255,255,.10);
+            color: #f6f8ff;
+        }
+
         .scenario-ladder-main {
             font-size: 14px;
             font-weight: 800;
@@ -6872,6 +7201,234 @@ def parse_planner_ratio_input(raw_value: str | None, default: tuple[int, int, in
     return scaled
 
 
+def normalize_planner_ratio_weights(stage_one: int, stage_two: int, default: tuple[int, int, int]) -> list[int]:
+    try:
+        first = int(stage_one)
+        second = int(stage_two)
+    except Exception:
+        return list(default)
+
+    first = max(5, min(90, first))
+    second = max(5, second)
+    if first + second >= 95:
+        second = max(5, 95 - first)
+    third = 100 - first - second
+    if third < 5:
+        third = 5
+        second = max(5, 100 - first - third)
+    weights = [first, second, 100 - first - second]
+    if any(value <= 0 for value in weights) or sum(weights) != 100:
+        return list(default)
+    return weights
+
+
+def render_planner_ratio_slider(
+    title: str,
+    copy: str,
+    key_prefix: str,
+    default: tuple[int, int, int],
+    fill_class: str = "",
+) -> list[int]:
+    default_weights = list(default)
+    stage_one_key = f"{key_prefix}_stage1"
+    stage_two_key = f"{key_prefix}_stage2"
+
+    if stage_one_key not in st.session_state:
+        st.session_state[stage_one_key] = int(default_weights[0])
+    if stage_two_key not in st.session_state:
+        st.session_state[stage_two_key] = int(default_weights[1])
+
+    stage_one = st.slider(
+        f"{title} · {'第 1 段' if get_language() == 'zh_TW' else 'Stage 1'}",
+        min_value=5,
+        max_value=90,
+        value=int(st.session_state[stage_one_key]),
+        key=stage_one_key,
+    )
+    stage_two_max = max(5, 95 - int(stage_one))
+    if int(st.session_state[stage_two_key]) > stage_two_max:
+        st.session_state[stage_two_key] = min(int(default_weights[1]), stage_two_max)
+    stage_two = st.slider(
+        f"{title} · {'第 2 段' if get_language() == 'zh_TW' else 'Stage 2'}",
+        min_value=5,
+        max_value=stage_two_max,
+        value=int(st.session_state[stage_two_key]),
+        key=stage_two_key,
+    )
+    weights = normalize_planner_ratio_weights(stage_one, stage_two, default)
+    stage_labels = ['第 1 段', '第 2 段', '第 3 段'] if get_language() == 'zh_TW' else ['Stage 1', 'Stage 2', 'Stage 3']
+    bar_class = f"scenario-ratio-fill {fill_class}".strip()
+    bars = "".join(
+        f'''
+        <div class="scenario-ratio-bar">
+            <div class="scenario-ratio-bar-label">{escape(stage_labels[idx])}</div>
+            <div class="scenario-ratio-track"><div class="{bar_class}" style="width:{int(weight)}%;"></div></div>
+            <div class="scenario-ratio-pct">{int(weight)}%</div>
+        </div>
+        '''
+        for idx, weight in enumerate(weights)
+    )
+    distribution_segments = "".join(
+        f'<div class="scenario-ratio-segment scenario-ratio-segment-{idx + 1}" style="width:{max(int(weight), 5)}%;">{escape(stage_labels[idx])} {int(weight)}%</div>'
+        for idx, weight in enumerate(weights)
+    )
+    legend = "".join(
+        f'''
+        <div class="scenario-ratio-legend-chip">
+            <span class="scenario-ratio-legend-dot scenario-ratio-legend-dot-{idx + 1}"></span>
+            <span>{escape(stage_labels[idx])} · {int(weight)}%</span>
+        </div>
+        '''
+        for idx, weight in enumerate(weights)
+    )
+    render_html_block(
+        f'''
+        <div class="scenario-ratio-shell">
+            <div class="scenario-ratio-title">{escape(title)}</div>
+            <div class="scenario-ratio-copy">{escape(copy)}</div>
+            <div class="scenario-ratio-value">{escape(planner_ratio_text(weights))}</div>
+            <div class="scenario-ratio-distribution">{distribution_segments}</div>
+            <div class="scenario-ratio-legend">{legend}</div>
+            <div class="scenario-ratio-bars">{bars}</div>
+        </div>
+        '''
+    )
+    return weights
+
+
+def compute_planner_action_recommendation(summary: dict) -> dict:
+    lang_zh = get_language() == "zh_TW"
+    risk_reward_ratio = float(summary.get("risk_reward_ratio", 0.0) or 0.0)
+    assumed_win_rate = float(summary.get("assumed_win_rate", 0.0) or 0.0)
+    expected_value = float(summary.get("expected_value", 0.0) or 0.0)
+    suggested_position_pct = float(summary.get("suggested_position_pct", 0.0) or 0.0)
+
+    if expected_value >= 0 and risk_reward_ratio >= 1.8 and assumed_win_rate >= 0.58 and suggested_position_pct >= 65:
+        return {
+            "class": "planner-decision-action planner-decision-action-good",
+            "title": "建議加碼" if lang_zh else "Suggested action: Add",
+            "copy": (
+                "風報比、期望值與建議倉位都站在偏強的一側，可以沿著分批進場規則做順勢加碼，但仍要把總風險控在可承受區間。"
+                if lang_zh else
+                "Risk/reward, expectancy, and suggested sizing all lean constructive. You can add through the staged ladder, while still keeping total risk inside your budget."
+            ),
+            "pills": [
+                "順勢執行" if lang_zh else "Trend-follow",
+                "分批加碼" if lang_zh else "Add in tranches",
+                "保留最後一段火力" if lang_zh else "Keep final tranche",
+            ],
+        }
+
+    if expected_value < 0 or risk_reward_ratio < 0.95 or suggested_position_pct <= 35:
+        return {
+            "class": "planner-decision-action planner-decision-action-bad",
+            "title": "建議減碼 / 收斂風險" if lang_zh else "Suggested action: Reduce risk",
+            "copy": (
+                "目前風報比或期望值不夠有利，較好的做法是縮小倉位、把停損收緊，或先降低曝險等待更乾淨的訊號。"
+                if lang_zh else
+                "The setup is not paying enough for the risk right now. A better move is to reduce size, tighten stops, or cut exposure until the signal improves."
+            ),
+            "pills": [
+                "降低倉位" if lang_zh else "Cut size",
+                "提高現金比重" if lang_zh else "Raise cash",
+                "等待重置" if lang_zh else "Wait for reset",
+            ],
+        }
+
+    return {
+        "class": "planner-decision-action planner-decision-action-warn",
+        "title": "建議等待 / 分批布局" if lang_zh else "Suggested action: Wait / Build gradually",
+        "copy": (
+            "這是一個可以觀察並逐步佈局的狀態。先用前兩段小倉測試，等價格與新聞催化更一致後，再決定是否完成最後一段。"
+            if lang_zh else
+            "This is a selective setup. Start with smaller early tranches and only complete the final leg if price action and catalysts align more cleanly."
+        ),
+        "pills": [
+            "先小倉試單" if lang_zh else "Probe small",
+            "等催化確認" if lang_zh else "Wait for catalyst",
+            "保留調整空間" if lang_zh else "Keep flexibility",
+        ],
+    }
+
+def render_planner_decision_board(summary: dict, symbol: str, entry_weights: list[int], take_profit_weights: list[int], win_rate_mode: str):
+    if not summary:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    risk_reward_ratio = float(summary.get("risk_reward_ratio", 0.0) or 0.0)
+    assumed_win_rate = float(summary.get("assumed_win_rate", 0.0) or 0.0)
+    expected_value = float(summary.get("expected_value", 0.0) or 0.0)
+    suggested_position_pct = float(summary.get("suggested_position_pct", 0.0) or 0.0)
+    recommended_capital = float(summary.get("recommended_capital", 0.0) or 0.0)
+    acceptable_loss_amount = float(summary.get("acceptable_loss_amount", 0.0) or 0.0)
+
+    if expected_value >= 0 and risk_reward_ratio >= 1.8:
+        stance_text = "可積極執行" if lang_zh else "Constructive setup"
+        stance_class = "planner-decision-chip planner-decision-chip-good"
+    elif expected_value >= 0 and risk_reward_ratio >= 1.1:
+        stance_text = "可選擇性執行" if lang_zh else "Selective setup"
+        stance_class = "planner-decision-chip planner-decision-chip-warn"
+    else:
+        stance_text = "先收斂風險" if lang_zh else "Tighten risk first"
+        stance_class = "planner-decision-chip planner-decision-chip-bad"
+
+    expected_chip_class = "planner-decision-chip planner-decision-chip-good" if expected_value >= 0 else "planner-decision-chip planner-decision-chip-bad"
+    expected_chip_text = (
+        f"期望值 {symbol}{expected_value:,.0f}"
+        if lang_zh
+        else f"Expected value {symbol}{expected_value:,.0f}"
+    )
+
+    action = compute_planner_action_recommendation(summary)
+    action_pills = "".join(
+        f'<div class="planner-decision-action-pill">{escape(str(pill))}</div>'
+        for pill in action.get("pills", [])
+    )
+
+    board_html = f'''
+    <div class="planner-decision-shell">
+        <div class="planner-decision-head">
+            <div>
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("進階決策面板" if lang_zh else "Advanced decision board")}</div>
+                <div class="guide-copy">{escape("把風報比、勝率假設、期望值與建議倉位集中成一個更接近實戰的執行面板。" if lang_zh else "A compact execution board that pulls risk/reward, hit-rate, expectancy, and suggested sizing into one practical decision layer.")}</div>
+            </div>
+            <div class="planner-decision-chip-row">
+                <div class="{stance_class}">{escape(stance_text)}</div>
+                <div class="{expected_chip_class}">{escape(expected_chip_text)}</div>
+            </div>
+        </div>
+        <div class="planner-decision-grid">
+            <div class="planner-decision-card">
+                <div class="planner-decision-label">{escape("風報比" if lang_zh else "Risk / reward")}</div>
+                <div class="planner-decision-kpi planner-decision-kpi-up">{risk_reward_ratio:.2f}R</div>
+                <div class="planner-decision-copy">{escape("以基準情境獲利 ÷ 止損風險估算。" if lang_zh else "Estimated as base-case upside divided by modeled stop-loss risk.")}</div>
+            </div>
+            <div class="planner-decision-card">
+                <div class="planner-decision-label">{escape("勝率假設" if lang_zh else "Hit-rate assumption")}</div>
+                <div class="planner-decision-kpi">{assumed_win_rate * 100:.0f}%</div>
+                <div class="planner-decision-copy">{escape(planner_win_rate_label(win_rate_mode))}</div>
+            </div>
+            <div class="planner-decision-card">
+                <div class="planner-decision-label">{escape("建議倉位" if lang_zh else "Suggested sizing")}</div>
+                <div class="planner-decision-kpi planner-decision-kpi-gold">{suggested_position_pct:.0f}%</div>
+                <div class="planner-decision-copy">{escape((f"建議資金上限 {symbol}{recommended_capital:,.0f}") if lang_zh else (f"Suggested cap {symbol}{recommended_capital:,.0f}"))}</div>
+            </div>
+            <div class="planner-decision-card">
+                <div class="planner-decision-label">{escape("分批規則" if lang_zh else "Ladder mix")}</div>
+                <div class="planner-decision-kpi">{escape(planner_ratio_text(entry_weights))}</div>
+                <div class="planner-decision-copy">{escape((f"進場 {planner_ratio_text(entry_weights)} · 停利 {planner_ratio_text(take_profit_weights)} · 風險預算 {symbol}{acceptable_loss_amount:,.0f}") if lang_zh else (f"Entry {planner_ratio_text(entry_weights)} · Exit {planner_ratio_text(take_profit_weights)} · Risk budget {symbol}{acceptable_loss_amount:,.0f}"))}</div>
+            </div>
+        </div>
+        <div class="{action.get('class', 'planner-decision-action')}">
+            <div class="planner-decision-action-label">{escape("明確行動建議" if lang_zh else "Action recommendation")}</div>
+            <div class="planner-decision-action-title">{escape(str(action.get('title', '')))}</div>
+            <div class="planner-decision-action-copy">{escape(str(action.get('copy', '')))}</div>
+            <div class="planner-decision-action-row">{action_pills}</div>
+        </div>
+    </div>
+    '''
+    render_html_block(board_html)
+
 def planner_win_rate_label(mode: str) -> str:
     if get_language() == "zh_TW":
         return {
@@ -7591,20 +8148,6 @@ def render_position_scenario_planner(bundles: list[dict]):
                 help="若整體止損風險高於這個比例，系統會提示你縮小部位。" if lang_zh else "If total modeled stop-loss risk exceeds this share of capital, the planner will flag it.",
             )
         with control_cols[5]:
-            entry_ratio_text = st.text_input(
-                "分批進場比例" if lang_zh else "Entry ladder %",
-                value=planner_ratio_text([40, 35, 25]),
-                key=f"{key_prefix}_entry_ratio_text",
-                help="輸入 3 段比例，例如 40,35,25，系統會自動正規化成 100%。" if lang_zh else "Enter three ladder weights such as 40,35,25. The planner normalizes them to 100%.",
-            )
-        with control_cols[6]:
-            take_profit_ratio_text = st.text_input(
-                "分批停利比例" if lang_zh else "Take-profit %",
-                value=planner_ratio_text([30, 40, 30]),
-                key=f"{key_prefix}_tp_ratio_text",
-                help="輸入 3 段比例，例如 30,40,30。" if lang_zh else "Enter three take-profit weights such as 30,40,30.",
-            )
-        with control_cols[7]:
             win_rate_mode = st.selectbox(
                 "勝率假設" if lang_zh else "Hit-rate mode",
                 options=["conservative", "balanced", "aggressive"],
@@ -7612,9 +8155,32 @@ def render_position_scenario_planner(bundles: list[dict]):
                 index=1,
                 key=f"{key_prefix}_win_rate_mode",
             )
+        with control_cols[6]:
+            render_html_block(
+                f'<div class="scenario-ratio-shell"><div class="scenario-ratio-title">{escape("滑桿調整" if lang_zh else "Slider mode")}</div><div class="scenario-ratio-copy">{escape("分批進場 / 分批停利改用滑桿調整，避免手打比例。" if lang_zh else "Entry and take-profit ladders now use sliders for faster tuning.")}</div></div>'
+            )
+        with control_cols[7]:
+            render_html_block(
+                f'<div class="scenario-ratio-shell"><div class="scenario-ratio-title">{escape("比率會自動正規化" if lang_zh else "Ratios auto-normalize")}</div><div class="scenario-ratio-copy">{escape("第 3 段會依前兩段自動補滿至 100%。" if lang_zh else "Stage 3 is automatically filled so the ladder always totals 100%.")}</div></div>'
+            )
 
-        entry_weights = parse_planner_ratio_input(entry_ratio_text, (40, 35, 25))
-        take_profit_weights = parse_planner_ratio_input(take_profit_ratio_text, (30, 40, 30))
+        slider_cols = st.columns(2)
+        with slider_cols[0]:
+            entry_weights = render_planner_ratio_slider(
+                "分批進場比例" if lang_zh else "Entry ladder ratio",
+                "拖曳前兩段，第三段會自動補滿為 100%。" if lang_zh else "Adjust the first two stages. The last stage fills automatically to 100%.",
+                f"{key_prefix}_entry_ratio",
+                (40, 35, 25),
+                fill_class="",
+            )
+        with slider_cols[1]:
+            take_profit_weights = render_planner_ratio_slider(
+                "分批停利比例" if lang_zh else "Take-profit ratio",
+                "拖曳前兩段，第三段會自動補滿為 100%。" if lang_zh else "Adjust the first two stages. The last stage fills automatically to 100%.",
+                f"{key_prefix}_tp_ratio",
+                (30, 40, 30),
+                fill_class="scenario-ratio-fill-up",
+            )
 
         scenario_df, summary = build_position_scenario_rows(
             group_bundles,
@@ -7676,6 +8242,13 @@ def render_position_scenario_planner(bundles: list[dict]):
         </div>
         """
         render_html_block(summary_html)
+        render_planner_decision_board(
+            summary,
+            symbol=symbol,
+            entry_weights=entry_weights,
+            take_profit_weights=take_profit_weights,
+            win_rate_mode=win_rate_mode,
+        )
 
         display_df = scenario_df.copy()
         display_df["allocation_pct"] = display_df["allocation_pct"].map(lambda x: f"{x:.1f}%")
@@ -7752,9 +8325,9 @@ def render_position_scenario_planner(bundles: list[dict]):
             )
 
         note = (
-            f"漲幅區間為 保守 / 基準 / 延伸 三種情境，並已按 {planner_timeframe_label(summary['timeframe'])} 的投資期限調整。止損區間為 緊 / 平衡 / 寬 三種參考。現在多檔與單檔都保留分批進場 / 分批停利、勝率假設、風報比與建議倉位，並支援自訂比例。"
+            f"漲幅區間為 保守 / 基準 / 延伸 三種情境，並已按 {planner_timeframe_label(summary['timeframe'])} 的投資期限調整。止損區間為 緊 / 平衡 / 寬 三種參考。現在多檔與單檔都保留分批進場 / 分批停利、勝率假設、風報比與建議倉位，並改成用滑桿微調分批比例。"
             if lang_zh
-            else f"Upside bands are shown as conservative / base / stretch and are adjusted for a {planner_timeframe_label(summary['timeframe'])} investment horizon. Stop bands are shown as tight / balanced / wide. Both single-name and multi-name modes now keep staged entry / take-profit ladders, a hit-rate assumption, risk/reward, and suggested sizing with custom ladder ratios."
+            else f"Upside bands are shown as conservative / base / stretch and are adjusted for a {planner_timeframe_label(summary['timeframe'])} investment horizon. Stop bands are shown as tight / balanced / wide. Both single-name and multi-name modes now keep staged entry / take-profit ladders, a hit-rate assumption, risk/reward, and suggested sizing, now tuned with slider-based ladder controls."
         )
         st.caption(note)
 
