@@ -205,6 +205,12 @@ LANGUAGE_OPTIONS = {
     "繁體中文": "繁體中文",
 }
 
+DEVICE_MODE_OPTIONS = {
+    "Desktop": "Desktop",
+    "iPad": "iPad",
+    "Smartphone": "Smartphone",
+}
+
 NEWS_DISPLAY_OPTIONS = {
     "Original source": "Original source",
     "Bilingual assist": "Bilingual assist",
@@ -537,6 +543,23 @@ TRANSLATIONS["繁體中文"].update({
     "global_market_taiex": "加權指數",
 })
 
+
+
+TRANSLATIONS["English"].update({
+    "device_mode": "Viewing device",
+    "device_mode_note": "Choose a layout profile for desktop, iPad, or smartphone so spacing, width, and content density feel more comfortable on that screen.",
+    "device_desktop": "Desktop",
+    "device_ipad": "iPad",
+    "device_smartphone": "Smartphone",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "device_mode": "觀看裝置",
+    "device_mode_note": "選擇 Desktop、iPad 或 Smart Phone 版型，Dashboard 會依裝置調整寬度、間距與內容密度，讓閱讀更舒適。",
+    "device_desktop": "Desktop",
+    "device_ipad": "iPad",
+    "device_smartphone": "Smart Phone",
+})
 TERM_TRANSLATIONS = {
     "繁體中文": {
         "BUY": "買進",
@@ -896,6 +919,21 @@ def get_lang() -> str:
 def get_language() -> str:
     lang = get_lang()
     return "zh_TW" if lang == "繁體中文" else "en"
+
+
+
+def get_device_mode() -> str:
+    mode = st.session_state.get("dashboard_device_mode", "Desktop")
+    return mode if mode in DEVICE_MODE_OPTIONS else "Desktop"
+
+
+def device_mode_label(value: str) -> str:
+    labels = {
+        "Desktop": t("device_desktop"),
+        "iPad": t("device_ipad"),
+        "Smartphone": t("device_smartphone"),
+    }
+    return labels.get(value, value)
 
 def get_news_mode() -> str:
     return st.session_state.get("dashboard_news_mode", "Original source")
@@ -1821,6 +1859,10 @@ def load_dashboard_preferences() -> None:
     if news_mode not in NEWS_DISPLAY_OPTIONS:
         news_mode = "Original source"
 
+    device_mode = _query_param_first("device") or st.session_state.get("dashboard_device_mode", "Desktop")
+    if device_mode not in DEVICE_MODE_OPTIONS:
+        device_mode = "Desktop"
+
     market_scope = _query_param_first("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
     if market_scope not in MARKET_SCOPE_OPTIONS:
         market_scope = "Mixed (U.S. + Taiwan)"
@@ -1853,6 +1895,7 @@ def load_dashboard_preferences() -> None:
 
     st.session_state["dashboard_language"] = language
     st.session_state["dashboard_news_mode"] = news_mode
+    st.session_state["dashboard_device_mode"] = device_mode
     st.session_state["dashboard_market_scope"] = market_scope
     st.session_state["dashboard_selected_groups"] = groups
     st.session_state["dashboard_selected_tickers"] = picks
@@ -7670,6 +7713,117 @@ def inject_localization_overrides():
     )
 
 
+
+
+def inject_device_layout_overrides(device_mode: str) -> None:
+    if device_mode not in DEVICE_MODE_OPTIONS:
+        device_mode = "Desktop"
+
+    if device_mode == "Desktop":
+        css = """
+        <style>
+        .block-container {
+            max-width: 1540px;
+        }
+        .global-indicator-shell {
+            top: 0.7rem;
+        }
+        </style>
+        """
+    elif device_mode == "iPad":
+        css = """
+        <style>
+        .block-container {
+            max-width: 980px !important;
+            padding-left: 0.9rem !important;
+            padding-right: 0.9rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] {
+            gap: 0.85rem !important;
+            flex-wrap: wrap !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            min-width: calc(50% - 0.45rem) !important;
+            flex: 1 1 calc(50% - 0.45rem) !important;
+        }
+        .winner-hero, .story-row-grid, .explorer-nav-head, .compare-topline, .news-first-grid, .lead-story-board {
+            grid-template-columns: 1fr !important;
+        }
+        .guide-grid, .reference-grid, .compare-hero-grid, .catalyst-grid, .winner-grid, .lab-grid, .alert-grid, .lens-grid,
+        .compare-card-grid, .crypto-grid, .winner-rail-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+        .scenario-table-shell {
+            overflow-x: auto;
+        }
+        .global-indicator-shell {
+            top: 0.55rem !important;
+        }
+        </style>
+        """
+    else:
+        css = """
+        <style>
+        .block-container {
+            max-width: 460px !important;
+            padding-top: 0.55rem !important;
+            padding-left: 0.55rem !important;
+            padding-right: 0.55rem !important;
+            padding-bottom: 1.1rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+            gap: 0.7rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            width: 100% !important;
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        .hero-title, .guide-title, .winner-title, .compare-title, .catalyst-title, .alert-title, .lab-title, .trend-title, .explorer-nav-title, .reference-title, .global-indicator-title {
+            font-size: 22px !important;
+        }
+        .top-intro, .hero-copy, .guide-copy, .reference-copy, .lens-copy, .compare-copy, .winner-copy,
+        .catalyst-copy, .alert-copy, .lab-copy, .trend-sub, .chart-copy, .explorer-nav-copy, .global-indicator-copy {
+            font-size: 13px !important;
+        }
+        .winner-hero, .story-row-grid, .explorer-nav-head, .compare-topline, .news-first-grid, .lead-story-board, .highlight-row {
+            grid-template-columns: 1fr !important;
+        }
+        .guide-grid, .reference-grid, .compare-hero-grid, .catalyst-grid, .winner-grid, .lab-grid, .alert-grid, .lens-grid,
+        .compare-card-grid, .crypto-grid, .winner-rail-grid, .compare-mosaic-grid, .target-watch-headline-grid {
+            grid-template-columns: 1fr !important;
+        }
+        .compare-table-head {
+            display: none !important;
+        }
+        .compare-table-row {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            padding: 14px !important;
+        }
+        .compare-table-cell {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 4px !important;
+            border-bottom: 1px solid rgba(255,255,255,.07);
+            padding-bottom: 6px !important;
+        }
+        .chip, .hero-chip, .small-pill, .impact-tag, .pro-tag, .lens-alert-chip, .explorer-nav-chip {
+            width: 100%;
+            justify-content: center;
+        }
+        .scenario-table-shell, .target-watch-headline-shell {
+            overflow-x: auto;
+        }
+        .global-indicator-shell {
+            position: relative !important;
+            top: 0 !important;
+        }
+        </style>
+        """
+    st.markdown(css, unsafe_allow_html=True)
+
 def generate_dashboard():
     load_dashboard_preferences()
     inject_css()
@@ -7684,6 +7838,19 @@ def generate_dashboard():
             index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
         )
         st.session_state["dashboard_language"] = selected_lang
+
+        current_device_mode = st.session_state.get("dashboard_device_mode", "Desktop")
+        selected_device_mode = st.selectbox(
+            t("device_mode"),
+            options=list(DEVICE_MODE_OPTIONS.keys()),
+            index=list(DEVICE_MODE_OPTIONS.keys()).index(current_device_mode)
+            if current_device_mode in DEVICE_MODE_OPTIONS
+            else 0,
+            format_func=device_mode_label,
+        )
+        st.session_state["dashboard_device_mode"] = selected_device_mode
+        st.caption(t("device_mode_note"))
+        inject_device_layout_overrides(selected_device_mode)
 
         current_news_mode = st.session_state.get("dashboard_news_mode", "Original source")
         selected_news_mode = st.selectbox(
@@ -8094,6 +8261,7 @@ def generate_dashboard():
         save_dashboard_preferences(
             {
                 "lang": selected_lang,
+                "device": selected_device_mode,
                 "news": selected_news_mode,
                 "scope": selected_market_scope,
                 "groups": _csv_encode(selected_groups),
