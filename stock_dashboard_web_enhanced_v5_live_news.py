@@ -3300,6 +3300,211 @@ def inject_css():
             color: #ffc0c0;
         }
 
+        .scenario-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+            margin: 14px 0 18px 0;
+        }
+
+        .scenario-summary-card {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(84,104,255,.12) 0%, rgba(84,104,255,0) 32%),
+                linear-gradient(180deg, rgba(18, 28, 46, 0.94) 0%, rgba(12, 19, 33, 0.98) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 24px;
+            padding: 20px 22px 18px 22px;
+            box-shadow: 0 18px 40px rgba(0,0,0,.18);
+            min-height: 148px;
+        }
+
+        .scenario-summary-label {
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .03em;
+            color: #90a0ba;
+        }
+
+        .scenario-summary-value {
+            font-size: 28px;
+            line-height: 1.04;
+            letter-spacing: -0.03em;
+            font-weight: 900;
+            color: #f8fbff;
+            margin-top: 12px;
+            word-break: break-word;
+        }
+
+        .scenario-summary-value-gold {
+            color: #f4c56a;
+        }
+
+        .scenario-summary-sub {
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: rgba(238,242,255,.76);
+        }
+
+        .scenario-summary-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: fit-content;
+            margin-top: 12px;
+            padding: 7px 11px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            background: rgba(34, 211, 238, 0.12);
+            border: 1px solid rgba(34, 211, 238, 0.22);
+            color: #9aefff;
+        }
+
+        
+        .scenario-summary-badge-warn {
+            background: rgba(244,197,106,0.12);
+            border-color: rgba(244,197,106,0.22);
+            color: #f9d88f;
+        }
+
+        .scenario-summary-badge-danger {
+            background: rgba(217,89,89,0.12);
+            border-color: rgba(217,89,89,0.22);
+            color: #ffc0c0;
+        }
+
+        .scenario-single-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top left, rgba(84,104,255,.10) 0%, rgba(84,104,255,0) 30%),
+                linear-gradient(180deg, rgba(20, 29, 56, 0.94) 0%, rgba(10, 16, 33, 0.98) 100%);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: var(--radius-xl);
+            padding: 18px 18px 16px 18px;
+            box-shadow: 0 22px 48px rgba(0,0,0,.22);
+            margin: 14px 0 12px 0;
+        }
+
+        .scenario-single-grid {
+            display: grid;
+            grid-template-columns: 1.1fr .9fr;
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        .scenario-single-card {
+            background: linear-gradient(135deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(255,255,255,.10);
+            border-radius: 22px;
+            padding: 15px 15px 13px 15px;
+        }
+
+        .scenario-single-value {
+            font-size: 22px;
+            font-weight: 900;
+            color: #ffffff;
+            line-height: 1.08;
+            margin-top: 8px;
+        }
+
+        .scenario-single-copy {
+            font-size: 13px;
+            line-height: 1.58;
+            color: rgba(238,242,255,.76);
+            margin-top: 6px;
+        }
+
+        .scenario-ladder {
+            display: grid;
+            gap: 9px;
+            margin-top: 12px;
+        }
+
+        .scenario-ladder-row {
+            display: grid;
+            grid-template-columns: 92px 1fr;
+            gap: 10px;
+            align-items: start;
+            padding: 10px 12px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.02) 100%);
+            border: 1px solid rgba(255,255,255,.08);
+        }
+
+        .scenario-ladder-tag {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: fit-content;
+            padding: 7px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            background: rgba(84,104,255,.12);
+            border: 1px solid rgba(84,104,255,.22);
+            color: #d9e1ff;
+        }
+
+        .scenario-ladder-tag-up {
+            background: rgba(16,163,111,0.12);
+            border-color: rgba(16,163,111,0.24);
+            color: #9ae7c4;
+        }
+
+        .scenario-ladder-tag-down {
+            background: rgba(217,89,89,0.12);
+            border-color: rgba(217,89,89,0.24);
+            color: #ffc0c0;
+        }
+
+        .scenario-ladder-main {
+            font-size: 14px;
+            font-weight: 800;
+            color: #ffffff;
+            line-height: 1.45;
+        }
+
+        .scenario-ladder-sub {
+            font-size: 12px;
+            color: rgba(238,242,255,.70);
+            margin-top: 4px;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 980px) {
+            .scenario-single-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+@media (max-width: 1100px) {
+            .scenario-summary-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 640px) {
+            .scenario-summary-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .scenario-summary-card {
+                min-height: 132px;
+                padding: 18px;
+            }
+            .scenario-summary-value {
+                font-size: 24px;
+            }
+        }
+
         .scenario-num {
             font-size: 16px;
             font-weight: 900;
@@ -6620,6 +6825,363 @@ def active_target_watch_timeframe(ticker: str) -> str:
     return normalize_planner_timeframe(st.session_state.get(session_key, st.session_state.get("dashboard_target_watch_timeframe", "6m")))
 
 
+
+def planner_single_stock_title(bundle: dict, currency: str) -> str:
+    label = display_ticker_label(bundle["ticker"])
+    if get_language() == "zh_TW":
+        return f"{label} 個股情境面板"
+    return f"{label} single-stock scenario panel"
+
+
+def planner_single_stock_caption(bundle: dict, currency: str) -> str:
+    analysis = bundle.get("analysis", {}) or {}
+    signal = tr_signal(analysis.get("signal", "HOLD"))
+    confidence = tr_confidence(analysis.get("confidence", "Medium"))
+    if get_language() == "zh_TW":
+        return f"這裡不做多檔比較，而是把 {display_ticker_label(bundle['ticker'])} 的投入金額、分批進場、分批停利與風險容忍整理成單檔操作面板。當前訊號：{signal} · {confidence}。"
+    return f"This panel focuses only on {display_ticker_label(bundle['ticker'])}, turning capital, staged entries, staged take-profit levels, and risk tolerance into a single-name action plan. Current signal: {signal} · {confidence}."
+
+
+
+
+def planner_ratio_text(weights: list[int] | tuple[int, int, int]) -> str:
+    return ", ".join(str(int(x)) for x in weights)
+
+
+def parse_planner_ratio_input(raw_value: str | None, default: tuple[int, int, int]) -> list[int]:
+    if raw_value is None:
+        return list(default)
+    text_value = str(raw_value).strip()
+    if not text_value:
+        return list(default)
+    tokens = [token for token in re.split(r"[,%/|;\s]+", text_value) if token]
+    try:
+        values = [float(token) for token in tokens]
+    except Exception:
+        return list(default)
+    if len(values) != 3 or any(value <= 0 for value in values):
+        return list(default)
+    total = sum(values)
+    if total <= 0:
+        return list(default)
+    scaled = [int(round(value / total * 100.0)) for value in values]
+    diff = 100 - sum(scaled)
+    scaled[-1] += diff
+    if any(value <= 0 for value in scaled):
+        return list(default)
+    return scaled
+
+
+def planner_win_rate_label(mode: str) -> str:
+    if get_language() == "zh_TW":
+        return {
+            "conservative": "保守勝率",
+            "balanced": "平衡勝率",
+            "aggressive": "積極勝率",
+        }.get(mode, mode)
+    return {
+        "conservative": "Conservative hit rate",
+        "balanced": "Balanced hit rate",
+        "aggressive": "Aggressive hit rate",
+    }.get(mode, mode)
+
+
+def compute_planner_win_rate(scenario_df: pd.DataFrame, mode: str = "balanced") -> float:
+    base_map = {"conservative": 0.45, "balanced": 0.55, "aggressive": 0.65}
+    win_rate = float(base_map.get(mode, 0.55))
+    if scenario_df is not None and not scenario_df.empty and "quality_score" in scenario_df.columns:
+        quality_avg = float(pd.to_numeric(scenario_df["quality_score"], errors="coerce").fillna(0).mean())
+        win_rate += max(-0.10, min(0.10, quality_avg * 0.03))
+    return float(max(0.25, min(0.80, win_rate)))
+
+
+def render_portfolio_execution_panel(
+    scenario_df: pd.DataFrame,
+    summary: dict,
+    symbol: str,
+    entry_weights: list[int],
+    take_profit_weights: list[int],
+    win_rate_mode: str,
+):
+    if scenario_df is None or scenario_df.empty:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    risk_reward_ratio = float(summary.get("risk_reward_ratio", 0.0) or 0.0)
+    assumed_win_rate = float(summary.get("assumed_win_rate", 0.0) or 0.0)
+    expected_value = float(summary.get("expected_value", 0.0) or 0.0)
+    suggested_position_pct = float(summary.get("suggested_position_pct", 0.0) or 0.0)
+
+    shell_html = f"""
+    <div class="scenario-single-shell">
+        <div class="section-header" style="margin:0; color:#eef4ff;">{escape("多檔執行框架" if lang_zh else "Portfolio execution framework")}</div>
+        <div class="scenario-single-grid">
+            <div class="scenario-single-card">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("分批規則" if lang_zh else "Ladder ratios")}</div>
+                <div class="scenario-single-value">{escape("進場 " + planner_ratio_text(entry_weights) if lang_zh else "Entry " + planner_ratio_text(entry_weights))}</div>
+                <div class="scenario-single-copy">{escape("停利 " + planner_ratio_text(take_profit_weights) if lang_zh else "Take profit " + planner_ratio_text(take_profit_weights))}</div>
+            </div>
+            <div class="scenario-single-card">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("風報比" if lang_zh else "Risk / reward")}</div>
+                <div class="scenario-single-value">{risk_reward_ratio:.2f}R</div>
+                <div class="scenario-single-copy">{escape("以基準情境獲利 ÷ 止損風險估算。" if lang_zh else "Estimated as base-case upside divided by modeled stop-loss risk.")}</div>
+            </div>
+            <div class="scenario-single-card">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("勝率假設" if lang_zh else "Hit-rate assumption")}</div>
+                <div class="scenario-single-value">{assumed_win_rate * 100:.0f}%</div>
+                <div class="scenario-single-copy">{escape(planner_win_rate_label(win_rate_mode))}</div>
+            </div>
+            <div class="scenario-single-card">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("建議倉位" if lang_zh else "Suggested sizing")}</div>
+                <div class="scenario-single-value">{suggested_position_pct:.0f}%</div>
+                <div class="scenario-single-copy">{escape((f"對應資金上限 {symbol}{float(summary.get('recommended_capital', 0.0)):,.0f}") if lang_zh else (f"Cap near {symbol}{float(summary.get('recommended_capital', 0.0)):,.0f}"))}</div>
+            </div>
+        </div>
+    </div>
+    """
+    render_html_block(shell_html)
+
+    expected_class = "scenario-summary-badge" if expected_value >= 0 else "scenario-summary-badge scenario-summary-badge-danger"
+    ev_html = f"""
+    <div class="compare-shell">
+        <div class="compare-topline">
+            <div>
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("進場 / 停利 / 風險摘要" if lang_zh else "Entry / exit / risk summary")}</div>
+                <div class="compare-copy">{escape("每檔股票都保留分批進場、分批停利與風險預算，讓多檔配置也能直接執行。" if lang_zh else "Every selected stock keeps a staged entry, staged take-profit, and risk budget so the multi-name planner remains executable.")}</div>
+            </div>
+            <div class="{expected_class}">{escape((f"期望值 {symbol}{expected_value:,.0f}") if lang_zh else (f"Expected value {symbol}{expected_value:,.0f}"))}</div>
+        </div>
+    </div>
+    """
+    render_html_block(ev_html)
+
+    card_chunks = []
+    for _, row in scenario_df.iterrows():
+        card_chunks.append(
+            textwrap.dedent(
+                f"""
+                <div class="scenario-single-card">
+                    <div class="section-header" style="margin:0; color:#eef4ff;">{escape(str(row.get('ticker_label', '')))}</div>
+                    <div class="scenario-single-value">{escape(str(row.get('signal', '')))}</div>
+                    <div class="scenario-single-copy">{escape((f"配置 {float(row.get('allocation_pct', 0.0)):.1f}% · 風險預算 {symbol}{float(row.get('max_loss_budget', 0.0)):,.0f}") if lang_zh else (f"Weight {float(row.get('allocation_pct', 0.0)):.1f}% · Risk budget {symbol}{float(row.get('max_loss_budget', 0.0)):,.0f}"))}</div>
+                    <div class="scenario-ladder">
+                        <div class="scenario-ladder-row">
+                            <div><span class="scenario-ladder-tag">{escape("分批進場" if lang_zh else "Entry ladder")}</span></div>
+                            <div><div class="scenario-ladder-main">{escape(str(row.get('entry_plan', 'N/A')))}</div></div>
+                        </div>
+                        <div class="scenario-ladder-row">
+                            <div><span class="scenario-ladder-tag scenario-ladder-tag-up">{escape("分批停利" if lang_zh else "Take-profit")}</span></div>
+                            <div><div class="scenario-ladder-main">{escape(str(row.get('take_profit_plan', 'N/A')))}</div></div>
+                        </div>
+                        <div class="scenario-ladder-row">
+                            <div><span class="scenario-ladder-tag scenario-ladder-tag-down">{escape("止損帶" if lang_zh else "Stop band")}</span></div>
+                            <div><div class="scenario-ladder-main">{escape(str(row.get('stop_range', 'N/A')))}</div></div>
+                        </div>
+                    </div>
+                </div>
+                """
+            ).strip()
+        )
+    render_html_block(f'<div class="scenario-single-shell"><div class="scenario-single-grid">{"".join(card_chunks)}</div></div>')
+def build_entry_ladder(plan: dict, entry_weights: list[int] | None = None) -> list[dict]:
+    current_price = coerce_float(plan.get("current_price"))
+    target_ctx = plan.get("target_context", {}) or {}
+    support = coerce_float(target_ctx.get("support_level"))
+    if pd.isna(support):
+        support = np.nan
+    balanced_stop_pct = abs(coerce_float(plan.get("stop_balanced")))
+    if pd.isna(current_price) or current_price <= 0:
+        return []
+
+    if pd.isna(support) or support <= 0 or support >= current_price:
+        support = current_price * (1 - min(max(balanced_stop_pct * 0.55, 2.0), 8.0) / 100.0)
+    deeper = support * (1 - min(max(balanced_stop_pct * 0.35, 1.5), 4.5) / 100.0)
+
+    signal = str(plan.get("signal", "HOLD") or "HOLD").upper()
+    default_weights = [45, 35, 20] if signal == "BUY" else [25, 35, 40] if signal == "SELL" else [35, 35, 30]
+    weights = entry_weights or default_weights
+    if signal == "BUY":
+        parts = [(weights[0], current_price, "先建立核心部位" if get_language() == "zh_TW" else "Start with a core position"),
+                 (weights[1], support, "若回踩支撐再加碼" if get_language() == "zh_TW" else "Add on a support retest"),
+                 (weights[2], deeper, "僅在更深回檔才補滿" if get_language() == "zh_TW" else "Complete size only on a deeper pullback")]
+    elif signal == "SELL":
+        parts = [(weights[0], current_price, "僅少量試單" if get_language() == "zh_TW" else "Only probe with small size"),
+                 (weights[1], support, "必須確認支撐有效" if get_language() == "zh_TW" else "Require support confirmation"),
+                 (weights[2], deeper, "更好價格才考慮加碼" if get_language() == "zh_TW" else "Only add at meaningfully better prices")]
+    else:
+        parts = [(weights[0], current_price, "先保留彈性" if get_language() == "zh_TW" else "Keep flexibility at the start"),
+                 (weights[1], support, "回測支撐再補第二段" if get_language() == "zh_TW" else "Use a support retest for the second tranche"),
+                 (weights[2], deeper, "最後一段留給更佳風報比" if get_language() == "zh_TW" else "Reserve the last tranche for a better risk/reward")]
+
+    ladder = []
+    stage_labels = ["第 1 段", "第 2 段", "第 3 段"] if get_language() == "zh_TW" else ["Stage 1", "Stage 2", "Stage 3"]
+    for idx, (weight, level, note) in enumerate(parts):
+        if pd.isna(level) or level <= 0:
+            level = current_price
+        ladder.append(
+            {
+                "label": stage_labels[idx],
+                "weight_pct": int(weight),
+                "price": float(level),
+                "note": note,
+            }
+        )
+    return ladder
+
+
+def build_take_profit_ladder(plan: dict, take_profit_weights: list[int] | None = None) -> list[dict]:
+    current_price = coerce_float(plan.get("current_price"))
+    if pd.isna(current_price) or current_price <= 0:
+        return []
+    weights = take_profit_weights or [30, 40, 30]
+    targets = [
+        ("TP1", weights[0], coerce_float(plan.get("conservative_up")), "先回收風險資本" if get_language() == "zh_TW" else "Take back initial risk"),
+        ("TP2", weights[1], coerce_float(plan.get("base_up")), "保留主趨勢核心倉位" if get_language() == "zh_TW" else "Keep the core position for trend continuation"),
+        ("TP3", weights[2], coerce_float(plan.get("stretch_up")), "延伸目標才處理最後部位" if get_language() == "zh_TW" else "Only release the final tranche at the stretch target"),
+    ]
+    ladder = []
+    for label, weight_pct, up_pct, note in targets:
+        if pd.isna(up_pct):
+            continue
+        ladder.append(
+            {
+                "label": label,
+                "weight_pct": int(weight_pct),
+                "target_pct": float(up_pct),
+                "price": float(current_price * (1 + up_pct / 100.0)),
+                "note": note,
+            }
+        )
+    return ladder
+
+
+def format_entry_ladder_inline(ladder: list[dict], symbol: str) -> str:
+    if not ladder:
+        return "N/A"
+    if get_language() == "zh_TW":
+        return " / ".join(f"{row['label']} {row['weight_pct']}%@{symbol}{row['price']:,.2f}" for row in ladder)
+    return " / ".join(f"{row['label']} {row['weight_pct']}%@{symbol}{row['price']:,.2f}" for row in ladder)
+
+
+def format_take_profit_inline(ladder: list[dict], symbol: str) -> str:
+    if not ladder:
+        return "N/A"
+    return " / ".join(f"{row['label']} {row['weight_pct']}%@+{row['target_pct']:.1f}%" for row in ladder)
+
+
+def render_planner_ladder_card(title: str, kicker: str, rows: list[dict], symbol: str, is_take_profit: bool = False):
+    if not rows:
+        return
+    row_html_parts = []
+    for row in rows:
+        main = (
+            f"{row['weight_pct']}% · {symbol}{row['price']:,.2f} · +{row['target_pct']:.1f}%"
+            if is_take_profit
+            else f"{row['weight_pct']}% · {symbol}{row['price']:,.2f}"
+        )
+        row_html_parts.append(
+            textwrap.dedent(
+                f"""
+                <div class="scenario-ladder-row">
+                    <div><span class="scenario-ladder-tag {'scenario-ladder-tag-up' if is_take_profit else ''}">{escape(str(row['label']))}</span></div>
+                    <div>
+                        <div class="scenario-ladder-main">{escape(main)}</div>
+                        <div class="scenario-ladder-sub">{escape(str(row.get('note', '')))}</div>
+                    </div>
+                </div>
+                """
+            ).strip()
+        )
+    html = f"""
+    <div class="scenario-single-card">
+        <div class="section-header" style="margin:0; color:#eef4ff;">{escape(kicker)}</div>
+        <div class="scenario-single-value">{escape(title)}</div>
+        <div class="scenario-ladder">
+            {''.join(row_html_parts)}
+        </div>
+    </div>
+    """
+    render_html_block(html)
+
+
+def render_single_stock_operating_panel(bundle: dict, plan: dict, symbol: str, stop_profile: str, timeframe: str, acceptable_loss_pct: float, summary: dict, entry_weights: list[int] | None = None, take_profit_weights: list[int] | None = None):
+    lang_zh = get_language() == "zh_TW"
+    entry_ladder = build_entry_ladder(plan, entry_weights=entry_weights)
+    take_profit_ladder = build_take_profit_ladder(plan, take_profit_weights=take_profit_weights)
+    stop_key = {"tight": "stop_tight", "balanced": "stop_balanced", "wide": "stop_wide"}.get(stop_profile, "stop_balanced")
+    stop_pct = abs(coerce_float(plan.get(stop_key)))
+    current_price = coerce_float(plan.get("current_price"))
+    capital = coerce_float(summary.get("capital"))
+    acceptable_loss_amount = coerce_float(summary.get("acceptable_loss_amount"))
+    stop_loss_total = coerce_float(summary.get("stop_loss_total"))
+    if pd.isna(current_price):
+        current_price = 0.0
+    if pd.isna(capital):
+        capital = 0.0
+    if pd.isna(acceptable_loss_amount):
+        acceptable_loss_amount = 0.0
+    if pd.isna(stop_loss_total):
+        stop_loss_total = 0.0
+
+    target_title = "分批停利規劃" if lang_zh else "Staged take-profit plan"
+    entry_title = "分批進場規劃" if lang_zh else "Staged entry plan"
+    kicker = "單檔操作節奏" if lang_zh else "Single-name execution"
+    risk_text = (
+        f"最大可承受虧損 {symbol}{acceptable_loss_amount:,.2f}（{acceptable_loss_pct:.1f}%）。目前止損情境約 {symbol}{stop_loss_total:,.2f}，{'落在容忍範圍內' if stop_loss_total <= acceptable_loss_amount else '高於目前容忍範圍，建議縮小部位或等更佳進場價'}。"
+        if lang_zh
+        else f"Max acceptable loss is {symbol}{acceptable_loss_amount:,.2f} ({acceptable_loss_pct:.1f}%). Current modeled stop-loss is about {symbol}{stop_loss_total:,.2f}, which {'sits within tolerance' if stop_loss_total <= acceptable_loss_amount else 'runs above tolerance, so consider a smaller size or a better entry price'}."
+    )
+    shell_html = f"""
+    <div class="scenario-single-shell">
+        <div class="section-header" style="margin:0; color:#eef4ff;">{escape(kicker)}</div>
+        <div class="scenario-single-grid">
+            <div class="scenario-single-card">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape('個股操作摘要' if lang_zh else 'Single-stock brief')}</div>
+                <div class="scenario-single-value">{escape(display_ticker_label(bundle['ticker']))}</div>
+                <div class="scenario-single-copy">{escape(planner_single_stock_caption(bundle, planner_market_currency(bundle['ticker'])))}</div>
+                <div class="scenario-ladder">
+                    <div class="scenario-ladder-row">
+                        <div><span class="scenario-ladder-tag">{escape('期限' if lang_zh else 'Horizon')}</span></div>
+                        <div>
+                            <div class="scenario-ladder-main">{escape(planner_timeframe_label(timeframe))}</div>
+                            <div class="scenario-ladder-sub">{escape(plan.get('reference_note', ''))}</div>
+                        </div>
+                    </div>
+                    <div class="scenario-ladder-row">
+                        <div><span class="scenario-ladder-tag scenario-ladder-tag-down">{escape('風險' if lang_zh else 'Risk')}</span></div>
+                        <div>
+                            <div class="scenario-ladder-main">{escape(risk_text)}</div>
+                            <div class="scenario-ladder-sub">{escape(('目前止損參考：' + planner_stop_profile_label(stop_profile)) if lang_zh else ('Current stop profile: ' + planner_stop_profile_label(stop_profile)))}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <div class="scenario-single-card">
+                    <div class="section-header" style="margin:0; color:#eef4ff;">{escape('操作價位' if lang_zh else 'Working levels')}</div>
+                    <div class="scenario-ladder">
+                        <div class="scenario-ladder-row">
+                            <div><span class="scenario-ladder-tag">{escape('現價' if lang_zh else 'Price')}</span></div>
+                            <div><div class="scenario-ladder-main">{escape(f'{symbol}{current_price:,.2f}')}</div></div>
+                        </div>
+                        <div class="scenario-ladder-row">
+                            <div><span class="scenario-ladder-tag scenario-ladder-tag-up">{escape('TP2' if lang_zh else 'TP2')}</span></div>
+                            <div><div class="scenario-ladder-main">{escape(f'{symbol}{current_price * (1 + coerce_float(plan.get("base_up")) / 100.0):,.2f}')}</div><div class="scenario-ladder-sub">{escape(('基準情境目標' if lang_zh else 'Base-case target'))}</div></div>
+                        </div>
+                        <div class="scenario-ladder-row">
+                            <div><span class="scenario-ladder-tag scenario-ladder-tag-down">{escape('SL' if lang_zh else 'SL')}</span></div>
+                            <div><div class="scenario-ladder-main">{escape(f'-{abs(stop_pct):.1f}%')}</div><div class="scenario-ladder-sub">{escape(('目前採用的止損參考' if lang_zh else 'Current stop profile in use'))}</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+    render_html_block(shell_html)
+    render_planner_ladder_card(entry_title, "分批進場" if lang_zh else "Staged entry", entry_ladder, symbol, is_take_profit=False)
+    render_planner_ladder_card(target_title, "分批停利" if lang_zh else "Staged exit", take_profit_ladder, symbol, is_take_profit=True)
+
 def estimate_position_scenario(bundle: dict, timeframe: str = "6m") -> dict:
     ticker = bundle["ticker"]
     price_series = bundle.get("price_series")
@@ -6747,6 +7309,10 @@ def build_position_scenario_rows(
     allocation_method: str = "equal",
     stop_profile: str = "balanced",
     timeframe: str = "6m",
+    acceptable_loss_pct: float = 2.0,
+    entry_weights: list[int] | None = None,
+    take_profit_weights: list[int] | None = None,
+    win_rate_mode: str = "balanced",
 ) -> tuple[pd.DataFrame, dict]:
     valid_bundles = [bundle for bundle in bundles if pd.notna(coerce_float(bundle.get("analysis", {}).get("last_price")))]
     if not valid_bundles or total_capital <= 0:
@@ -6793,6 +7359,9 @@ def build_position_scenario_rows(
         stretch_profit_total += stretch_profit
         stop_loss_total += stop_loss
 
+        entry_ladder = build_entry_ladder(plan, entry_weights=entry_weights)
+        take_profit_ladder = build_take_profit_ladder(plan, take_profit_weights=take_profit_weights)
+        acceptable_loss_amount_row = allocation * float(acceptable_loss_pct) / 100.0
         rows.append(
             {
                 "ticker": ticker,
@@ -6804,6 +7373,9 @@ def build_position_scenario_rows(
                 "units": est_units,
                 "upside_range": f"+{plan['conservative_up']:.1f}% / +{plan['base_up']:.1f}% / +{plan['stretch_up']:.1f}%",
                 "stop_range": f"-{plan['stop_tight']:.1f}% / -{plan['stop_balanced']:.1f}% / -{plan['stop_wide']:.1f}%",
+                "entry_plan": format_entry_ladder_inline(entry_ladder, planner_currency_symbol(planner_market_currency(ticker))),
+                "take_profit_plan": format_take_profit_inline(take_profit_ladder, planner_currency_symbol(planner_market_currency(ticker))),
+                "max_loss_budget": acceptable_loss_amount_row,
                 "base_profit": base_profit,
                 "stop_loss": stop_loss,
                 "reference_note": plan["reference_note"],
@@ -6812,16 +7384,34 @@ def build_position_scenario_rows(
         )
 
     table = pd.DataFrame(rows)
+    acceptable_loss_amount = float(total_capital) * float(acceptable_loss_pct) / 100.0
+    recommended_capital = float(total_capital)
+    if stop_loss_total > 0 and acceptable_loss_amount > 0:
+        recommended_capital = min(float(total_capital), float(total_capital) * acceptable_loss_amount / stop_loss_total)
+    assumed_win_rate = compute_planner_win_rate(pd.DataFrame(rows), mode=win_rate_mode) if rows else 0.55
+    risk_reward_ratio = base_profit_total / stop_loss_total if stop_loss_total > 0 else 0.0
+    expected_value = assumed_win_rate * base_profit_total - (1.0 - assumed_win_rate) * stop_loss_total
+    suggested_position_pct = (recommended_capital / float(total_capital) * 100.0) if float(total_capital) > 0 else 0.0
     summary = {
         "capital": float(total_capital),
         "base_profit_total": base_profit_total,
         "conservative_profit_total": conservative_profit_total,
         "stretch_profit_total": stretch_profit_total,
         "stop_loss_total": stop_loss_total,
+        "acceptable_loss_pct": float(acceptable_loss_pct),
+        "acceptable_loss_amount": acceptable_loss_amount,
+        "recommended_capital": recommended_capital,
         "row_count": len(rows),
         "allocation_method": allocation_method,
         "stop_profile": stop_profile,
         "timeframe": timeframe,
+        "assumed_win_rate": assumed_win_rate,
+        "risk_reward_ratio": risk_reward_ratio,
+        "expected_value": expected_value,
+        "suggested_position_pct": suggested_position_pct,
+        "entry_weights": entry_weights or [],
+        "take_profit_weights": take_profit_weights or [],
+        "win_rate_mode": win_rate_mode,
     }
     return table, summary
 
@@ -6836,54 +7426,41 @@ def scenario_signal_pill_class(signal_value: str) -> str:
     return "scenario-pill scenario-pill-neutral"
 
 
+
 def render_scenario_planner_table(display_df: pd.DataFrame):
     if display_df is None or display_df.empty:
         return
 
     headers = "".join(f"<th>{escape(str(column))}</th>" for column in display_df.columns)
     rows_html = []
+    signal_names = {"訊號", "Signal"}
 
     for _, row in display_df.iterrows():
-        ticker_col = str(row.iloc[0])
-        signal_col = str(row.iloc[1])
-        weight_col = str(row.iloc[2])
-        capital_col = str(row.iloc[3])
-        price_col = str(row.iloc[4])
-        units_col = str(row.iloc[5])
-        upside_col = str(row.iloc[6])
-        stop_col = str(row.iloc[7])
-        base_profit_col = str(row.iloc[8])
-        stop_loss_col = str(row.iloc[9])
-        reference_col = str(row.iloc[10])
+        cell_html = []
+        for column, value in row.items():
+            value_str = str(value)
+            if column == display_df.columns[0]:
+                cell_html.append(
+                    f'<td><div class="scenario-table-primary">{escape(value_str)}</div></td>'
+                )
+            elif column in signal_names:
+                cell_html.append(
+                    f'<td><span class="{scenario_signal_pill_class(value_str)}">{escape(value_str)}</span></td>'
+                )
+            elif "推估依據" in str(column) or "Reference" in str(column):
+                cell_html.append(
+                    f'<td class="scenario-text-wrap"><div class="scenario-table-secondary">{escape(value_str)}</div></td>'
+                )
+            elif "分批" in str(column) or "Entry" in str(column) or "Take-profit" in str(column):
+                cell_html.append(
+                    f'<td class="scenario-text-wrap"><div class="scenario-num">{escape(value_str)}</div></td>'
+                )
+            else:
+                cell_html.append(
+                    f'<td><div class="scenario-num">{escape(value_str)}</div></td>'
+                )
 
-        row_html = f'''
-        <tr>
-            <td>
-                <div class="scenario-table-primary">{escape(ticker_col)}</div>
-            </td>
-            <td>
-                <span class="{scenario_signal_pill_class(signal_col)}">{escape(signal_col)}</span>
-            </td>
-            <td><div class="scenario-num">{escape(weight_col)}</div></td>
-            <td><div class="scenario-num">{escape(capital_col)}</div></td>
-            <td><div class="scenario-num">{escape(price_col)}</div></td>
-            <td><div class="scenario-num-muted">{escape(units_col)}</div></td>
-            <td>
-                <div class="scenario-num">{escape(upside_col)}</div>
-                <div class="scenario-table-secondary">{"保守 / 基準 / 延伸" if get_language() == "zh_TW" else "Conservative / Base / Stretch"}</div>
-            </td>
-            <td>
-                <div class="scenario-num">{escape(stop_col)}</div>
-                <div class="scenario-table-secondary">{"緊 / 平衡 / 寬" if get_language() == "zh_TW" else "Tight / Balanced / Wide"}</div>
-            </td>
-            <td><div class="scenario-num">{escape(base_profit_col)}</div></td>
-            <td><div class="scenario-num">{escape(stop_loss_col)}</div></td>
-            <td class="scenario-text-wrap">
-                <div class="scenario-table-secondary">{escape(reference_col)}</div>
-            </td>
-        </tr>
-        '''
-        rows_html.append(textwrap.dedent(row_html).strip())
+        rows_html.append("<tr>" + "".join(cell_html) + "</tr>")
 
     html = f'''
     <div class="scenario-table-shell">
@@ -6901,16 +7478,38 @@ def render_scenario_planner_table(display_df: pd.DataFrame):
     '''
     render_html_block(html)
 
+
+
 def render_position_scenario_planner(bundles: list[dict]):
     if not bundles:
         return
 
     lang_zh = get_language() == "zh_TW"
+    single_mode = len(bundles) == 1
+
+    header_title = (
+        "輸入金額後，自動推估漲幅區間與止損參考"
+        if not single_mode and lang_zh
+        else "投入金額後，為這一檔股票建立分批進場、停利與風險框架"
+        if single_mode and lang_zh
+        else "Model upside bands and stop-loss references from your selected list"
+        if not single_mode
+        else "Build a staged entry, take-profit, and risk framework for this stock"
+    )
+    header_copy = (
+        "這不是報酬保證，而是把目前的技術結構、分析師目標價、阻力/支撐區與訊號強度，整理成可操作的金額情境。若同時選到美股與台股，系統會分開用各自市場幣別試算。"
+        if not single_mode and lang_zh
+        else "這不是報酬保證，而是把目前的技術結構、分析師目標價、阻力/支撐區與訊號強度，整理成單檔可操作的進場、停利與風險框架。"
+        if single_mode and lang_zh
+        else "This is not a return guarantee. It turns current structure, analyst targets, support/resistance, and signal quality into a practical scenario model. If you selected both U.S. and Taiwan names, the planner splits them by local currency."
+        if not single_mode
+        else "This is not a return guarantee. It turns current structure, analyst targets, support/resistance, and signal quality into a single-name operating framework."
+    )
     header_html = f"""
     <div class="guide-shell">
         <div class="section-header" style="margin:0; color:#f5ead8;">{"投資情境試算" if lang_zh else "Investment Scenario Planner"}</div>
-        <div class="guide-title">{"投入金額後，自動推估漲幅區間與止損參考" if lang_zh else "Model upside bands and stop-loss references from your selected list"}</div>
-        <div class="guide-copy">{"這不是報酬保證，而是把目前的技術結構、分析師目標價、阻力/支撐區與訊號強度，整理成可操作的金額情境。若同時選到美股與台股，系統會分開用各自市場幣別試算。" if lang_zh else "This is not a return guarantee. It turns current structure, analyst targets, support/resistance, and signal quality into a practical scenario model. If you selected both U.S. and Taiwan names, the planner splits them by local currency."}</div>
+        <div class="guide-title">{header_title}</div>
+        <div class="guide-copy">{header_copy}</div>
     </div>
     """
     render_html_block(header_html)
@@ -6923,6 +7522,13 @@ def render_position_scenario_planner(bundles: list[dict]):
     for currency, group_bundles in active_groups:
         key_prefix = f"scenario_planner_{currency.lower()}"
         symbol = planner_currency_symbol(currency)
+        group_single = len(group_bundles) == 1
+
+        title = planner_market_title(currency)
+        caption = planner_market_caption(currency)
+        if group_single:
+            title = planner_single_stock_title(group_bundles[0], currency)
+            caption = planner_single_stock_caption(group_bundles[0], currency)
 
         render_html_block(
             f"""
@@ -6930,15 +7536,15 @@ def render_position_scenario_planner(bundles: list[dict]):
                 <div class="compare-topline">
                     <div>
                         <div class="section-header" style="margin:0; color:#eef4ff;">{"情境試算" if lang_zh else "Scenario model"}</div>
-                        <div class="compare-title">{escape(planner_market_title(currency))}</div>
-                        <div class="compare-copy">{escape(planner_market_caption(currency))}</div>
+                        <div class="compare-title">{escape(title)}</div>
+                        <div class="compare-copy">{escape(caption)}</div>
                     </div>
                 </div>
             </div>
             """
         )
 
-        control_cols = st.columns([1.2, 0.95, 0.95, 0.9])
+        control_cols = st.columns([1.1, 0.92, 0.92, 0.82, 0.78, 0.92, 0.92, 0.82])
         with control_cols[0]:
             capital = st.number_input(
                 "投入金額" if lang_zh else "Investment amount",
@@ -6973,6 +7579,42 @@ def render_position_scenario_planner(bundles: list[dict]):
                 key=f"{key_prefix}_timeframe",
             )
             st.session_state["dashboard_target_watch_timeframe"] = normalize_planner_timeframe(timeframe)
+        with control_cols[4]:
+            acceptable_loss_pct = st.number_input(
+                "最大可承受虧損 %" if lang_zh else "Max loss %",
+                min_value=0.5,
+                max_value=20.0,
+                value=2.0,
+                step=0.5,
+                format="%.1f",
+                key=f"{key_prefix}_max_loss_pct",
+                help="若整體止損風險高於這個比例，系統會提示你縮小部位。" if lang_zh else "If total modeled stop-loss risk exceeds this share of capital, the planner will flag it.",
+            )
+        with control_cols[5]:
+            entry_ratio_text = st.text_input(
+                "分批進場比例" if lang_zh else "Entry ladder %",
+                value=planner_ratio_text([40, 35, 25]),
+                key=f"{key_prefix}_entry_ratio_text",
+                help="輸入 3 段比例，例如 40,35,25，系統會自動正規化成 100%。" if lang_zh else "Enter three ladder weights such as 40,35,25. The planner normalizes them to 100%.",
+            )
+        with control_cols[6]:
+            take_profit_ratio_text = st.text_input(
+                "分批停利比例" if lang_zh else "Take-profit %",
+                value=planner_ratio_text([30, 40, 30]),
+                key=f"{key_prefix}_tp_ratio_text",
+                help="輸入 3 段比例，例如 30,40,30。" if lang_zh else "Enter three take-profit weights such as 30,40,30.",
+            )
+        with control_cols[7]:
+            win_rate_mode = st.selectbox(
+                "勝率假設" if lang_zh else "Hit-rate mode",
+                options=["conservative", "balanced", "aggressive"],
+                format_func=planner_win_rate_label,
+                index=1,
+                key=f"{key_prefix}_win_rate_mode",
+            )
+
+        entry_weights = parse_planner_ratio_input(entry_ratio_text, (40, 35, 25))
+        take_profit_weights = parse_planner_ratio_input(take_profit_ratio_text, (30, 40, 30))
 
         scenario_df, summary = build_position_scenario_rows(
             group_bundles,
@@ -6980,27 +7622,67 @@ def render_position_scenario_planner(bundles: list[dict]):
             allocation_method=allocation_method,
             stop_profile=stop_profile,
             timeframe=timeframe,
+            acceptable_loss_pct=float(acceptable_loss_pct or 0.0),
+            entry_weights=entry_weights,
+            take_profit_weights=take_profit_weights,
+            win_rate_mode=win_rate_mode,
         )
 
         if scenario_df.empty:
             st.info("請先輸入有效金額，且所選股票必須有可用價格。" if lang_zh else "Enter a valid capital amount and make sure the selected tickers have usable prices.")
             continue
 
-        summary_cols = st.columns(4)
-        summary_cols[0].metric("投入本金" if lang_zh else "Capital", f"{symbol}{summary['capital']:,.2f}")
-        summary_cols[1].metric(
-            "基準情境獲利" if lang_zh else "Base-case upside",
-            f"{symbol}{summary['base_profit_total']:,.2f}",
-            f"{planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} 檔" if lang_zh else f"{planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} names",
+        timeframe_badge = (
+            f"↑ {planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} 檔"
+            if lang_zh
+            else f"↑ {planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} names"
         )
-        summary_cols[2].metric("保守情境獲利" if lang_zh else "Conservative upside", f"{symbol}{summary['conservative_profit_total']:,.2f}")
-        summary_cols[3].metric("止損風險" if lang_zh else "Stop-loss risk", f"-{symbol}{summary['stop_loss_total']:,.2f}", planner_stop_profile_label(summary["stop_profile"]))
+        stop_badge = f"↑ {planner_stop_profile_label(summary['stop_profile'])}"
+        acceptable_symbol = f"{symbol}{summary['acceptable_loss_amount']:,.2f}"
+        risk_ok = summary["stop_loss_total"] <= summary["acceptable_loss_amount"]
+        risk_badge_text = (
+            f"風險預算 {acceptable_symbol}"
+            if lang_zh
+            else f"Risk budget {acceptable_symbol}"
+        )
+        risk_badge_class = "scenario-summary-badge" if risk_ok else "scenario-summary-badge scenario-summary-badge-danger"
+        scale_badge_text = (
+            f"建議資金上限 {symbol}{summary['recommended_capital']:,.0f}"
+            if lang_zh
+            else f"Suggested cap {symbol}{summary['recommended_capital']:,.0f}"
+        )
+
+        summary_html = f"""
+        <div class="scenario-summary-grid">
+            <div class="scenario-summary-card">
+                <div class="scenario-summary-label">{"投入本金" if lang_zh else "Capital"}</div>
+                <div class="scenario-summary-value scenario-summary-value-gold">{escape(f"{symbol}{summary['capital']:,.2f}")}</div>
+            </div>
+            <div class="scenario-summary-card">
+                <div class="scenario-summary-label">{"基準情境獲利" if lang_zh else "Base-case upside"}</div>
+                <div class="scenario-summary-value">{escape(f"{symbol}{summary['base_profit_total']:,.2f}")}</div>
+                <div class="scenario-summary-badge">{escape(timeframe_badge)}</div>
+            </div>
+            <div class="scenario-summary-card">
+                <div class="scenario-summary-label">{"保守情境獲利" if lang_zh else "Conservative upside"}</div>
+                <div class="scenario-summary-value">{escape(f"{symbol}{summary['conservative_profit_total']:,.2f}")}</div>
+                <div class="scenario-summary-badge scenario-summary-badge-warn">{escape(scale_badge_text)}</div>
+            </div>
+            <div class="scenario-summary-card">
+                <div class="scenario-summary-label">{"止損風險" if lang_zh else "Stop-loss risk"}</div>
+                <div class="scenario-summary-value">{escape(f"-{symbol}{summary['stop_loss_total']:,.2f}")}</div>
+                <div class="{risk_badge_class}">{escape(risk_badge_text)}</div>
+            </div>
+        </div>
+        """
+        render_html_block(summary_html)
 
         display_df = scenario_df.copy()
         display_df["allocation_pct"] = display_df["allocation_pct"].map(lambda x: f"{x:.1f}%")
         display_df["allocation_amount"] = display_df["allocation_amount"].map(lambda x: f"{symbol}{x:,.2f}")
         display_df["price"] = display_df["price"].map(lambda x: f"{symbol}{x:,.2f}")
         display_df["units"] = display_df["units"].map(lambda x: f"{x:,.3f}")
+        display_df["max_loss_budget"] = display_df["max_loss_budget"].map(lambda x: f"{symbol}{x:,.2f}")
         display_df["base_profit"] = display_df["base_profit"].map(lambda x: f"{symbol}{x:,.2f}")
         display_df["stop_loss"] = display_df["stop_loss"].map(lambda x: f"-{symbol}{x:,.2f}")
 
@@ -7015,11 +7697,14 @@ def render_position_scenario_planner(bundles: list[dict]):
                     "units": "估計股數",
                     "upside_range": "漲幅區間",
                     "stop_range": "止損區間",
+                    "entry_plan": "分批進場",
+                    "take_profit_plan": "分批停利",
+                    "max_loss_budget": "單檔風險預算",
                     "base_profit": "基準情境獲利",
                     "stop_loss": "止損情境損失",
                     "reference_note": "推估依據",
                 }
-            )[["股票", "訊號", "配置比重", "配置金額", "現價", "估計股數", "漲幅區間", "止損區間", "基準情境獲利", "止損情境損失", "推估依據"]]
+            )[["股票", "訊號", "配置比重", "配置金額", "現價", "估計股數", "漲幅區間", "止損區間", "分批進場", "分批停利", "單檔風險預算", "基準情境獲利", "止損情境損失", "推估依據"]]
         else:
             display_df = display_df.rename(
                 columns={
@@ -7031,34 +7716,65 @@ def render_position_scenario_planner(bundles: list[dict]):
                     "units": "Est. units",
                     "upside_range": "Upside band",
                     "stop_range": "Stop band",
+                    "entry_plan": "Entry ladder",
+                    "take_profit_plan": "Take-profit ladder",
+                    "max_loss_budget": "Risk budget",
                     "base_profit": "Base-case P/L",
                     "stop_loss": "Stop-loss P/L",
                     "reference_note": "Reference",
                 }
-            )[["Ticker", "Signal", "Weight", "Capital", "Price", "Est. units", "Upside band", "Stop band", "Base-case P/L", "Stop-loss P/L", "Reference"]]
+            )[["Ticker", "Signal", "Weight", "Capital", "Price", "Est. units", "Upside band", "Stop band", "Entry ladder", "Take-profit ladder", "Risk budget", "Base-case P/L", "Stop-loss P/L", "Reference"]]
 
         render_scenario_planner_table(display_df)
 
+        if group_single:
+            single_bundle = group_bundles[0]
+            single_plan = estimate_position_scenario(single_bundle, timeframe=timeframe)
+            render_single_stock_operating_panel(
+                single_bundle,
+                single_plan,
+                symbol=symbol,
+                stop_profile=stop_profile,
+                timeframe=timeframe,
+                acceptable_loss_pct=float(summary["acceptable_loss_pct"]),
+                summary=summary,
+                entry_weights=entry_weights,
+                take_profit_weights=take_profit_weights,
+            )
+        else:
+            render_portfolio_execution_panel(
+                scenario_df,
+                summary,
+                symbol=symbol,
+                entry_weights=entry_weights,
+                take_profit_weights=take_profit_weights,
+                win_rate_mode=win_rate_mode,
+            )
+
         note = (
-            f"漲幅區間為 保守 / 基準 / 延伸 三種情境，並已按 {planner_timeframe_label(summary['timeframe'])} 的投資期限調整。止損區間為 緊 / 平衡 / 寬 三種參考。這些數值來自目標價、阻力支撐、布林區間與近期波動，請搭配你自己的部位與紀律使用。"
+            f"漲幅區間為 保守 / 基準 / 延伸 三種情境，並已按 {planner_timeframe_label(summary['timeframe'])} 的投資期限調整。止損區間為 緊 / 平衡 / 寬 三種參考。現在多檔與單檔都保留分批進場 / 分批停利、勝率假設、風報比與建議倉位，並支援自訂比例。"
             if lang_zh
-            else f"Upside bands are shown as conservative / base / stretch and are adjusted for a {planner_timeframe_label(summary['timeframe'])} investment horizon. Stop bands are shown as tight / balanced / wide. They blend analyst targets, resistance/support, Bollinger context, and recent volatility, and should be used alongside your own position sizing and discipline."
+            else f"Upside bands are shown as conservative / base / stretch and are adjusted for a {planner_timeframe_label(summary['timeframe'])} investment horizon. Stop bands are shown as tight / balanced / wide. Both single-name and multi-name modes now keep staged entry / take-profit ladders, a hit-rate assumption, risk/reward, and suggested sizing with custom ladder ratios."
         )
         st.caption(note)
 
 
 def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
-    if len(tickers) < 2:
+    if not tickers:
         return
 
     bundles = [collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta) for ticker in tickers]
     bundles = [bundle for bundle in bundles if bundle is not None]
+    if not bundles:
+        return
+
+    render_position_scenario_planner(bundles)
+
     if len(bundles) < 2:
         return
 
     render_winner_card(bundles, lens_meta=lens_meta)
     render_opportunity_radar(bundles, lens_meta=lens_meta)
-    render_position_scenario_planner(bundles)
 
     strongest = max(bundles, key=lambda bundle: compute_lens_winner_fields(bundle, lens_meta)["lens_score"])
     best_return = max(
@@ -7209,34 +7925,29 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         <div class="compare-table-note">{escape(analysis['rsi_status'])}</div>
     </div>
     <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("news_pulse")}</div>
-        <div class="compare-table-value">{escape(analysis['news_pulse']['label'])}</div>
-        <div class="compare-table-note">{escape(analysis['summary'])}</div>
+        <div class="compare-table-sub">{t("news_backing")}</div>
+        <div class="compare-table-value">{escape(tr_news_label(analysis['news_pulse']['label']))}</div>
+        <div class="compare-table-note">{analysis['news_pulse']['score']:+.1f}</div>
     </div>
-</div>
-"""))
+</div>""").strip())
 
-    board_html = (
-        '<div class="compare-table-shell">'
-        '<div class="compare-table-title">Recommendation board</div>'
-        '<div class="compare-table-copy">This replaces the old plain table with a dark premium board that matches your sidebar style. Use it to compare trend, price, recommendation, momentum, and news context in one scan.</div>'
-        '<div class="compare-table-head">'
-        '<div>Ticker</div>'
-        '<div>Price</div>'
-        '<div>1Y Return</div>'
-        '<div>Signal</div>'
-        '<div>Momentum</div>'
-        '<div>Intraday</div>'
-        '<div>News Context</div>'
-        '</div>'
-        '<div class="compare-table-body">'
-        + "".join(row_html_parts) +
-        '</div>'
-        '</div>'
-    )
-    render_html_block(board_html)
-
-
+    table_html = f"""
+    <div class="compare-table-shell">
+        <div class="compare-table-head">
+            <div>{t("ticker")}</div>
+            <div>{t("last_price")}</div>
+            <div>{t("trend_1y")}</div>
+            <div>{t("signal")}</div>
+            <div>{t("lens_score")}</div>
+            <div>{t("intraday")}</div>
+            <div>{t("news_backing")}</div>
+        </div>
+        <div class="compare-table-body">
+            {''.join(row_html_parts)}
+        </div>
+    </div>
+    """
+    render_html_block(table_html)
 def render_target_watch_section(ticker: str, context: dict):
     if not context:
         return
