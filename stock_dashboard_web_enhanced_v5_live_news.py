@@ -205,11 +205,21 @@ LANGUAGE_OPTIONS = {
     "繁體中文": "繁體中文",
 }
 
+DEVICE_CONTROL_OPTIONS = {
+    "Auto detect": "Auto detect",
+    "Manual override": "Manual override",
+}
+
 DEVICE_MODE_OPTIONS = {
     "Desktop": "Desktop",
     "iPad": "iPad",
-    "Smartphone Fold": "Smartphone Fold",
+    "Smartphone Fold Portrait": "Smartphone Fold Portrait",
+    "Smartphone Fold Landscape": "Smartphone Fold Landscape",
     "Smartphone": "Smartphone",
+}
+
+LEGACY_DEVICE_MODE_ALIASES = {
+    "Smartphone Fold": "Smartphone Fold Portrait",
 }
 
 NEWS_DISPLAY_OPTIONS = {
@@ -547,20 +557,32 @@ TRANSLATIONS["繁體中文"].update({
 
 
 TRANSLATIONS["English"].update({
+    "device_mode_control": "Layout mode",
+    "device_mode_control_note": "Use Auto detect to apply a best-effort layout profile from the browser device hint, or switch to Manual override to force a specific layout.",
+    "device_mode_auto": "Auto detect",
+    "device_mode_manual": "Manual override",
+    "device_mode_detected": "Detected profile",
     "device_mode": "Viewing device",
-    "device_mode_note": "Choose a layout profile for desktop, iPad, smartphone fold, or smartphone so spacing, width, and content density feel more comfortable on that screen.",
+    "device_mode_note": "Choose a layout profile for desktop, iPad, smartphone fold portrait, smartphone fold landscape, or smartphone so spacing, width, and content density feel more comfortable on that screen.",
     "device_desktop": "Desktop",
     "device_ipad": "iPad",
-    "device_smartphone_fold": "Smartphone Fold",
+    "device_smartphone_fold_portrait": "Smartphone Fold Portrait",
+    "device_smartphone_fold_landscape": "Smartphone Fold Landscape",
     "device_smartphone": "Smartphone",
 })
 
 TRANSLATIONS["繁體中文"].update({
+    "device_mode_control": "版型模式",
+    "device_mode_control_note": "可使用自動偵測，依瀏覽器裝置提示套用最接近的版型；也可改成手動覆蓋，固定指定 Desktop、iPad、折疊機或手機版型。",
+    "device_mode_auto": "自動偵測",
+    "device_mode_manual": "手動覆蓋",
+    "device_mode_detected": "目前偵測版型",
     "device_mode": "觀看裝置",
-    "device_mode_note": "選擇 Desktop、iPad、Smart Phone Fold 或 Smart Phone 版型，Dashboard 會依裝置調整寬度、間距與內容密度，讓閱讀更舒適。",
+    "device_mode_note": "選擇 Desktop、iPad、Smart Phone Fold Portrait、Smart Phone Fold Landscape 或 Smart Phone 版型，Dashboard 會依裝置調整寬度、間距與內容密度，讓閱讀更舒適。",
     "device_desktop": "Desktop",
     "device_ipad": "iPad",
-    "device_smartphone_fold": "Smart Phone Fold",
+    "device_smartphone_fold_portrait": "Smart Phone Fold Portrait",
+    "device_smartphone_fold_landscape": "Smart Phone Fold Landscape",
     "device_smartphone": "Smart Phone",
 })
 TERM_TRANSLATIONS = {
@@ -925,16 +947,81 @@ def get_language() -> str:
 
 
 
+def normalize_device_mode(value: str | None) -> str:
+    if not value:
+        return "Desktop"
+    value = LEGACY_DEVICE_MODE_ALIASES.get(value, value)
+    return value if value in DEVICE_MODE_OPTIONS else "Desktop"
+
+
+def get_device_control_mode() -> str:
+    value = st.session_state.get("dashboard_device_control_mode", "Auto detect")
+    return value if value in DEVICE_CONTROL_OPTIONS else "Auto detect"
+
+
+def get_request_user_agent() -> str:
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", None)
+        if headers:
+            getter = getattr(headers, "get", None)
+            if callable(getter):
+                return str(getter("user-agent") or getter("User-Agent") or "")
+    except Exception:
+        pass
+    return ""
+
+
+def detect_device_mode_from_user_agent() -> str:
+    ua = get_request_user_agent().lower()
+    if not ua:
+        return "Desktop"
+
+    is_ipad = "ipad" in ua or ("macintosh" in ua and "touch" in ua)
+    is_mobile = any(token in ua for token in ("iphone", "android", "mobile", "phone"))
+    is_tablet = is_ipad or "tablet" in ua
+
+    if "fold" in ua:
+        return "Smartphone Fold Portrait" if is_mobile else "Smartphone Fold Landscape"
+    if is_ipad or ("android" in ua and not is_mobile):
+        return "iPad"
+    if is_tablet:
+        return "iPad"
+    if is_mobile:
+        return "Smartphone"
+    return "Desktop"
+
+
+def get_effective_device_mode() -> str:
+    control_mode = get_device_control_mode()
+    manual_mode = normalize_device_mode(st.session_state.get("dashboard_device_mode", "Desktop"))
+    if control_mode == "Manual override":
+        return manual_mode
+    detected = normalize_device_mode(st.session_state.get("dashboard_detected_device_mode"))
+    if detected == "Desktop" and not st.session_state.get("dashboard_detected_device_mode"):
+        detected = detect_device_mode_from_user_agent()
+        st.session_state["dashboard_detected_device_mode"] = detected
+    return detected
+
+
 def get_device_mode() -> str:
-    mode = st.session_state.get("dashboard_device_mode", "Desktop")
-    return mode if mode in DEVICE_MODE_OPTIONS else "Desktop"
+    return get_effective_device_mode()
+
+
+def device_control_mode_label(value: str) -> str:
+    labels = {
+        "Auto detect": t("device_mode_auto"),
+        "Manual override": t("device_mode_manual"),
+    }
+    return labels.get(value, value)
 
 
 def device_mode_label(value: str) -> str:
     labels = {
         "Desktop": t("device_desktop"),
         "iPad": t("device_ipad"),
-        "Smartphone Fold": t("device_smartphone_fold"),
+        "Smartphone Fold Portrait": t("device_smartphone_fold_portrait"),
+        "Smartphone Fold Landscape": t("device_smartphone_fold_landscape"),
         "Smartphone": t("device_smartphone"),
     }
     return labels.get(value, value)
@@ -1828,7 +1915,7 @@ def _query_param_first(key: str) -> str:
 
 
 def _current_query_param_map() -> dict[str, str]:
-    keys = ["lang", "news", "scope", "groups", "picks", "custom", "search", "lens", "manual", "period", "interval"]
+    keys = ["lang", "devicectl", "device", "news", "scope", "groups", "picks", "custom", "search", "lens", "manual", "period", "interval"]
     return {key: _query_param_first(key) for key in keys if _query_param_first(key)}
 
 
@@ -1863,9 +1950,11 @@ def load_dashboard_preferences() -> None:
     if news_mode not in NEWS_DISPLAY_OPTIONS:
         news_mode = "Original source"
 
-    device_mode = _query_param_first("device") or st.session_state.get("dashboard_device_mode", "Desktop")
-    if device_mode not in DEVICE_MODE_OPTIONS:
-        device_mode = "Desktop"
+    device_control_mode = _query_param_first("devicectl") or st.session_state.get("dashboard_device_control_mode", "Auto detect")
+    if device_control_mode not in DEVICE_CONTROL_OPTIONS:
+        device_control_mode = "Auto detect"
+
+    device_mode = normalize_device_mode(_query_param_first("device") or st.session_state.get("dashboard_device_mode", "Desktop"))
 
     market_scope = _query_param_first("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
     if market_scope not in MARKET_SCOPE_OPTIONS:
@@ -1899,7 +1988,9 @@ def load_dashboard_preferences() -> None:
 
     st.session_state["dashboard_language"] = language
     st.session_state["dashboard_news_mode"] = news_mode
+    st.session_state["dashboard_device_control_mode"] = device_control_mode
     st.session_state["dashboard_device_mode"] = device_mode
+    st.session_state["dashboard_detected_device_mode"] = detect_device_mode_from_user_agent()
     st.session_state["dashboard_market_scope"] = market_scope
     st.session_state["dashboard_selected_groups"] = groups
     st.session_state["dashboard_selected_tickers"] = picks
@@ -7720,8 +7811,7 @@ def inject_localization_overrides():
 
 
 def inject_device_layout_overrides(device_mode: str) -> None:
-    if device_mode not in DEVICE_MODE_OPTIONS:
-        device_mode = "Desktop"
+    device_mode = normalize_device_mode(device_mode)
 
     if device_mode == "Desktop":
         css = """
@@ -7765,7 +7855,7 @@ def inject_device_layout_overrides(device_mode: str) -> None:
         }
         </style>
         """
-    elif device_mode == "Smartphone Fold":
+    elif device_mode == "Smartphone Fold Portrait":
         css = """
         <style>
         .block-container {
@@ -7813,6 +7903,57 @@ def inject_device_layout_overrides(device_mode: str) -> None:
         }
         .global-indicator-shell {
             top: 0.4rem !important;
+        }
+        </style>
+        """
+    elif device_mode == "Smartphone Fold Landscape":
+        css = """
+        <style>
+        .block-container {
+            max-width: 980px !important;
+            padding-top: 0.55rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+            padding-bottom: 1.1rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] {
+            gap: 0.8rem !important;
+            flex-wrap: wrap !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            min-width: calc(50% - 0.45rem) !important;
+            flex: 1 1 calc(50% - 0.45rem) !important;
+        }
+        .winner-hero, .story-row-grid, .explorer-nav-head, .compare-topline, .news-first-grid {
+            grid-template-columns: 1fr !important;
+        }
+        .lead-story-board {
+            grid-template-columns: 1fr 1fr !important;
+        }
+        .guide-grid, .reference-grid, .compare-hero-grid, .catalyst-grid, .winner-grid, .lab-grid, .alert-grid, .lens-grid,
+        .compare-card-grid, .crypto-grid, .winner-rail-grid, .compare-mosaic-grid, .target-watch-grid, .target-watch-headline-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+        .compare-table-head {
+            display: none !important;
+        }
+        .compare-table-row {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+            padding: 14px !important;
+        }
+        .compare-table-cell {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 4px !important;
+            border-bottom: 1px solid rgba(255,255,255,.07);
+            padding-bottom: 6px !important;
+        }
+        .scenario-table-shell, .target-watch-headline-shell {
+            overflow-x: auto;
+        }
+        .global-indicator-shell {
+            top: 0.45rem !important;
         }
         </style>
         """
@@ -7894,18 +8035,39 @@ def generate_dashboard():
         )
         st.session_state["dashboard_language"] = selected_lang
 
-        current_device_mode = st.session_state.get("dashboard_device_mode", "Desktop")
-        selected_device_mode = st.selectbox(
-            t("device_mode"),
-            options=list(DEVICE_MODE_OPTIONS.keys()),
-            index=list(DEVICE_MODE_OPTIONS.keys()).index(current_device_mode)
-            if current_device_mode in DEVICE_MODE_OPTIONS
-            else 0,
-            format_func=device_mode_label,
+        current_device_control = st.session_state.get("dashboard_device_control_mode", "Auto detect")
+        if current_device_control not in DEVICE_CONTROL_OPTIONS:
+            current_device_control = "Auto detect"
+        selected_device_control = st.selectbox(
+            t("device_mode_control"),
+            options=list(DEVICE_CONTROL_OPTIONS.keys()),
+            index=list(DEVICE_CONTROL_OPTIONS.keys()).index(current_device_control),
+            format_func=device_control_mode_label,
         )
-        st.session_state["dashboard_device_mode"] = selected_device_mode
+        st.session_state["dashboard_device_control_mode"] = selected_device_control
+
+        detected_device_mode = detect_device_mode_from_user_agent()
+        st.session_state["dashboard_detected_device_mode"] = detected_device_mode
+
+        current_device_mode = normalize_device_mode(st.session_state.get("dashboard_device_mode", "Desktop"))
+        if selected_device_control == "Manual override":
+            selected_device_mode = st.selectbox(
+                t("device_mode"),
+                options=list(DEVICE_MODE_OPTIONS.keys()),
+                index=list(DEVICE_MODE_OPTIONS.keys()).index(current_device_mode)
+                if current_device_mode in DEVICE_MODE_OPTIONS
+                else 0,
+                format_func=device_mode_label,
+            )
+            st.session_state["dashboard_device_mode"] = selected_device_mode
+        else:
+            selected_device_mode = detected_device_mode
+            st.session_state["dashboard_device_mode"] = selected_device_mode
+            st.caption(f"{t('device_mode_detected')}: {device_mode_label(detected_device_mode)}")
+
+        st.caption(t("device_mode_control_note"))
         st.caption(t("device_mode_note"))
-        inject_device_layout_overrides(selected_device_mode)
+        inject_device_layout_overrides(get_effective_device_mode())
 
         current_news_mode = st.session_state.get("dashboard_news_mode", "Original source")
         selected_news_mode = st.selectbox(
@@ -8316,6 +8478,7 @@ def generate_dashboard():
         save_dashboard_preferences(
             {
                 "lang": selected_lang,
+                "devicectl": selected_device_control,
                 "device": selected_device_mode,
                 "news": selected_news_mode,
                 "scope": selected_market_scope,
