@@ -30,6 +30,15 @@ PLANNER_TIMEFRAME_OPTIONS = ["2w", "1m", "3m", "6m", "9m", "1y"]
 PLANNER_TIMEFRAME_MONTHS = {"2w": 0.5, "1m": 1.0, "3m": 3.0, "6m": 6.0, "9m": 9.0, "1y": 12.0}
 PLANNER_UPSIDE_MULTIPLIERS = {"2w": 0.42, "1m": 0.55, "3m": 0.72, "6m": 1.0, "9m": 1.18, "1y": 1.32}
 PLANNER_STOP_MULTIPLIERS = {"2w": 0.62, "1m": 0.74, "3m": 0.84, "6m": 1.0, "9m": 1.10, "1y": 1.18}
+
+PLANNER_ENTRY_FILL_PROBABILITIES = {
+    "2w": (1.00, 0.32, 0.10),
+    "1m": (1.00, 0.44, 0.18),
+    "3m": (1.00, 0.58, 0.32),
+    "6m": (1.00, 0.72, 0.48),
+    "9m": (1.00, 0.82, 0.62),
+    "1y": (1.00, 0.90, 0.74),
+}
 PLANNER_TARGET_PROGRESS = {"2w": 0.28, "1m": 0.40, "3m": 0.62, "6m": 0.82, "9m": 0.92, "1y": 1.00}
 PLANNER_CONSERVATIVE_CAPS = {"2w": 10.0, "1m": 12.0, "3m": 16.0, "6m": 20.0, "9m": 23.0, "1y": 26.0}
 PLANNER_BASE_CAPS = {"2w": 18.0, "1m": 22.0, "3m": 26.0, "6m": 32.0, "9m": 36.0, "1y": 40.0}
@@ -3465,6 +3474,33 @@ def inject_css():
             color: #ffc0c0;
         }
 
+
+.planner-slider-locked-note {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(244,197,106,0.16);
+    background: linear-gradient(135deg, rgba(244,197,106,0.10) 0%, rgba(255,255,255,0.03) 100%);
+    color: rgba(238,242,255,.84);
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.planner-slider-locked-note strong {
+    color: #f4c56a;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.planner-slider-locked-note-soft {
+    border-color: rgba(69,184,255,0.16);
+    background: linear-gradient(135deg, rgba(69,184,255,0.10) 0%, rgba(255,255,255,0.03) 100%);
+}
+
         .scenario-ratio-shell {
             background: linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.02) 100%);
             border: 1px solid rgba(255,255,255,.08);
@@ -4242,6 +4278,288 @@ def inject_css():
             box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 8px 18px rgba(0,0,0,.14);
         }
 
+
+        
+        /* Micro-typography tuning for planner / decision-board labels */
+        .section-header,
+        .top-kicker,
+        .hero-kicker,
+        .guide-label,
+        .reference-label,
+        .lens-label,
+        .compare-hero-label,
+        .compare-card-kicker,
+        .catalyst-label,
+        .alert-label,
+        .lab-label,
+        .winner-mini-label,
+        .explorer-nav-kicker,
+        .explorer-nav-panel-label,
+        .side-eyebrow,
+        .side-group-label {
+            font-size: 12px !important;
+            letter-spacing: .12em !important;
+        }
+
+        .planner-decision-label {
+            font-size: 13px !important;
+            letter-spacing: .10em !important;
+        }
+
+        .planner-decision-chip,
+        .planner-decision-action-pill {
+            font-size: 12px !important;
+        }
+
+        .scenario-ratio-title {
+            font-size: 13px !important;
+            letter-spacing: .10em !important;
+        }
+
+        .scenario-ratio-copy {
+            font-size: 13px !important;
+        }
+
+        .scenario-ratio-bar-label {
+            font-size: 12px !important;
+            letter-spacing: .06em !important;
+        }
+
+        .scenario-ratio-segment {
+            font-size: 11px !important;
+        }
+
+        .scenario-ratio-pct {
+            font-size: 14px !important;
+        }
+
+        .scenario-summary-label {
+            font-size: 14px !important;
+        }
+
+        @media (max-width: 768px) {
+            .planner-decision-label,
+            .scenario-ratio-title,
+            .scenario-ratio-bar-label,
+            .scenario-summary-label {
+                font-size: 12px !important;
+            }
+
+            .planner-decision-chip,
+            .planner-decision-action-pill,
+            .scenario-ratio-segment {
+                font-size: 11px !important;
+            }
+        }
+
+        
+        /* Typography hierarchy pass: premium gold micro-heads + clearer subtitle system */
+        :root {
+            --type-gold-main: rgba(244, 197, 106, 0.92);
+            --type-gold-soft: rgba(244, 197, 106, 0.78);
+            --type-subtle-warm: rgba(230, 220, 198, 0.78);
+            --type-subtle-cool: rgba(238, 242, 255, 0.82);
+            --type-subtle-muted: rgba(238, 242, 255, 0.68);
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            letter-spacing: -0.034em;
+        }
+
+        .top-intro,
+        .hero-copy,
+        .guide-copy,
+        .reference-copy,
+        .lens-copy,
+        .compare-copy,
+        .winner-copy,
+        .catalyst-copy,
+        .alert-copy,
+        .lab-copy,
+        .trend-sub,
+        .chart-copy,
+        .explorer-nav-copy,
+        .news-board-copy,
+        .global-indicator-copy,
+        .target-watch-copy,
+        .scenario-intro-copy,
+        .planner-decision-copy {
+            font-size: 14.25px !important;
+            line-height: 1.7 !important;
+            color: var(--type-subtle-cool) !important;
+        }
+
+        .guide-sub,
+        .reference-sub,
+        .lens-sub,
+        .winner-mini-sub,
+        .catalyst-sub,
+        .alert-sub,
+        .lab-sub,
+        .explorer-nav-panel-copy,
+        .compare-card-meta,
+        .scenario-ratio-copy,
+        .scenario-ladder-sub,
+        .target-watch-meta,
+        .target-watch-sub {
+            font-size: 13.25px !important;
+            line-height: 1.62 !important;
+            color: var(--type-subtle-warm) !important;
+        }
+
+        .section-header,
+        .top-kicker,
+        .hero-kicker,
+        .guide-label,
+        .reference-label,
+        .lens-label,
+        .compare-hero-label,
+        .compare-card-kicker,
+        .catalyst-label,
+        .alert-label,
+        .lab-label,
+        .winner-mini-label,
+        .explorer-nav-kicker,
+        .explorer-nav-panel-label,
+        .side-eyebrow,
+        .side-group-label,
+        .planner-decision-label,
+        .scenario-ratio-title,
+        .scenario-single-label,
+        .target-watch-label,
+        .target-watch-board-label,
+        .global-indicator-label {
+            font-size: 13px !important;
+            font-weight: 900 !important;
+            letter-spacing: .12em !important;
+            text-transform: uppercase;
+            color: var(--type-gold-main) !important;
+        }
+
+        .planner-decision-copy,
+        .scenario-ratio-copy {
+            color: var(--type-subtle-cool) !important;
+        }
+
+        .planner-decision-kpi {
+            font-size: 31px !important;
+        }
+
+        .planner-decision-chip,
+        .planner-decision-action-pill,
+        .scenario-ratio-bar-label,
+        .scenario-ratio-segment,
+        .scenario-summary-chip,
+        .target-watch-chip,
+        .global-indicator-pill {
+            font-size: 12px !important;
+            letter-spacing: .055em !important;
+        }
+
+        .scenario-ratio-value,
+        .target-watch-headline-title,
+        .target-watch-stat-value {
+            letter-spacing: -0.028em !important;
+        }
+
+        .brief-headline,
+        .highlight-title,
+        .story-row-title,
+        .lead-title,
+        .target-watch-title,
+        .global-indicator-title {
+            letter-spacing: -0.032em !important;
+        }
+
+        .brief-summary,
+        .highlight-copy,
+        .story-row-summary,
+        .lead-summary,
+        .target-watch-copy,
+        .soft-note,
+        .news-board-copy {
+            color: var(--type-subtle-cool) !important;
+        }
+
+        .scenario-ratio-segment {
+            min-height: 18px;
+        }
+
+        @media (max-width: 980px) {
+            .section-header,
+            .top-kicker,
+            .hero-kicker,
+            .guide-label,
+            .reference-label,
+            .lens-label,
+            .compare-hero-label,
+            .compare-card-kicker,
+            .catalyst-label,
+            .alert-label,
+            .lab-label,
+            .winner-mini-label,
+            .explorer-nav-kicker,
+            .explorer-nav-panel-label,
+            .side-eyebrow,
+            .side-group-label,
+            .planner-decision-label,
+            .scenario-ratio-title,
+            .scenario-single-label,
+            .target-watch-label,
+            .target-watch-board-label,
+            .global-indicator-label {
+                font-size: 12.25px !important;
+            }
+
+            .top-intro,
+            .hero-copy,
+            .guide-copy,
+            .reference-copy,
+            .lens-copy,
+            .compare-copy,
+            .winner-copy,
+            .catalyst-copy,
+            .alert-copy,
+            .lab-copy,
+            .trend-sub,
+            .chart-copy,
+            .explorer-nav-copy,
+            .news-board-copy,
+            .global-indicator-copy,
+            .target-watch-copy,
+            .scenario-intro-copy,
+            .planner-decision-copy {
+                font-size: 13.5px !important;
+            }
+
+            .guide-sub,
+            .reference-sub,
+            .lens-sub,
+            .winner-mini-sub,
+            .catalyst-sub,
+            .alert-sub,
+            .lab-sub,
+            .explorer-nav-panel-copy,
+            .compare-card-meta,
+            .scenario-ratio-copy,
+            .scenario-ladder-sub,
+            .target-watch-meta,
+            .target-watch-sub {
+                font-size: 12.75px !important;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .planner-decision-chip,
+            .planner-decision-action-pill,
+            .scenario-ratio-bar-label,
+            .scenario-ratio-segment,
+            .scenario-summary-chip,
+            .target-watch-chip,
+            .global-indicator-pill {
+                font-size: 11px !important;
+            }
+        }
 
         </style>
         """,
@@ -7222,6 +7540,49 @@ def normalize_planner_ratio_weights(stage_one: int, stage_two: int, default: tup
     return weights
 
 
+
+
+def planner_ratio_mode_label(value: str) -> str:
+    labels = {
+        "linked": "單一聯動" if get_language() == "zh_TW" else "Linked control",
+        "detailed": "細部調整" if get_language() == "zh_TW" else "Detailed sliders",
+    }
+    return labels.get(value, value)
+
+
+def planner_ratio_bias_label(value: int) -> str:
+    lang_zh = get_language() == "zh_TW"
+    if value <= 20:
+        return "前段集中" if lang_zh else "Front-loaded"
+    if value <= 40:
+        return "略偏前段" if lang_zh else "Slightly front-loaded"
+    if value < 60:
+        return "平衡" if lang_zh else "Balanced"
+    if value < 80:
+        return "略偏後段" if lang_zh else "Slightly back-loaded"
+    return "後段集中" if lang_zh else "Back-loaded"
+
+
+def build_linked_ratio_weights(default: tuple[int, int, int], bias: int) -> list[int]:
+    default_weights = list(default)
+    base_first, base_second, _ = default_weights
+    front_loaded = normalize_planner_ratio_weights(min(75, base_first + 25), max(10, base_second - 10), default)
+    back_loaded = normalize_planner_ratio_weights(max(10, base_first - 15), max(10, base_second - 15), default)
+
+    bias = max(0, min(100, int(bias)))
+    if bias <= 50:
+        mix = bias / 50.0
+        stage_one = round(front_loaded[0] * (1 - mix) + base_first * mix)
+        stage_two = round(front_loaded[1] * (1 - mix) + base_second * mix)
+    else:
+        mix = (bias - 50) / 50.0
+        stage_one = round(base_first * (1 - mix) + back_loaded[0] * mix)
+        stage_two = round(base_second * (1 - mix) + back_loaded[1] * mix)
+
+    return normalize_planner_ratio_weights(stage_one, stage_two, default)
+
+
+
 def render_planner_ratio_slider(
     title: str,
     copy: str,
@@ -7232,57 +7593,110 @@ def render_planner_ratio_slider(
     default_weights = list(default)
     stage_one_key = f"{key_prefix}_stage1"
     stage_two_key = f"{key_prefix}_stage2"
+    mode_key = f"{key_prefix}_mode"
+    bias_key = f"{key_prefix}_bias"
 
     if stage_one_key not in st.session_state:
         st.session_state[stage_one_key] = int(default_weights[0])
     if stage_two_key not in st.session_state:
         st.session_state[stage_two_key] = int(default_weights[1])
+    if mode_key not in st.session_state:
+        st.session_state[mode_key] = "linked"
+    if bias_key not in st.session_state:
+        st.session_state[bias_key] = 50
 
-    stage_one = st.slider(
-        f"{title} · {'第 1 段' if get_language() == 'zh_TW' else 'Stage 1'}",
-        min_value=5,
-        max_value=90,
-        value=int(st.session_state[stage_one_key]),
-        key=stage_one_key,
+    lang_zh = get_language() == "zh_TW"
+    mode = st.radio(
+        f"{title} · {'控制模式' if lang_zh else 'Control mode'}",
+        options=["linked", "detailed"],
+        format_func=planner_ratio_mode_label,
+        horizontal=True,
+        key=mode_key,
+        label_visibility="collapsed",
     )
-    stage_two_max = max(5, 95 - int(stage_one))
-    if int(st.session_state[stage_two_key]) > stage_two_max:
-        st.session_state[stage_two_key] = min(int(default_weights[1]), stage_two_max)
-    stage_two = st.slider(
-        f"{title} · {'第 2 段' if get_language() == 'zh_TW' else 'Stage 2'}",
-        min_value=5,
-        max_value=stage_two_max,
-        value=int(st.session_state[stage_two_key]),
-        key=stage_two_key,
-    )
-    weights = normalize_planner_ratio_weights(stage_one, stage_two, default)
-    stage_labels = ['第 1 段', '第 2 段', '第 3 段'] if get_language() == 'zh_TW' else ['Stage 1', 'Stage 2', 'Stage 3']
+
+    if mode == "linked":
+        bias = st.slider(
+            f"{title} · {'配置偏向' if lang_zh else 'Bias'}",
+            min_value=0,
+            max_value=100,
+            value=int(st.session_state[bias_key]),
+            key=bias_key,
+            help="越偏左代表越集中前段，越偏右代表越集中後段。" if lang_zh else "Left loads earlier stages more aggressively. Right shifts more weight toward later stages.",
+        )
+        weights = build_linked_ratio_weights(default, bias)
+        st.session_state[stage_one_key] = int(weights[0])
+        st.session_state[stage_two_key] = int(weights[1])
+        render_html_block(
+            f"""
+            <div class="planner-slider-locked-note planner-slider-locked-note-soft">
+                <span>{escape('單一聯動控制' if lang_zh else 'Single linked control')}</span>
+                <strong>{escape(planner_ratio_bias_label(bias))}</strong>
+                <span>{escape('系統會自動保持三段合計 100%，並避免邊界錯誤。' if lang_zh else 'The ladder stays at 100% automatically and avoids edge-case slider locks.')}</span>
+            </div>
+            """
+        )
+    else:
+        stage_one = st.slider(
+            f"{title} · {'第 1 段' if lang_zh else 'Stage 1'}",
+            min_value=5,
+            max_value=90,
+            value=int(st.session_state[stage_one_key]),
+            key=stage_one_key,
+        )
+        stage_two_max = max(5, 95 - int(stage_one))
+        if int(st.session_state[stage_two_key]) > stage_two_max:
+            st.session_state[stage_two_key] = min(int(default_weights[1]), stage_two_max)
+        stage_two_label = f"{title} · {'第 2 段' if lang_zh else 'Stage 2'}"
+        if stage_two_max <= 5:
+            stage_two = 5
+            st.session_state[stage_two_key] = 5
+            render_html_block(
+                f"""
+                <div class="planner-slider-locked-note">
+                    <span>{escape(stage_two_label)}</span>
+                    <strong>5%</strong>
+                    <span>{escape("已固定，因為第 3 段至少保留 5%" if lang_zh else "Locked because Stage 3 must keep at least 5%.")}</span>
+                </div>
+                """
+            )
+        else:
+            stage_two = st.slider(
+                stage_two_label,
+                min_value=5,
+                max_value=stage_two_max,
+                value=min(int(st.session_state[stage_two_key]), stage_two_max),
+                key=stage_two_key,
+            )
+        weights = normalize_planner_ratio_weights(stage_one, stage_two, default)
+
+    stage_labels = ['第 1 段', '第 2 段', '第 3 段'] if lang_zh else ['Stage 1', 'Stage 2', 'Stage 3']
     bar_class = f"scenario-ratio-fill {fill_class}".strip()
-    bars = "".join(
-        f'''
+    bars = "".join([
+        f"""
         <div class="scenario-ratio-bar">
             <div class="scenario-ratio-bar-label">{escape(stage_labels[idx])}</div>
             <div class="scenario-ratio-track"><div class="{bar_class}" style="width:{int(weight)}%;"></div></div>
-            <div class="scenario-ratio-pct">{int(weight)}%</div>
+            <div class="scenario-ratio-bar-value">{int(weight)}%</div>
         </div>
-        '''
+        """
         for idx, weight in enumerate(weights)
-    )
-    distribution_segments = "".join(
-        f'<div class="scenario-ratio-segment scenario-ratio-segment-{idx + 1}" style="width:{max(int(weight), 5)}%;">{escape(stage_labels[idx])} {int(weight)}%</div>'
+    ])
+    distribution_segments = "".join([
+        f'<div class="scenario-ratio-segment scenario-ratio-segment-{idx + 1}" style="width:{int(weight)}%;">{escape(stage_labels[idx])} {int(weight)}%</div>'
         for idx, weight in enumerate(weights)
-    )
-    legend = "".join(
-        f'''
-        <div class="scenario-ratio-legend-chip">
+    ])
+    legend = "".join([
+        f"""
+        <div class="scenario-ratio-legend-item">
             <span class="scenario-ratio-legend-dot scenario-ratio-legend-dot-{idx + 1}"></span>
             <span>{escape(stage_labels[idx])} · {int(weight)}%</span>
         </div>
-        '''
+        """
         for idx, weight in enumerate(weights)
-    )
+    ])
     render_html_block(
-        f'''
+        f"""
         <div class="scenario-ratio-shell">
             <div class="scenario-ratio-title">{escape(title)}</div>
             <div class="scenario-ratio-copy">{escape(copy)}</div>
@@ -7291,7 +7705,7 @@ def render_planner_ratio_slider(
             <div class="scenario-ratio-legend">{legend}</div>
             <div class="scenario-ratio-bars">{bars}</div>
         </div>
-        '''
+        """
     )
     return weights
 
@@ -7612,6 +8026,122 @@ def build_take_profit_ladder(plan: dict, take_profit_weights: list[int] | None =
     return ladder
 
 
+
+
+def planner_entry_fill_probabilities(timeframe: str, stage_count: int = 3) -> list[float]:
+    timeframe_key = normalize_planner_timeframe(timeframe)
+    default_profile = list(PLANNER_ENTRY_FILL_PROBABILITIES.get(timeframe_key, (1.0, 0.72, 0.48)))
+    if stage_count <= 0:
+        return []
+    profile = default_profile[:stage_count]
+    while len(profile) < stage_count:
+        profile.append(profile[-1] if profile else 1.0)
+    return [float(np.clip(value, 0.05, 1.0)) for value in profile]
+
+
+def compute_entry_execution_profile(
+    plan: dict,
+    allocation: float,
+    timeframe: str = "6m",
+    stop_profile: str = "balanced",
+    entry_weights: list[int] | None = None,
+) -> dict:
+    current_price = coerce_float(plan.get("current_price"))
+    entry_ladder = build_entry_ladder(plan, entry_weights=entry_weights)
+    if pd.isna(current_price) or current_price <= 0 or allocation <= 0 or not entry_ladder:
+        return {
+            "ladder": entry_ladder,
+            "fill_probabilities": [],
+            "stages": [],
+            "deployed_capital": 0.0,
+            "deployed_ratio": 0.0,
+            "units": 0.0,
+            "average_entry_price": current_price,
+            "stop_price": np.nan,
+            "stop_loss_amount": 0.0,
+        }
+
+    fill_probabilities = planner_entry_fill_probabilities(timeframe, len(entry_ladder))
+    stop_key = {"tight": "stop_tight", "balanced": "stop_balanced", "wide": "stop_wide"}.get(stop_profile, "stop_balanced")
+    stop_pct = abs(coerce_float(plan.get(stop_key)))
+    stop_price = current_price * (1.0 - (0.0 if pd.isna(stop_pct) else float(stop_pct) / 100.0))
+
+    stages = []
+    deployed_capital = 0.0
+    total_units = 0.0
+    stop_loss_amount = 0.0
+
+    for stage, fill_prob in zip(entry_ladder, fill_probabilities):
+        stage_weight = max(coerce_float(stage.get("weight_pct")), 0.0) / 100.0
+        stage_price = coerce_float(stage.get("price"))
+        if pd.isna(stage_price) or stage_price <= 0:
+            stage_price = current_price
+
+        committed_capital = float(allocation) * stage_weight
+        expected_deployed = committed_capital * float(fill_prob)
+        stage_units = expected_deployed / stage_price if stage_price > 0 else 0.0
+        stage_stop_loss = max(stage_price - stop_price, 0.0) * stage_units if pd.notna(stop_price) else 0.0
+
+        deployed_capital += expected_deployed
+        total_units += stage_units
+        stop_loss_amount += stage_stop_loss
+        stages.append(
+            {
+                "label": stage.get("label"),
+                "weight_pct": float(stage.get("weight_pct", 0.0) or 0.0),
+                "fill_probability": float(fill_prob),
+                "committed_capital": float(committed_capital),
+                "deployed_capital": float(expected_deployed),
+                "price": float(stage_price),
+                "units": float(stage_units),
+                "stop_loss_amount": float(stage_stop_loss),
+            }
+        )
+
+    average_entry_price = (deployed_capital / total_units) if total_units > 0 else current_price
+    deployed_ratio = (deployed_capital / float(allocation)) if float(allocation) > 0 else 0.0
+
+    return {
+        "ladder": entry_ladder,
+        "fill_probabilities": fill_probabilities,
+        "stages": stages,
+        "deployed_capital": float(deployed_capital),
+        "deployed_ratio": float(deployed_ratio),
+        "units": float(total_units),
+        "average_entry_price": float(average_entry_price) if pd.notna(average_entry_price) else current_price,
+        "stop_price": float(stop_price) if pd.notna(stop_price) else np.nan,
+        "stop_loss_amount": float(stop_loss_amount),
+    }
+
+
+def compute_take_profit_profile(plan: dict, take_profit_weights: list[int] | None = None) -> dict:
+    weights = take_profit_weights or [30, 40, 30]
+    conservative_up = coerce_float(plan.get("conservative_up"))
+    base_up = coerce_float(plan.get("base_up"))
+    stretch_up = coerce_float(plan.get("stretch_up"))
+
+    targets = [
+        0.0 if pd.isna(conservative_up) else float(conservative_up),
+        0.0 if pd.isna(base_up) else float(base_up),
+        0.0 if pd.isna(stretch_up) else float(stretch_up),
+    ]
+    normalized_weights = [max(float(weight), 0.0) for weight in weights[:3]]
+    while len(normalized_weights) < 3:
+        normalized_weights.append(0.0)
+    total_weight = sum(normalized_weights) or 100.0
+    normalized_weights = [weight / total_weight for weight in normalized_weights]
+
+    weighted_up = sum(weight * target for weight, target in zip(normalized_weights, targets))
+    conservative_weighted_up = sum(weight * target for weight, target in zip(normalized_weights, [targets[0], targets[0], targets[1]]))
+    stretch_weighted_up = sum(weight * target for weight, target in zip(normalized_weights, [targets[1], targets[2], targets[2]]))
+
+    return {
+        "weighted_up": float(weighted_up),
+        "conservative_weighted_up": float(conservative_weighted_up),
+        "stretch_weighted_up": float(stretch_weighted_up),
+    }
+
+
 def format_entry_ladder_inline(ladder: list[dict], symbol: str) -> str:
     if not ladder:
         return "N/A"
@@ -7875,6 +8405,7 @@ def build_position_scenario_rows(
     if not valid_bundles or total_capital <= 0:
         return pd.DataFrame(), {}
 
+    timeframe = normalize_planner_timeframe(timeframe)
     scenario_map = {bundle["ticker"]: estimate_position_scenario(bundle, timeframe=timeframe) for bundle in valid_bundles}
     if allocation_method == "score_weighted":
         weights = []
@@ -7890,12 +8421,7 @@ def build_position_scenario_rows(
     conservative_profit_total = 0.0
     stretch_profit_total = 0.0
     stop_loss_total = 0.0
-
-    stop_key = {
-        "tight": "stop_tight",
-        "balanced": "stop_balanced",
-        "wide": "stop_wide",
-    }.get(stop_profile, "stop_balanced")
+    deployed_capital_total = 0.0
 
     for bundle, weight in zip(valid_bundles, weights):
         ticker = bundle["ticker"]
@@ -7903,20 +8429,37 @@ def build_position_scenario_rows(
         current_price = coerce_float(plan["current_price"])
         if pd.isna(current_price) or current_price <= 0:
             continue
-        allocation = float(total_capital) * float(weight / weight_sum)
-        est_units = allocation / current_price if current_price else np.nan
 
-        conservative_profit = allocation * plan["conservative_up"] / 100.0
-        base_profit = allocation * plan["base_up"] / 100.0
-        stretch_profit = allocation * plan["stretch_up"] / 100.0
-        stop_loss = allocation * plan[stop_key] / 100.0
+        allocation = float(total_capital) * float(weight / weight_sum)
+        entry_execution = compute_entry_execution_profile(
+            plan,
+            allocation=allocation,
+            timeframe=timeframe,
+            stop_profile=stop_profile,
+            entry_weights=entry_weights,
+        )
+        take_profit_profile = compute_take_profit_profile(plan, take_profit_weights=take_profit_weights)
+        weighted_exit_price = current_price * (1.0 + float(take_profit_profile["weighted_up"]) / 100.0)
+        conservative_exit_price = current_price * (1.0 + float(take_profit_profile["conservative_weighted_up"]) / 100.0)
+        stretch_exit_price = current_price * (1.0 + float(take_profit_profile["stretch_weighted_up"]) / 100.0)
+
+        avg_entry_price = coerce_float(entry_execution.get("average_entry_price"))
+        total_units = float(entry_execution.get("units", 0.0) or 0.0)
+        deployed_capital = float(entry_execution.get("deployed_capital", 0.0) or 0.0)
+        deployed_ratio = float(entry_execution.get("deployed_ratio", 0.0) or 0.0)
+
+        conservative_profit = max(conservative_exit_price - avg_entry_price, 0.0) * total_units if total_units > 0 else 0.0
+        base_profit = max(weighted_exit_price - avg_entry_price, 0.0) * total_units if total_units > 0 else 0.0
+        stretch_profit = max(stretch_exit_price - avg_entry_price, 0.0) * total_units if total_units > 0 else 0.0
+        stop_loss = float(entry_execution.get("stop_loss_amount", 0.0) or 0.0)
 
         conservative_profit_total += conservative_profit
         base_profit_total += base_profit
         stretch_profit_total += stretch_profit
         stop_loss_total += stop_loss
+        deployed_capital_total += deployed_capital
 
-        entry_ladder = build_entry_ladder(plan, entry_weights=entry_weights)
+        entry_ladder = entry_execution.get("ladder", []) or build_entry_ladder(plan, entry_weights=entry_weights)
         take_profit_ladder = build_take_profit_ladder(plan, take_profit_weights=take_profit_weights)
         acceptable_loss_amount_row = allocation * float(acceptable_loss_pct) / 100.0
         rows.append(
@@ -7926,8 +8469,11 @@ def build_position_scenario_rows(
                 "signal": tr_signal(plan["signal"]),
                 "allocation_pct": float(weight / weight_sum * 100.0),
                 "allocation_amount": allocation,
+                "deployed_amount": deployed_capital,
+                "deployment_pct": deployed_ratio * 100.0,
                 "price": current_price,
-                "units": est_units,
+                "avg_entry_price": avg_entry_price,
+                "units": total_units,
                 "upside_range": f"+{plan['conservative_up']:.1f}% / +{plan['base_up']:.1f}% / +{plan['stretch_up']:.1f}%",
                 "stop_range": f"-{plan['stop_tight']:.1f}% / -{plan['stop_balanced']:.1f}% / -{plan['stop_wide']:.1f}%",
                 "entry_plan": format_entry_ladder_inline(entry_ladder, planner_currency_symbol(planner_market_currency(ticker))),
@@ -7951,6 +8497,8 @@ def build_position_scenario_rows(
     suggested_position_pct = (recommended_capital / float(total_capital) * 100.0) if float(total_capital) > 0 else 0.0
     summary = {
         "capital": float(total_capital),
+        "deployed_capital_total": float(deployed_capital_total),
+        "deployment_pct_total": (float(deployed_capital_total) / float(total_capital) * 100.0) if float(total_capital) > 0 else 0.0,
         "base_profit_total": base_profit_total,
         "conservative_profit_total": conservative_profit_total,
         "stretch_profit_total": stretch_profit_total,
@@ -8218,11 +8766,18 @@ def render_position_scenario_planner(bundles: list[dict]):
             else f"Suggested cap {symbol}{summary['recommended_capital']:,.0f}"
         )
 
+        deployed_badge_text = (
+            f"預估部署 {symbol}{summary['deployed_capital_total']:,.0f} · {summary['deployment_pct_total']:.0f}%"
+            if lang_zh
+            else f"Expected deployed {symbol}{summary['deployed_capital_total']:,.0f} · {summary['deployment_pct_total']:.0f}%"
+        )
+
         summary_html = f"""
         <div class="scenario-summary-grid">
             <div class="scenario-summary-card">
                 <div class="scenario-summary-label">{"投入本金" if lang_zh else "Capital"}</div>
                 <div class="scenario-summary-value scenario-summary-value-gold">{escape(f"{symbol}{summary['capital']:,.2f}")}</div>
+                <div class="scenario-summary-badge">{escape(deployed_badge_text)}</div>
             </div>
             <div class="scenario-summary-card">
                 <div class="scenario-summary-label">{"基準情境獲利" if lang_zh else "Base-case upside"}</div>
@@ -8253,7 +8808,10 @@ def render_position_scenario_planner(bundles: list[dict]):
         display_df = scenario_df.copy()
         display_df["allocation_pct"] = display_df["allocation_pct"].map(lambda x: f"{x:.1f}%")
         display_df["allocation_amount"] = display_df["allocation_amount"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["deployed_amount"] = display_df["deployed_amount"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["deployment_pct"] = display_df["deployment_pct"].map(lambda x: f"{x:.1f}%")
         display_df["price"] = display_df["price"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["avg_entry_price"] = display_df["avg_entry_price"].map(lambda x: f"{symbol}{x:,.2f}")
         display_df["units"] = display_df["units"].map(lambda x: f"{x:,.3f}")
         display_df["max_loss_budget"] = display_df["max_loss_budget"].map(lambda x: f"{symbol}{x:,.2f}")
         display_df["base_profit"] = display_df["base_profit"].map(lambda x: f"{symbol}{x:,.2f}")
@@ -8266,7 +8824,10 @@ def render_position_scenario_planner(bundles: list[dict]):
                     "signal": "訊號",
                     "allocation_pct": "配置比重",
                     "allocation_amount": "配置金額",
+                    "deployed_amount": "預估部署",
+                    "deployment_pct": "部署率",
                     "price": "現價",
+                    "avg_entry_price": "預估均價",
                     "units": "估計股數",
                     "upside_range": "漲幅區間",
                     "stop_range": "止損區間",
@@ -8277,7 +8838,7 @@ def render_position_scenario_planner(bundles: list[dict]):
                     "stop_loss": "止損情境損失",
                     "reference_note": "推估依據",
                 }
-            )[["股票", "訊號", "配置比重", "配置金額", "現價", "估計股數", "漲幅區間", "止損區間", "分批進場", "分批停利", "單檔風險預算", "基準情境獲利", "止損情境損失", "推估依據"]]
+            )[["股票", "訊號", "配置比重", "配置金額", "預估部署", "部署率", "現價", "預估均價", "估計股數", "漲幅區間", "止損區間", "分批進場", "分批停利", "單檔風險預算", "基準情境獲利", "止損情境損失", "推估依據"]]
         else:
             display_df = display_df.rename(
                 columns={
@@ -8285,7 +8846,10 @@ def render_position_scenario_planner(bundles: list[dict]):
                     "signal": "Signal",
                     "allocation_pct": "Weight",
                     "allocation_amount": "Capital",
+                    "deployed_amount": "Expected deployed",
+                    "deployment_pct": "Deploy %",
                     "price": "Price",
+                    "avg_entry_price": "Avg entry",
                     "units": "Est. units",
                     "upside_range": "Upside band",
                     "stop_range": "Stop band",
@@ -8296,7 +8860,7 @@ def render_position_scenario_planner(bundles: list[dict]):
                     "stop_loss": "Stop-loss P/L",
                     "reference_note": "Reference",
                 }
-            )[["Ticker", "Signal", "Weight", "Capital", "Price", "Est. units", "Upside band", "Stop band", "Entry ladder", "Take-profit ladder", "Risk budget", "Base-case P/L", "Stop-loss P/L", "Reference"]]
+            )[["Ticker", "Signal", "Weight", "Capital", "Expected deployed", "Deploy %", "Price", "Avg entry", "Est. units", "Upside band", "Stop band", "Entry ladder", "Take-profit ladder", "Risk budget", "Base-case P/L", "Stop-loss P/L", "Reference"]]
 
         render_scenario_planner_table(display_df)
 
