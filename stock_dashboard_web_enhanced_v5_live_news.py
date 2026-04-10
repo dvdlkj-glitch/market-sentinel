@@ -208,6 +208,7 @@ LANGUAGE_OPTIONS = {
 DEVICE_MODE_OPTIONS = {
     "Desktop": "Desktop",
     "iPad": "iPad",
+    "Smartphone Fold": "Smartphone Fold",
     "Smartphone": "Smartphone",
 }
 
@@ -547,17 +548,19 @@ TRANSLATIONS["繁體中文"].update({
 
 TRANSLATIONS["English"].update({
     "device_mode": "Viewing device",
-    "device_mode_note": "Choose a layout profile for desktop, iPad, or smartphone so spacing, width, and content density feel more comfortable on that screen.",
+    "device_mode_note": "Choose a layout profile for desktop, iPad, smartphone fold, or smartphone so spacing, width, and content density feel more comfortable on that screen.",
     "device_desktop": "Desktop",
     "device_ipad": "iPad",
+    "device_smartphone_fold": "Smartphone Fold",
     "device_smartphone": "Smartphone",
 })
 
 TRANSLATIONS["繁體中文"].update({
     "device_mode": "觀看裝置",
-    "device_mode_note": "選擇 Desktop、iPad 或 Smart Phone 版型，Dashboard 會依裝置調整寬度、間距與內容密度，讓閱讀更舒適。",
+    "device_mode_note": "選擇 Desktop、iPad、Smart Phone Fold 或 Smart Phone 版型，Dashboard 會依裝置調整寬度、間距與內容密度，讓閱讀更舒適。",
     "device_desktop": "Desktop",
     "device_ipad": "iPad",
+    "device_smartphone_fold": "Smart Phone Fold",
     "device_smartphone": "Smart Phone",
 })
 TERM_TRANSLATIONS = {
@@ -931,6 +934,7 @@ def device_mode_label(value: str) -> str:
     labels = {
         "Desktop": t("device_desktop"),
         "iPad": t("device_ipad"),
+        "Smartphone Fold": t("device_smartphone_fold"),
         "Smartphone": t("device_smartphone"),
     }
     return labels.get(value, value)
@@ -7758,6 +7762,57 @@ def inject_device_layout_overrides(device_mode: str) -> None:
         }
         .global-indicator-shell {
             top: 0.55rem !important;
+        }
+        </style>
+        """
+    elif device_mode == "Smartphone Fold":
+        css = """
+        <style>
+        .block-container {
+            max-width: 720px !important;
+            padding-top: 0.65rem !important;
+            padding-left: 0.7rem !important;
+            padding-right: 0.7rem !important;
+            padding-bottom: 1.2rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] {
+            gap: 0.75rem !important;
+            flex-wrap: wrap !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            min-width: calc(50% - 0.4rem) !important;
+            flex: 1 1 calc(50% - 0.4rem) !important;
+        }
+        .winner-hero, .story-row-grid, .explorer-nav-head, .compare-topline, .news-first-grid, .lead-story-board, .highlight-row {
+            grid-template-columns: 1fr !important;
+        }
+        .guide-grid, .reference-grid, .compare-hero-grid, .catalyst-grid, .winner-grid, .lab-grid, .alert-grid, .lens-grid,
+        .compare-card-grid, .crypto-grid, .winner-rail-grid, .compare-mosaic-grid, .target-watch-headline-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+        .compare-table-head {
+            display: none !important;
+        }
+        .compare-table-row {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+            padding: 14px !important;
+        }
+        .compare-table-cell {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 4px !important;
+            border-bottom: 1px solid rgba(255,255,255,.07);
+            padding-bottom: 6px !important;
+        }
+        .chip, .hero-chip, .small-pill, .impact-tag, .pro-tag, .lens-alert-chip, .explorer-nav-chip {
+            justify-content: center;
+        }
+        .scenario-table-shell, .target-watch-headline-shell {
+            overflow-x: auto;
+        }
+        .global-indicator-shell {
+            top: 0.4rem !important;
         }
         </style>
         """
