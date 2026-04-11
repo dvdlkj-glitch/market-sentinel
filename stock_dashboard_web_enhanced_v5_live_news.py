@@ -956,6 +956,180 @@ def get_language() -> str:
 
 
 
+def is_compact_device_mode() -> bool:
+    return get_effective_device_mode() in {
+        "iPad",
+        "Smartphone Fold Portrait",
+        "Smartphone Fold Landscape",
+        "Smartphone",
+    }
+
+
+def planner_status_text(section: str, item_count: int | None = None) -> str:
+    lang_zh = get_language() == "zh_TW"
+    compact = is_compact_device_mode()
+    count = max(int(item_count or 0), 0)
+
+    if section == "scenario":
+        return "多股規劃" if lang_zh and count > 1 else "單股規劃" if lang_zh else "Multi-stock" if count > 1 else "Single-stock"
+    if section == "comparison":
+        return "多檔比較" if lang_zh else "Multi-ticker"
+    if section == "target":
+        return "目標價追蹤" if lang_zh else "Target tracking"
+    if section == "brief":
+        return "決策摘要" if lang_zh else "Decision brief"
+    if section == "alert":
+        return "鏡頭警示" if lang_zh else "Lens alerts"
+    if section == "trend":
+        return "K 線結構" if lang_zh else "Candlestick structure"
+    return "緊湊模式" if lang_zh and compact else "桌面模式" if lang_zh else "Compact mode" if compact else "Desktop mode"
+
+
+def planner_status_badge(section: str, item_count: int | None = None) -> str:
+    return f"● {planner_status_text(section, item_count)}"
+
+
+def planner_expander_badges(section: str, item_count: int | None = None) -> str:
+    lang_zh = get_language() == "zh_TW"
+    count = max(int(item_count or 0), 0)
+    mode = get_effective_device_mode()
+    mode_label_map = {
+        "Desktop": "Desktop",
+        "iPad": "iPad",
+        "Smartphone Fold Portrait": "Fold Portrait",
+        "Smartphone Fold Landscape": "Fold Landscape",
+        "Smartphone": "Smartphone",
+    }
+    mode_label = mode_label_map.get(mode, mode)
+    if lang_zh:
+        mode_label = {
+            "Desktop": "桌面",
+            "iPad": "iPad",
+            "Fold Portrait": "折疊直向",
+            "Fold Landscape": "折疊橫向",
+            "Smartphone": "手機",
+        }.get(mode_label, mode_label)
+
+    count_label = ""
+    if section in {"comparison", "scenario", "target", "brief"} and count > 0:
+        count_label = f"{count} 檔" if lang_zh else f"{count} tickers"
+
+    section_cls = {
+        "scenario": "is-scenario",
+        "comparison": "is-comparison",
+        "target": "is-target",
+        "brief": "is-brief",
+        "alert": "is-alert",
+        "trend": "is-trend",
+    }.get(section, "")
+
+    pill_html = [
+        f'<span class="planner-expander-pill {section_cls}">{escape(planner_status_text(section, item_count))}</span>',
+        f'<span class="planner-expander-pill is-device">{escape(mode_label)}</span>',
+    ]
+    if count_label:
+        pill_html.append(f'<span class="planner-expander-pill is-device">{escape(count_label)}</span>')
+    return '<div class="planner-expander-badge-row">' + "".join(pill_html) + '</div>'
+
+
+def planner_auto_expand(section: str, item_count: int | None = None) -> bool:
+    mode = get_effective_device_mode()
+    count = max(int(item_count or 0), 0)
+    single = count <= 1
+    small_multi = 2 <= count <= 3
+    large_multi = count >= 4
+
+    if section == "scenario":
+        if mode == "Desktop":
+            return True
+        if mode == "iPad":
+            return not large_multi
+        if "Fold" in mode:
+            return single or small_multi
+        return single
+
+    if section == "target":
+        if mode == "Desktop":
+            return count <= 3
+        if mode == "iPad":
+            return count <= 2
+        if "Fold" in mode:
+            return single
+        return single
+
+    if section == "brief":
+        if mode == "Desktop":
+            return count <= 3
+        if mode == "iPad":
+            return count <= 2
+        if "Fold" in mode:
+            return single
+        return single
+
+    if section == "comparison":
+        if count < 2:
+            return False
+        if mode == "Desktop":
+            return count <= 5
+        if mode == "iPad":
+            return count <= 3
+        if "Fold" in mode:
+            return count <= 2
+        return False
+
+    if section == "alert":
+        if mode == "Desktop":
+            return single
+        if mode == "iPad":
+            return False
+        return False
+
+    if section == "trend":
+        if mode == "Desktop":
+            return single
+        if mode == "iPad":
+            return single
+        return False
+
+    return True
+
+
+def planner_expander_label(base_label: str, section: str, item_count: int | None = None) -> str:
+    return f"{base_label} · {planner_status_badge(section, item_count)}"
+
+
+def planner_expander_helper(base_text: str, section: str, item_count: int | None = None) -> str:
+    lang_zh = get_language() == "zh_TW"
+    mode = get_effective_device_mode()
+    count = max(int(item_count or 0), 0)
+
+    mode_text_map = {
+        "Desktop": "桌面優先展開" if lang_zh else "desktop-first default",
+        "iPad": "iPad 平衡展開" if lang_zh else "iPad-balanced default",
+        "Smartphone Fold Portrait": "折疊直向偏重點展開" if lang_zh else "fold-portrait priority",
+        "Smartphone Fold Landscape": "折疊橫向平衡展開" if lang_zh else "fold-landscape balance",
+        "Smartphone": "手機優先收合" if lang_zh else "smartphone-first collapsed",
+    }
+    mode_text = mode_text_map.get(mode, mode)
+
+    if section == "comparison":
+        scope_text = f"目前比較 {count} 檔，適合做跨股票強弱排序。" if lang_zh else f"Currently comparing {count} tickers for cross-ticker ranking."
+    elif section == "scenario":
+        scope_text = f"目前納入 {count} 檔，適合規劃資金、進場、停利與風險。" if lang_zh else f"Currently planning across {count} tickers for capital, entry, exit, and risk."
+    elif section == "target":
+        scope_text = f"目前追蹤 {count} 檔的目標價區間與修正脈動。" if lang_zh else f"Tracking target bands and revision tone across {count} tickers."
+    elif section == "brief":
+        scope_text = f"目前整理 {count} 檔的決策重點與執行摘要。" if lang_zh else f"Summarizing the decision points and execution brief for {count} tickers."
+    elif section == "alert":
+        scope_text = "聚焦鏡頭多空狀態與當前警示。" if lang_zh else "Focuses on lens-state risk and current alerts."
+    elif section == "trend":
+        scope_text = "聚焦 K 線結構、支撐壓力與交易節奏。" if lang_zh else "Focuses on candlestick structure, support/resistance, and trade rhythm."
+    else:
+        scope_text = "依目前版型自動調整預設展開狀態。" if lang_zh else "Default expanded state adapts to the current layout mode."
+
+    return f"{base_text} · {scope_text} · {mode_text}"
+
+
 def normalize_device_mode(value: str | None) -> str:
     if not value:
         return "Desktop"
@@ -4621,7 +4795,133 @@ def inject_css():
             }
         }
 
-        </style>
+        
+                .planner-expander-wrap,
+        .section-expander-wrap {
+            margin: 10px 0 18px 0;
+        }
+
+        .planner-stack-spacer {
+            height: 18px;
+        }
+
+        .candlestick-section-spacer {
+            height: 18px;
+        }
+
+        .streamlit-expanderHeader,
+        details[data-testid="stExpander"] summary {
+            background:
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 34%),
+                linear-gradient(180deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(244, 197, 106, 0.14);
+            border-radius: 18px;
+            color: #f8f1e5 !important;
+            font-weight: 900 !important;
+            letter-spacing: .03em;
+            padding: 13px 16px !important;
+            box-shadow: 0 14px 30px rgba(0,0,0,.18);
+        }
+
+        details[data-testid="stExpander"] summary:hover {
+            border-color: rgba(244, 197, 106, 0.24);
+            box-shadow: 0 16px 34px rgba(0,0,0,.22);
+        }
+
+        details[data-testid="stExpander"] {
+            border: none !important;
+            background: transparent !important;
+        }
+
+        details[data-testid="stExpander"] > div[role="group"] {
+            padding-top: 10px;
+        }
+
+        .planner-expander-helper {
+            font-size: 13px;
+            line-height: 1.62;
+            color: rgba(245, 234, 216, 0.76);
+            margin: 6px 2px 8px 2px;
+        }
+
+        .planner-expander-badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0 2px 12px 2px;
+        }
+
+        .planner-expander-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 7px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            border: 1px solid rgba(255,255,255,.10);
+            background: rgba(255,255,255,.05);
+            color: #f8f1e5;
+        }
+
+        .planner-expander-pill.is-scenario {
+            background: rgba(244,197,106,.12);
+            border-color: rgba(244,197,106,.26);
+            color: #ffd78f;
+        }
+
+        .planner-expander-pill.is-comparison {
+            background: rgba(84,214,255,.12);
+            border-color: rgba(84,214,255,.22);
+            color: #b2eeff;
+        }
+
+        .planner-expander-pill.is-target {
+            background: rgba(122,149,255,.13);
+            border-color: rgba(122,149,255,.24);
+            color: #d7e0ff;
+        }
+
+        .planner-expander-pill.is-brief {
+            background: rgba(131,224,167,.12);
+            border-color: rgba(131,224,167,.24);
+            color: #d6ffe3;
+        }
+
+        .planner-expander-pill.is-alert {
+            background: rgba(255,112,112,.12);
+            border-color: rgba(255,112,112,.22);
+            color: #ffd1d1;
+        }
+
+        .planner-expander-pill.is-trend {
+            background: rgba(255,154,98,.12);
+            border-color: rgba(255,154,98,.22);
+            color: #ffd9c2;
+        }
+
+        .planner-expander-pill.is-device {
+            background: rgba(255,255,255,.06);
+            border-color: rgba(255,255,255,.12);
+            color: rgba(248,241,229,.82);
+        }
+
+        .group-ticker-kicker {
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            color: #f3d79f;
+            margin: 2px 0 10px 2px;
+        }
+
+        .group-stack-divider {
+            height: 10px;
+        }
+
+</style>
         """,
         unsafe_allow_html=True,
     )
@@ -7023,53 +7323,75 @@ def render_news_stream(ticker: str, news_items: list[dict]):
     for idx, item in enumerate(news_items, start=1):
         render_story_row(item, ticker, idx)
 
-def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None):
+def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None, selected_count: int = 1):
     lens_display = tr_lens_meta(lens_meta or {"title": "Position View", "how_to_read": "Use this view to confirm structure."})
-    st.markdown(
-        f"""
-        <div class="trend-shell">
-            <div class="trend-header">
-                <div>
-                    <div class="section-header" style="margin:0;">{t("trend_lab")}</div>
-                    <div class="trend-title">{t("candlestick_confirmation")}</div>
-                    <div class="trend-sub">{t("trend_lab_copy")}</div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    trend_base_label = (
+        "展開／收合 Trend Lab 與 K 線確認"
+        if get_language() == "zh_TW"
+        else "Expand / collapse Trend Lab & candlestick confirmation"
+    )
+    trend_helper_base = (
+        "檢視日線／盤中 K 線、技術指標與目前的交易結構。"
+        if get_language() == "zh_TW"
+        else "Review daily and intraday candlesticks, technical indicators, and the current trade structure."
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(t("last_daily_close"), format_price(analysis["last_price"]))
-    c2.metric("SMA 50 vs 200", f"{format_price(analysis['sma50'])} / {format_price(analysis['sma200'])}")
-    c3.metric("RSI 14", "N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}")
-    c4.metric(t("intraday_move"), format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
-
-    render_trading_lab_panel(analysis)
-
-    render_candlestick_chart(
-        daily_ohlc.tail(252) if daily_ohlc is not None else pd.DataFrame(),
-        t("candlestick_confirmation"),
-        f"{lens_display.get('title', tr_lens_name((lens_meta or {}).get('title', 'Trend Lens')))}: {lens_display.get('how_to_read', (lens_meta or {}).get('how_to_read', 'Use this view to confirm structure.'))}" if lens_meta else "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
-        height=440,
-        show_ma=True,
-    )
-
-    if intraday.get("available") and intraday_ohlc is not None and not intraday_ohlc.empty:
-        render_candlestick_chart(
-            intraday_ohlc.tail(78),
-            "Live intraday candlestick tape (5m)" if get_lang() == "English" else "即時盤中 K 線 (5 分)",
-            "Latest intraday price action in the same dark premium theme." if get_lang() == "English" else "以相同高級深色主題呈現最新盤中價格結構。",
-            height=300,
-            show_ma=False,
+    render_html_block('<div class="section-expander-wrap trend-expander-wrap">')
+    with st.expander(
+        planner_expander_label(trend_base_label, "trend", selected_count),
+        expanded=planner_auto_expand("trend", selected_count),
+    ):
+        render_html_block(planner_expander_badges("trend", selected_count))
+        st.markdown(
+            f'<div class="planner-expander-helper">{escape(planner_expander_helper(trend_helper_base, "trend", selected_count))}</div>',
+            unsafe_allow_html=True,
         )
 
-    st.markdown(
-        f'<div class="footer-note">{t("research_view_only")}</div>',
-        unsafe_allow_html=True,
-    )
+        st.markdown(
+            f"""
+            <div class="trend-shell">
+                <div class="trend-header">
+                    <div>
+                        <div class="section-header" style="margin:0;">{t("trend_lab")}</div>
+                        <div class="trend-title">{t("candlestick_confirmation")}</div>
+                        <div class="trend-sub">{t("trend_lab_copy")}</div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(t("last_daily_close"), format_price(analysis["last_price"]))
+        c2.metric("SMA 50 vs 200", f"{format_price(analysis['sma50'])} / {format_price(analysis['sma200'])}")
+        c3.metric("RSI 14", "N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}")
+        c4.metric(t("intraday_move"), format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
+
+        render_trading_lab_panel(analysis)
+
+        render_candlestick_chart(
+            daily_ohlc.tail(252) if daily_ohlc is not None else pd.DataFrame(),
+            t("candlestick_confirmation"),
+            f"{lens_display.get('title', tr_lens_name((lens_meta or {}).get('title', 'Trend Lens')))}: {lens_display.get('how_to_read', (lens_meta or {}).get('how_to_read', 'Use this view to confirm structure.'))}" if lens_meta else "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
+            height=440,
+            show_ma=True,
+        )
+
+        if intraday.get("available") and intraday_ohlc is not None and not intraday_ohlc.empty:
+            render_candlestick_chart(
+                intraday_ohlc.tail(78),
+                "Live intraday candlestick tape (5m)" if get_lang() == "English" else "即時盤中 K 線 (5 分)",
+                "Latest intraday price action in the same dark premium theme." if get_lang() == "English" else "以相同高級深色主題呈現最新盤中價格結構。",
+                height=300,
+                show_ma=False,
+            )
+
+        st.markdown(
+            f'<div class="footer-note">{t("research_view_only")}</div>',
+            unsafe_allow_html=True,
+        )
+    render_html_block('</div>')
 
 def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
     price_series, field_name = get_price_series(daily_data, ticker)
@@ -9038,186 +9360,136 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     if not bundles:
         return
 
-    render_position_scenario_planner(bundles)
-
     if len(bundles) < 2:
         return
 
-    render_winner_card(bundles, lens_meta=lens_meta)
-    render_opportunity_radar(bundles, lens_meta=lens_meta)
-
-    strongest = max(bundles, key=lambda bundle: compute_lens_winner_fields(bundle, lens_meta)["lens_score"])
-    best_return = max(
-        bundles,
-        key=lambda bundle: bundle["analysis"]["one_year_return"] if pd.notna(bundle["analysis"]["one_year_return"]) else -10**9,
+    comparison_base_label = (
+        "展開／收合 Comparison Arena"
+        if get_language() == "zh_TW"
+        else "Expand / collapse Comparison Arena"
     )
-    most_bullish_news = max(bundles, key=lambda bundle: bundle["analysis"]["news_pulse"]["score"])
-
-    st.markdown(
-        f"""
-        <div class="compare-shell">
-            <div class="compare-topline">
-                <div>
-                    <div class="section-header" style="margin:0; color:#eef4ff;">{t("comparison_arena")}</div>
-                    <div class="compare-title">{t("comparison_title")}</div>
-                    <div class="compare-copy">{t("comparison_copy")}</div>
-                </div>
-            </div>
-            <div class="compare-hero-grid">
-                <div class="compare-hero-tile">
-                    <div class="compare-hero-label">{t("strongest_pro_setup")}</div>
-                    <div class="compare-hero-value">{escape(display_ticker_label(strongest['ticker']))}</div>
-                    <div class="compare-hero-sub">{t("lens_score")} {compute_lens_winner_fields(strongest, lens_meta)['lens_score']:+d} · {escape(tr_signal(strongest['analysis']['signal']))} · {escape(tr_confidence(strongest['analysis']['confidence']))}</div>
-                </div>
-                <div class="compare-hero-tile">
-                    <div class="compare-hero-label">{t("best_1y_price_strength")}</div>
-                    <div class="compare-hero-value">{escape(display_ticker_label(best_return['ticker']))}</div>
-                    <div class="compare-hero-sub">{format_percent(best_return['analysis']['one_year_return'])}</div>
-                </div>
-                <div class="compare-hero-tile">
-                    <div class="compare-hero-label">{t("best_current_news_tailwind")}</div>
-                    <div class="compare-hero-value">{escape(display_ticker_label(most_bullish_news['ticker']))}</div>
-                    <div class="compare-hero-sub">{escape(tr_news_label(most_bullish_news['analysis']['news_pulse']['label']))}</div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    comparison_helper_base = (
+        "檢視多檔股票的贏家卡、機會雷達與比較總覽。"
+        if get_language() == "zh_TW"
+        else "Review the winner card, opportunity radar, and cross-ticker comparison overview."
     )
 
-    render_comparison_overview_cards(bundles, lens_meta=lens_meta)
-
-    row_html_parts: list[str] = []
-
-    st.markdown(
-        """
-        <div class="compare-chart-shell">
-            <div class="compare-chart-title">Candlestick comparison</div>
-            <div class="compare-chart-copy">The line race is replaced with candle structure so each selected stock keeps the same premium chart language as the rest of the dashboard.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    candle_bundles = bundles
-    if len(bundles) > 4:
-        candle_focus_key = "comparison_candle_focus_tickers"
-        candle_options = [normalize_dashboard_ticker(bundle["ticker"]) for bundle in bundles]
-        default_focus = sync_comparison_candle_focus(candle_options, candle_focus_key, max_items=4)
-
-        selected_candle_tickers = st.multiselect(
-            "K 線比較焦點" if get_language() == "zh_TW" else "Candlestick comparison focus",
-            options=candle_options,
-            default=default_focus,
-            format_func=display_ticker_label,
-            max_selections=4,
-            help="最多選擇 4 檔做 K 線比較。" if get_language() == "zh_TW" else "Choose up to 4 names for candle comparison.",
-            key=candle_focus_key,
-            placeholder="請選擇最多 4 檔" if get_language() == "zh_TW" else "Select up to 4 names",
+    render_html_block('<div class="section-expander-wrap comparison-expander-wrap">')
+    with st.expander(
+        planner_expander_label(comparison_base_label, "comparison", len(bundles)),
+        expanded=planner_auto_expand("comparison", len(bundles)),
+    ):
+        render_html_block(planner_expander_badges("comparison", len(bundles)))
+        st.markdown(
+            f'<div class="planner-expander-helper">{escape(planner_expander_helper(comparison_helper_base, "comparison", len(bundles)))}</div>',
+            unsafe_allow_html=True,
         )
+        render_winner_card(bundles, lens_meta=lens_meta)
+        render_opportunity_radar(bundles, lens_meta=lens_meta)
 
-        selected_candle_tickers = [
-            normalize_dashboard_ticker(ticker)
-            for ticker in selected_candle_tickers
-            if normalize_dashboard_ticker(ticker) in candle_options
-        ]
-
-        if not selected_candle_tickers:
-            selected_candle_tickers = default_focus
-
-        candle_bundles = [bundle for bundle in bundles if normalize_dashboard_ticker(bundle["ticker"]) in selected_candle_tickers]
-
-        focus_preview_html = "".join(
-            f'<span class="comparison-focus-chip">{escape(display_ticker_label(ticker))}</span>'
-            for ticker in selected_candle_tickers
+        strongest = max(bundles, key=lambda bundle: compute_lens_winner_fields(bundle, lens_meta)["lens_score"])
+        best_return = max(
+            bundles,
+            key=lambda bundle: bundle["analysis"]["one_year_return"] if pd.notna(bundle["analysis"]["one_year_return"]) else -10**9,
         )
-        focus_note = (
-            f"目前已選 {len(selected_candle_tickers)} / 4 檔。下方只顯示這些股票的 K 線比較。"
-            if get_language() == "zh_TW"
-            else f"{len(selected_candle_tickers)} / 4 names selected. Only these charts appear below."
-        )
-        render_html_block(
-            f'<div class="comparison-focus-preview">{focus_preview_html}</div>'
-            f'<div class="comparison-focus-note">{escape(focus_note)}</div>'
-        )
+        most_bullish_news = max(bundles, key=lambda bundle: bundle["analysis"]["news_pulse"]["score"])
 
-    render_html_block('<div class="mini-candle-grid">')
-    for bundle in candle_bundles:
         st.markdown(
             f"""
-            <div class="mini-candle-card">
-                <div class="mini-candle-name">{escape(display_ticker_label(bundle['ticker']))}</div>
-                <div class="mini-candle-sub">{escape(bundle['analysis']['signal'])} · {escape(bundle['analysis']['trend'])}</div>
+            <div class="compare-shell">
+                <div class="compare-topline">
+                    <div>
+                        <div class="section-header" style="margin:0; color:#eef4ff;">{t("comparison_arena")}</div>
+                        <div class="compare-title">{t("comparison_title")}</div>
+                        <div class="compare-copy">{t("comparison_copy")}</div>
+                    </div>
+                </div>
+                <div class="compare-hero-grid">
+                    <div class="compare-hero-tile">
+                        <div class="compare-hero-label">{t("strongest_pro_setup")}</div>
+                        <div class="compare-hero-value">{escape(display_ticker_label(strongest['ticker']))}</div>
+                        <div class="compare-hero-sub">{t("lens_score")} {compute_lens_winner_fields(strongest, lens_meta)['lens_score']:+d} · {escape(tr_signal(strongest['analysis']['signal']))} · {escape(tr_confidence(strongest['analysis']['confidence']))}</div>
+                    </div>
+                    <div class="compare-hero-tile">
+                        <div class="compare-hero-label">{t("best_1y_price_strength")}</div>
+                        <div class="compare-hero-value">{escape(display_ticker_label(best_return['ticker']))}</div>
+                        <div class="compare-hero-sub">{format_percent(best_return['analysis']['one_year_return'])}</div>
+                    </div>
+                    <div class="compare-hero-tile">
+                        <div class="compare-hero-label">{t("best_current_news_tailwind")}</div>
+                        <div class="compare-hero-value">{escape(display_ticker_label(most_bullish_news['ticker']))}</div>
+                        <div class="compare-hero-sub">{escape(tr_news_label(most_bullish_news['analysis']['news_pulse']['label']))}</div>
+                    </div>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        render_candlestick_chart(
-            bundle.get("daily_ohlc", pd.DataFrame()).tail(60),
-            t("recent_structure", ticker=display_ticker_label(bundle["ticker"])),
-            "Recent daily candles in the shared dashboard theme.",
-            height=220,
-            show_ma=False,
-        )
+
+        render_comparison_overview_cards(bundles, lens_meta=lens_meta)
+
+        row_html_parts: list[str] = []
+
+        for bundle in bundles:
+            analysis = bundle["analysis"]
+            intraday = bundle["intraday"]
+            signal = analysis["signal"]
+            signal_class_name = signal_css_class(signal)
+            row_html_parts.append(textwrap.dedent(f"""<div class="compare-table-row">
+        <div class="compare-table-cell">
+            <div class="compare-table-ticker">{escape(display_ticker_label(bundle['ticker']))}</div>
+            <div class="compare-table-sub">{escape(tr_term(analysis["trend"]))}</div>
+        </div>
+        <div class="compare-table-cell">
+            <div class="compare-table-sub">{t("last_price")}</div>
+            <div class="compare-table-value">{format_price(analysis['last_price'])}</div>
+        </div>
+        <div class="compare-table-cell">
+            <div class="compare-table-sub">{t("trend_1y")}</div>
+            <div class="compare-table-value">{format_percent(analysis['one_year_return'])}</div>
+        </div>
+        <div class="compare-table-cell">
+            <div class="compare-table-sub">{t("signal")}</div>
+            <div><span class="compare-table-chip {signal_class_name}">{escape(tr_signal(signal))}</span></div>
+            <div class="compare-table-note">{escape(tr_confidence(analysis["confidence"]))}</div>
+        </div>
+        <div class="compare-table-cell">
+            <div class="compare-table-sub">{t("lens_score")}</div>
+            <div class="compare-table-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
+            <div class="compare-table-note">RSI {"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
+        </div>
+        <div class="compare-table-cell">
+            <div class="compare-table-sub">{t("intraday")}</div>
+            <div class="compare-table-value">{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</div>
+            <div class="compare-table-note">{escape(analysis['rsi_status'])}</div>
+        </div>
+        <div class="compare-table-cell">
+            <div class="compare-table-sub">{t("news_backing")}</div>
+            <div class="compare-table-value">{escape(tr_news_label(analysis['news_pulse']['label']))}</div>
+            <div class="compare-table-note">{analysis['news_pulse']['score']:+.1f}</div>
+        </div>
+        </div>""").strip())
+
+        table_html = f"""
+        <div class="compare-table-shell">
+            <div class="compare-table-head">
+                <div>{t("ticker")}</div>
+                <div>{t("last_price")}</div>
+                <div>{t("trend_1y")}</div>
+                <div>{t("signal")}</div>
+                <div>{t("lens_score")}</div>
+                <div>{t("intraday")}</div>
+                <div>{t("news_backing")}</div>
+            </div>
+            <div class="compare-table-body">
+                {''.join(row_html_parts)}
+            </div>
+        </div>
+        """
+        render_html_block(table_html)
+
     render_html_block('</div>')
 
-    for bundle in bundles:
-        analysis = bundle["analysis"]
-        intraday = bundle["intraday"]
-        signal = analysis["signal"]
-        signal_class_name = signal_css_class(signal)
-        row_html_parts.append(textwrap.dedent(f"""<div class="compare-table-row">
-    <div class="compare-table-cell">
-        <div class="compare-table-ticker">{escape(display_ticker_label(bundle['ticker']))}</div>
-        <div class="compare-table-sub">{escape(tr_term(analysis["trend"]))}</div>
-    </div>
-    <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("last_price")}</div>
-        <div class="compare-table-value">{format_price(analysis['last_price'])}</div>
-    </div>
-    <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("trend_1y")}</div>
-        <div class="compare-table-value">{format_percent(analysis['one_year_return'])}</div>
-    </div>
-    <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("signal")}</div>
-        <div><span class="compare-table-chip {signal_class_name}">{escape(tr_signal(signal))}</span></div>
-        <div class="compare-table-note">{escape(tr_confidence(analysis["confidence"]))}</div>
-    </div>
-    <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("lens_score")}</div>
-        <div class="compare-table-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
-        <div class="compare-table-note">RSI {"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
-    </div>
-    <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("intraday")}</div>
-        <div class="compare-table-value">{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</div>
-        <div class="compare-table-note">{escape(analysis['rsi_status'])}</div>
-    </div>
-    <div class="compare-table-cell">
-        <div class="compare-table-sub">{t("news_backing")}</div>
-        <div class="compare-table-value">{escape(tr_news_label(analysis['news_pulse']['label']))}</div>
-        <div class="compare-table-note">{analysis['news_pulse']['score']:+.1f}</div>
-    </div>
-</div>""").strip())
-
-    table_html = f"""
-    <div class="compare-table-shell">
-        <div class="compare-table-head">
-            <div>{t("ticker")}</div>
-            <div>{t("last_price")}</div>
-            <div>{t("trend_1y")}</div>
-            <div>{t("signal")}</div>
-            <div>{t("lens_score")}</div>
-            <div>{t("intraday")}</div>
-            <div>{t("news_backing")}</div>
-        </div>
-        <div class="compare-table-body">
-            {''.join(row_html_parts)}
-        </div>
-    </div>
-    """
-    render_html_block(table_html)
 def render_target_watch_section(ticker: str, context: dict):
     if not context:
         return
@@ -9301,7 +9573,110 @@ def render_target_watch_section(ticker: str, context: dict):
     render_html_block(shell_html)
 
 
-def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
+
+
+def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
+    if not tickers:
+        return
+
+    bundles = [collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta) for ticker in tickers]
+    bundles = [bundle for bundle in bundles if bundle is not None]
+    if not bundles:
+        return
+
+    planner_base_label = (
+        "展開／收合情境規劃組" if get_language() == "zh_TW" else "Expand / collapse scenario planning stack"
+    )
+    planner_helper_base = (
+        "這一組包含 Scenario Model、Entry ladder ratio、Advanced decision board、Portfolio Execution framework，以及 Entry / Exit / Risk Summary。"
+        if get_language() == "zh_TW"
+        else "This stack includes Scenario Model, Entry ladder ratio, Advanced decision board, Portfolio Execution framework, and Entry / Exit / Risk Summary."
+    )
+
+    render_html_block('<div class="planner-expander-wrap">')
+    with st.expander(
+        planner_expander_label(planner_base_label, "scenario", len(bundles)),
+        expanded=planner_auto_expand("scenario", len(bundles)),
+    ):
+        render_html_block(planner_expander_badges("scenario", len(bundles)))
+        st.markdown(
+            f'<div class="planner-expander-helper">{escape(planner_expander_helper(planner_helper_base, "scenario", len(bundles)))}</div>',
+            unsafe_allow_html=True,
+        )
+        render_position_scenario_planner(bundles)
+    render_html_block('</div>')
+    render_html_block('<div class="planner-stack-spacer"></div>')
+
+
+def render_precomparison_target_and_brief_groups(
+    daily_data: pd.DataFrame,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+):
+    if not tickers:
+        return
+
+    bundles = [collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta) for ticker in tickers]
+    bundles = [bundle for bundle in bundles if bundle is not None]
+    if not bundles:
+        return
+
+    target_base_label = "展開／收合 Target Tracking" if get_language() == "zh_TW" else "Expand / collapse Target Tracking"
+    target_helper_base = (
+        "先看各檔股票的目標價區間、落差與目標價相關新聞。"
+        if get_language() == "zh_TW"
+        else "Review target bands, current gaps, and target-related headlines before comparison."
+    )
+    render_html_block('<div class="section-expander-wrap target-watch-expander-wrap">')
+    with st.expander(
+        planner_expander_label(target_base_label, "target", len(bundles)),
+        expanded=planner_auto_expand("target", len(bundles)),
+    ):
+        render_html_block(planner_expander_badges("target", len(bundles)))
+        st.markdown(
+            f'<div class="planner-expander-helper">{escape(planner_expander_helper(target_helper_base, "target", len(bundles)))}</div>',
+            unsafe_allow_html=True,
+        )
+        for idx, bundle in enumerate(bundles, start=1):
+            ticker = bundle["ticker"]
+            context = build_target_watch_context(
+                ticker,
+                bundle["price_series"],
+                bundle["news_items"],
+                timeframe=active_target_watch_timeframe(ticker),
+            )
+            render_html_block(f'<div class="group-ticker-kicker">{escape(display_ticker_label(ticker))}</div>')
+            render_target_watch_section(ticker, context)
+            if idx != len(bundles):
+                render_html_block('<div class="group-stack-divider"></div>')
+    render_html_block('</div>')
+
+    brief_base_label = "展開／收合 Decision Brief" if get_language() == "zh_TW" else "Expand / collapse Decision Brief"
+    brief_helper_base = (
+        "先掌握每檔股票的目前立場、主導催化與下一步執行摘要。"
+        if get_language() == "zh_TW"
+        else "Review the current stance, dominant catalyst, and next-step execution brief for each ticker."
+    )
+    render_html_block('<div class="section-expander-wrap brief-expander-wrap">')
+    with st.expander(
+        planner_expander_label(brief_base_label, "brief", len(bundles)),
+        expanded=planner_auto_expand("brief", len(bundles)),
+    ):
+        render_html_block(planner_expander_badges("brief", len(bundles)))
+        st.markdown(
+            f'<div class="planner-expander-helper">{escape(planner_expander_helper(brief_helper_base, "brief", len(bundles)))}</div>',
+            unsafe_allow_html=True,
+        )
+        for idx, bundle in enumerate(bundles, start=1):
+            render_decision_brief(bundle["ticker"], bundle["analysis"], bundle["intraday"], bundle["news_items"])
+            if idx != len(bundles):
+                render_html_block('<div class="group-stack-divider"></div>')
+    render_html_block('</div>')
+
+
+
+def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None, selected_count: int = 1):
     bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
     if bundle is None:
         st.warning("找不到可用的價格序列。" if get_lang() == "繁體中文" else f"No usable price series found for {display_ticker_label(ticker)}.")
@@ -9317,17 +9692,44 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     intraday_ohlc = bundle.get("intraday_ohlc", pd.DataFrame())
 
     render_news_first_section(ticker, analysis, intraday, news_items)
-    render_decision_brief(ticker, analysis, intraday, news_items)
-    render_target_watch_section(ticker, build_target_watch_context(ticker, bundle["price_series"], news_items, timeframe=active_target_watch_timeframe(ticker)))
 
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
         render_taiwan_benchmark_layer(ticker, benchmark)
 
-    render_alert_layer(analysis, intraday)
+    alert_base_label = (
+        f"展開／收合 {display_ticker_label(ticker)} 警示層"
+        if get_language() == "zh_TW"
+        else f"Expand / collapse {display_ticker_label(ticker)} alert layer"
+    )
+    alert_helper_base = (
+        "檢視不同鏡頭下的多空狀態與目前焦點。"
+        if get_language() == "zh_TW"
+        else "Review bullish, neutral, and bearish lens states plus the current focus."
+    )
+    render_html_block('<div class="section-expander-wrap alert-expander-wrap">')
+    with st.expander(
+        planner_expander_label(alert_base_label, "alert", selected_count),
+        expanded=planner_auto_expand("alert", selected_count),
+    ):
+        render_html_block(planner_expander_badges("alert", selected_count))
+        st.markdown(
+            f'<div class="planner-expander-helper">{escape(planner_expander_helper(alert_helper_base, "alert", selected_count))}</div>',
+            unsafe_allow_html=True,
+        )
+        render_alert_layer(analysis, intraday)
+    render_html_block('</div>')
+
     render_reference_guide(analysis, ticker, news_items)
     render_news_stream(ticker, news_items)
-    render_trend_section(analysis, intraday, lens_meta=lens_meta, daily_ohlc=daily_ohlc, intraday_ohlc=intraday_ohlc)
+    render_trend_section(
+        analysis,
+        intraday,
+        lens_meta=lens_meta,
+        daily_ohlc=daily_ohlc,
+        intraday_ohlc=intraday_ohlc,
+        selected_count=selected_count,
+    )
 
 
 # ---------------------------
@@ -10507,13 +10909,16 @@ def generate_dashboard():
     render_global_market_indicator(global_indicator)
     render_section_guide()
     render_active_trend_lens(lens_meta)
-    render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
 
     render_stock_explorer_nav(tickers)
+    render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+    render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+    render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+
     tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
     for tab, ticker in zip(tabs, tickers):
         with tab:
-            render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta)
+            render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(tickers))
 
     render_html_block(
         f'<div class="footer-note">{t("footer_note")}</div>'
