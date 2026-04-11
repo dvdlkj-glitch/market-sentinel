@@ -3159,6 +3159,66 @@ def inject_css():
             font-weight: 800 !important;
         }
 
+
+        .stNumberInput [data-baseweb="input"] > div {
+            background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.98) 100%) !important;
+            border: 1px solid rgba(214,164,67,0.28) !important;
+            border-radius: 18px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.92), 0 10px 24px rgba(0,0,0,.12) !important;
+        }
+
+        .stNumberInput input {
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+            caret-color: #111827 !important;
+            font-weight: 800 !important;
+        }
+
+        .stNumberInput input::placeholder {
+            color: rgba(17,24,39,.48) !important;
+            -webkit-text-fill-color: rgba(17,24,39,.48) !important;
+            opacity: 1 !important;
+        }
+
+        .stNumberInput button {
+            color: #111827 !important;
+            background: rgba(255,255,255,.90) !important;
+            border-color: rgba(214,164,67,0.24) !important;
+        }
+
+        .stNumberInput button:hover {
+            background: rgba(248,250,252,.98) !important;
+        }
+
+        .stNumberInput [data-baseweb="input"] input:focus,
+        .stNumberInput [data-baseweb="input"] input:active {
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+            caret-color: #111827 !important;
+        }
+
+        .block-container .stTextInput [data-baseweb="input"] > div {
+            background: #ffffff !important;
+            border: 1px solid rgba(214,164,67,0.24) !important;
+            border-radius: 18px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.72), 0 10px 24px rgba(0,0,0,.12);
+        }
+
+        .block-container .stTextInput input,
+        .block-container .stTextInput [data-baseweb="input"] input {
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+            caret-color: #111827 !important;
+            font-weight: 800 !important;
+        }
+
+        .block-container .stTextInput input::placeholder,
+        .block-container .stTextInput [data-baseweb="input"] input::placeholder {
+            color: #6b7280 !important;
+            -webkit-text-fill-color: #6b7280 !important;
+            opacity: 1 !important;
+        }
+
         .stDataFrame, div[data-testid="stDataFrame"] {
             background: rgba(255,255,255,0.90);
             border: 1px solid var(--line);
@@ -7540,6 +7600,64 @@ def normalize_planner_ratio_weights(stage_one: int, stage_two: int, default: tup
     return weights
 
 
+def default_planner_capital(currency: str) -> int:
+    return 100000 if currency == "TWD" else 10000
+
+
+def parse_planner_capital_input(raw_value, default_value: int) -> int:
+    try:
+        if raw_value is None:
+            return int(default_value)
+        text_value = str(raw_value).strip()
+        if not text_value:
+            return int(default_value)
+        cleaned = re.sub(r"[^0-9]", "", text_value)
+        if not cleaned:
+            return int(default_value)
+        return max(0, int(cleaned))
+    except Exception:
+        return int(default_value)
+
+
+
+
+
+
+def format_planner_capital_value(value: int | float | str | None, default_value: int = 0) -> str:
+    amount = parse_planner_capital_input(value, default_value)
+    return f"{amount:,}"
+
+
+def format_planner_display_amount(value: int | float | str | None, symbol: str = "", negative: bool = False) -> str:
+    amount = coerce_float(value)
+    if pd.isna(amount):
+        return "N/A"
+    rounded = int(round(abs(float(amount))))
+    prefix = "-" if negative else ""
+    return f"{prefix}{symbol}{rounded:,}"
+
+
+def set_planner_capital_state(state_key: str, value: int | float | str | None, default_value: int = 0) -> None:
+    st.session_state[f"{state_key}__pending"] = format_planner_capital_value(value, default_value)
+
+
+def apply_planner_capital_state(state_key: str, default_value: int = 0) -> None:
+    pending_key = f"{state_key}__pending"
+    if pending_key in st.session_state:
+        st.session_state[state_key] = st.session_state.pop(pending_key)
+    elif state_key in st.session_state:
+        st.session_state[state_key] = format_planner_capital_value(st.session_state.get(state_key), default_value)
+
+
+def normalize_planner_capital_state(state_key: str, default_value: int = 0) -> None:
+    raw_value = st.session_state.get(state_key)
+    st.session_state[state_key] = format_planner_capital_value(raw_value, default_value)
+
+
+def planner_quick_amount_options(currency: str) -> list[tuple[str, int]]:
+    if currency == "TWD":
+        return [("50K", 50_000), ("100K", 100_000), ("300K", 300_000), ("1M", 1_000_000)]
+    return [("1K", 1_000), ("5K", 5_000), ("10K", 10_000), ("25K", 25_000)]
 
 
 def planner_ratio_mode_label(value: str) -> str:
@@ -8146,8 +8264,8 @@ def format_entry_ladder_inline(ladder: list[dict], symbol: str) -> str:
     if not ladder:
         return "N/A"
     if get_language() == "zh_TW":
-        return " / ".join(f"{row['label']} {row['weight_pct']}%@{symbol}{row['price']:,.2f}" for row in ladder)
-    return " / ".join(f"{row['label']} {row['weight_pct']}%@{symbol}{row['price']:,.2f}" for row in ladder)
+        return " / ".join(f"{row['label']} {row['weight_pct']}%@{format_planner_display_amount(row['price'], symbol)}" for row in ladder)
+    return " / ".join(f"{row['label']} {row['weight_pct']}%@{format_planner_display_amount(row['price'], symbol)}" for row in ladder)
 
 
 def format_take_profit_inline(ladder: list[dict], symbol: str) -> str:
@@ -8162,9 +8280,9 @@ def render_planner_ladder_card(title: str, kicker: str, rows: list[dict], symbol
     row_html_parts = []
     for row in rows:
         main = (
-            f"{row['weight_pct']}% · {symbol}{row['price']:,.2f} · +{row['target_pct']:.1f}%"
+            f"{row['weight_pct']}% · {format_planner_display_amount(row['price'], symbol)} · +{row['target_pct']:.1f}%"
             if is_take_profit
-            else f"{row['weight_pct']}% · {symbol}{row['price']:,.2f}"
+            else f"{row['weight_pct']}% · {format_planner_display_amount(row['price'], symbol)}"
         )
         row_html_parts.append(
             textwrap.dedent(
@@ -8214,9 +8332,9 @@ def render_single_stock_operating_panel(bundle: dict, plan: dict, symbol: str, s
     entry_title = "分批進場規劃" if lang_zh else "Staged entry plan"
     kicker = "單檔操作節奏" if lang_zh else "Single-name execution"
     risk_text = (
-        f"最大可承受虧損 {symbol}{acceptable_loss_amount:,.2f}（{acceptable_loss_pct:.1f}%）。目前止損情境約 {symbol}{stop_loss_total:,.2f}，{'落在容忍範圍內' if stop_loss_total <= acceptable_loss_amount else '高於目前容忍範圍，建議縮小部位或等更佳進場價'}。"
+        f"最大可承受虧損 {format_planner_display_amount(acceptable_loss_amount, symbol)}（{acceptable_loss_pct:.1f}%）。目前止損情境約 {format_planner_display_amount(stop_loss_total, symbol)}，{'落在容忍範圍內' if stop_loss_total <= acceptable_loss_amount else '高於目前容忍範圍，建議縮小部位或等更佳進場價'}。"
         if lang_zh
-        else f"Max acceptable loss is {symbol}{acceptable_loss_amount:,.2f} ({acceptable_loss_pct:.1f}%). Current modeled stop-loss is about {symbol}{stop_loss_total:,.2f}, which {'sits within tolerance' if stop_loss_total <= acceptable_loss_amount else 'runs above tolerance, so consider a smaller size or a better entry price'}."
+        else f"Max acceptable loss is {format_planner_display_amount(acceptable_loss_amount, symbol)} ({acceptable_loss_pct:.1f}%). Current modeled stop-loss is about {format_planner_display_amount(stop_loss_total, symbol)}, which {'sits within tolerance' if stop_loss_total <= acceptable_loss_amount else 'runs above tolerance, so consider a smaller size or a better entry price'}."
     )
     shell_html = f"""
     <div class="scenario-single-shell">
@@ -8249,11 +8367,11 @@ def render_single_stock_operating_panel(bundle: dict, plan: dict, symbol: str, s
                     <div class="scenario-ladder">
                         <div class="scenario-ladder-row">
                             <div><span class="scenario-ladder-tag">{escape('現價' if lang_zh else 'Price')}</span></div>
-                            <div><div class="scenario-ladder-main">{escape(f'{symbol}{current_price:,.2f}')}</div></div>
+                            <div><div class="scenario-ladder-main">{escape(format_planner_display_amount(current_price, symbol))}</div></div>
                         </div>
                         <div class="scenario-ladder-row">
                             <div><span class="scenario-ladder-tag scenario-ladder-tag-up">{escape('TP2' if lang_zh else 'TP2')}</span></div>
-                            <div><div class="scenario-ladder-main">{escape(f'{symbol}{current_price * (1 + coerce_float(plan.get("base_up")) / 100.0):,.2f}')}</div><div class="scenario-ladder-sub">{escape(('基準情境目標' if lang_zh else 'Base-case target'))}</div></div>
+                            <div><div class="scenario-ladder-main">{escape(format_planner_display_amount(current_price * (1 + coerce_float(plan.get("base_up")) / 100.0), symbol))}</div><div class="scenario-ladder-sub">{escape(('基準情境目標' if lang_zh else 'Base-case target'))}</div></div>
                         </div>
                         <div class="scenario-ladder-row">
                             <div><span class="scenario-ladder-tag scenario-ladder-tag-down">{escape('SL' if lang_zh else 'SL')}</span></div>
@@ -8651,15 +8769,30 @@ def render_position_scenario_planner(bundles: list[dict]):
 
         control_cols = st.columns([1.1, 0.92, 0.92, 0.82, 0.78, 0.92, 0.92, 0.82])
         with control_cols[0]:
-            capital = st.number_input(
+            capital_key = f"{key_prefix}_capital_text"
+            capital_default = default_planner_capital(currency)
+            apply_planner_capital_state(capital_key, capital_default)
+            if capital_key not in st.session_state:
+                legacy_capital = st.session_state.get(f"{key_prefix}_capital")
+                st.session_state[capital_key] = format_planner_capital_value(legacy_capital, capital_default)
+            capital_raw = st.text_input(
                 "投入金額" if lang_zh else "Investment amount",
-                min_value=0.0,
-                value=100000.0 if currency == "TWD" else 10000.0,
-                step=1000.0 if currency == "TWD" else 500.0,
-                format="%.2f",
-                key=f"{key_prefix}_capital",
+                key=capital_key,
+                placeholder="例如 100,000" if lang_zh else "e.g. 100,000",
                 help="系統會依你選的配置方式，把金額分配到目前已選股票。" if lang_zh else "The planner allocates this capital across the currently selected names.",
+                on_change=normalize_planner_capital_state,
+                args=(capital_key, capital_default),
             )
+            capital_value = parse_planner_capital_input(capital_raw, capital_default)
+            st.session_state[f"{key_prefix}_capital_value"] = capital_value
+            capital = float(capital_value)
+
+            quick_amount_cols = st.columns(4)
+            for quick_col, (quick_label, quick_value) in zip(quick_amount_cols, planner_quick_amount_options(currency)):
+                with quick_col:
+                    if st.button(quick_label, key=f"{key_prefix}_quick_{quick_value}", use_container_width=True):
+                        set_planner_capital_state(capital_key, quick_value, capital_default)
+                        st.rerun()
         with control_cols[1]:
             allocation_method = st.selectbox(
                 "配置方式" if lang_zh else "Allocation method",
@@ -8752,7 +8885,7 @@ def render_position_scenario_planner(bundles: list[dict]):
             else f"↑ {planner_timeframe_label(summary['timeframe'])} · {summary['row_count']} names"
         )
         stop_badge = f"↑ {planner_stop_profile_label(summary['stop_profile'])}"
-        acceptable_symbol = f"{symbol}{summary['acceptable_loss_amount']:,.2f}"
+        acceptable_symbol = format_planner_display_amount(summary["acceptable_loss_amount"], symbol)
         risk_ok = summary["stop_loss_total"] <= summary["acceptable_loss_amount"]
         risk_badge_text = (
             f"風險預算 {acceptable_symbol}"
@@ -8776,22 +8909,22 @@ def render_position_scenario_planner(bundles: list[dict]):
         <div class="scenario-summary-grid">
             <div class="scenario-summary-card">
                 <div class="scenario-summary-label">{"投入本金" if lang_zh else "Capital"}</div>
-                <div class="scenario-summary-value scenario-summary-value-gold">{escape(f"{symbol}{summary['capital']:,.2f}")}</div>
+                <div class="scenario-summary-value scenario-summary-value-gold">{escape(format_planner_display_amount(summary["capital"], symbol))}</div>
                 <div class="scenario-summary-badge">{escape(deployed_badge_text)}</div>
             </div>
             <div class="scenario-summary-card">
                 <div class="scenario-summary-label">{"基準情境獲利" if lang_zh else "Base-case upside"}</div>
-                <div class="scenario-summary-value">{escape(f"{symbol}{summary['base_profit_total']:,.2f}")}</div>
+                <div class="scenario-summary-value">{escape(format_planner_display_amount(summary["base_profit_total"], symbol))}</div>
                 <div class="scenario-summary-badge">{escape(timeframe_badge)}</div>
             </div>
             <div class="scenario-summary-card">
                 <div class="scenario-summary-label">{"保守情境獲利" if lang_zh else "Conservative upside"}</div>
-                <div class="scenario-summary-value">{escape(f"{symbol}{summary['conservative_profit_total']:,.2f}")}</div>
+                <div class="scenario-summary-value">{escape(format_planner_display_amount(summary["conservative_profit_total"], symbol))}</div>
                 <div class="scenario-summary-badge scenario-summary-badge-warn">{escape(scale_badge_text)}</div>
             </div>
             <div class="scenario-summary-card">
                 <div class="scenario-summary-label">{"止損風險" if lang_zh else "Stop-loss risk"}</div>
-                <div class="scenario-summary-value">{escape(f"-{symbol}{summary['stop_loss_total']:,.2f}")}</div>
+                <div class="scenario-summary-value">{escape(format_planner_display_amount(summary["stop_loss_total"], symbol, negative=True))}</div>
                 <div class="{risk_badge_class}">{escape(risk_badge_text)}</div>
             </div>
         </div>
@@ -8807,15 +8940,15 @@ def render_position_scenario_planner(bundles: list[dict]):
 
         display_df = scenario_df.copy()
         display_df["allocation_pct"] = display_df["allocation_pct"].map(lambda x: f"{x:.1f}%")
-        display_df["allocation_amount"] = display_df["allocation_amount"].map(lambda x: f"{symbol}{x:,.2f}")
-        display_df["deployed_amount"] = display_df["deployed_amount"].map(lambda x: f"{symbol}{x:,.2f}")
+        display_df["allocation_amount"] = display_df["allocation_amount"].map(lambda x: format_planner_display_amount(x, symbol))
+        display_df["deployed_amount"] = display_df["deployed_amount"].map(lambda x: format_planner_display_amount(x, symbol))
         display_df["deployment_pct"] = display_df["deployment_pct"].map(lambda x: f"{x:.1f}%")
-        display_df["price"] = display_df["price"].map(lambda x: f"{symbol}{x:,.2f}")
-        display_df["avg_entry_price"] = display_df["avg_entry_price"].map(lambda x: f"{symbol}{x:,.2f}")
-        display_df["units"] = display_df["units"].map(lambda x: f"{x:,.3f}")
-        display_df["max_loss_budget"] = display_df["max_loss_budget"].map(lambda x: f"{symbol}{x:,.2f}")
-        display_df["base_profit"] = display_df["base_profit"].map(lambda x: f"{symbol}{x:,.2f}")
-        display_df["stop_loss"] = display_df["stop_loss"].map(lambda x: f"-{symbol}{x:,.2f}")
+        display_df["price"] = display_df["price"].map(lambda x: format_planner_display_amount(x, symbol))
+        display_df["avg_entry_price"] = display_df["avg_entry_price"].map(lambda x: format_planner_display_amount(x, symbol))
+        display_df["units"] = display_df["units"].map(lambda x: f"{int(round(x)):,}")
+        display_df["max_loss_budget"] = display_df["max_loss_budget"].map(lambda x: format_planner_display_amount(x, symbol))
+        display_df["base_profit"] = display_df["base_profit"].map(lambda x: format_planner_display_amount(x, symbol))
+        display_df["stop_loss"] = display_df["stop_loss"].map(lambda x: format_planner_display_amount(x, symbol, negative=True))
 
         if lang_zh:
             display_df = display_df.rename(
