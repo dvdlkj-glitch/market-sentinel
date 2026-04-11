@@ -4833,8 +4833,67 @@ def inject_css():
             background: transparent !important;
         }
 
+        details[data-testid="stExpander"] {
+            margin: 10px 0 18px 0;
+            border: none !important;
+            background: transparent !important;
+        }
+
         details[data-testid="stExpander"] > div[role="group"] {
-            padding-top: 10px;
+            padding: 12px 10px 2px 10px;
+            border-radius: 0 0 20px 20px;
+            background: linear-gradient(180deg, rgba(255,255,255,.015) 0%, rgba(255,255,255,.01) 100%);
+        }
+
+        details[data-testid="stExpander"][open] > summary {
+            border-bottom-left-radius: 14px;
+            border-bottom-right-radius: 14px;
+            box-shadow: 0 18px 36px rgba(0,0,0,.22);
+        }
+
+        details[data-testid="stExpander"] summary svg {
+            color: #f4c56a !important;
+        }
+
+        details[data-testid="stExpander"] summary p {
+            font-size: 1.02rem !important;
+            line-height: 1.35 !important;
+        }
+
+        details[data-testid="stExpander"] > div[role="group"] > div[data-testid="stVerticalBlock"] {
+            background: transparent !important;
+        }
+
+        details[data-testid="stExpander"] > div[role="group"] div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        details[data-testid="stExpander"] > div[role="group"] div[data-testid="element-container"] {
+            background: transparent !important;
+        }
+
+        details[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] > p:empty,
+        details[data-testid="stExpander"] div[data-testid="stMarkdownContainer"]:empty,
+        details[data-testid="stExpander"] div[data-testid="stMarkdown"]:empty,
+        details[data-testid="stExpander"] div[data-testid="element-container"]:empty {
+            display: none !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        details[data-testid="stExpander"] div[data-testid="element-container"]:has(> div[data-testid="stMarkdown"]:empty),
+        details[data-testid="stExpander"] div[data-testid="element-container"]:has(> div[data-testid="stMarkdownContainer"]:empty) {
+            display: none !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        details[data-testid="stExpander"] div[data-testid="stMarkdown"] {
+            background: transparent !important;
         }
 
         .planner-expander-helper {
@@ -5601,13 +5660,43 @@ def inject_premium_overrides():
 def render_html_block(html: str):
     if html is None:
         return
+
     cleaned = textwrap.dedent(str(html)).strip()
     if not cleaned:
         return
-    if cleaned == "</div>":
+
+    fragments = [frag.strip() for frag in re.split(r"\n+", cleaned) if frag.strip()]
+    if not fragments:
         return
-    if re.fullmatch(r'<div class="(?:section-expander-wrap [^"]+|planner-expander-wrap)">', cleaned):
+
+    wrapper_only_patterns = [
+        r"</div>",
+        r'<div class="(?:section-expander-wrap[^"]*|planner-expander-wrap)"></div>',
+        r'<div class="(?:section-expander-wrap[^"]*|planner-expander-wrap)">',
+        r'<div class="(?:planner-stack-spacer|candlestick-section-spacer|group-stack-divider)"></div>',
+        r'<div[^>]*></div>',
+    ]
+
+    if len(fragments) == 1 and any(re.fullmatch(pattern, fragments[0]) for pattern in wrapper_only_patterns):
         return
+
+    cleaned = re.sub(
+        r"^(?:\s*</div>\s*)+(?=<div class=\"(?:lead-story-board|target-watch-board|brief-grid|compare-table-body|planner-expander-badge-row)\")",
+        "",
+        cleaned,
+        flags=re.DOTALL,
+    ).strip()
+
+    cleaned = re.sub(
+        r"^(?:\s*<div class=\"(?:section-expander-wrap[^\"]*|planner-expander-wrap)\">\s*)+$",
+        "",
+        cleaned,
+        flags=re.DOTALL,
+    ).strip()
+
+    if not cleaned:
+        return
+
     st.markdown(cleaned, unsafe_allow_html=True)
 
 # ---------------------------
@@ -6684,44 +6773,42 @@ def render_alert_layer(analysis: dict, intraday: dict):
 
     reasons_html = "".join(f"<li>{escape(tr_term(item))}</li>" for item in active_state.get("reasons", [])) or f"<li>{escape(t('no_extra_alert_context'))}</li>"
 
-    st.markdown(
-        f"""
-        <div class="alert-shell">
-            <div class="section-header" style="margin:0; color:#eef4ff;">{t("alert_layer")}</div>
-            <div class="alert-title">{escape(tr_term(alert_map.get('headline', 'Lens states are mixed.')))}</div>
-            <div class="alert-copy">{t("alert_layer_copy")}</div>
-            <div class="alert-grid">
-                <div class="alert-box">
-                    <div class="alert-label">{escape(tr_lens_name("Fast Read"))}</div>
-                    <div class="alert-value">{escape(tr_term(states.get('Fast Read', {}).get('label', 'N/A')))}</div>
-                    <div class="alert-sub">Score {states.get('Fast Read', {}).get('score', 0):+d}</div>
+    render_html_block(
+        html_block(
+            f"""
+            <div class="alert-shell">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{t("alert_layer")}</div>
+                <div class="alert-title">{escape(tr_term(alert_map.get('headline', 'Lens states are mixed.')))}</div>
+                <div class="alert-copy">{t("alert_layer_copy")}</div>
+                <div class="alert-grid">
+                    <div class="alert-box">
+                        <div class="alert-label">{escape(tr_lens_name("Fast Read"))}</div>
+                        <div class="alert-value">{escape(tr_term(states.get('Fast Read', {}).get('label', 'N/A')))}</div>
+                        <div class="alert-sub">Score {states.get('Fast Read', {}).get('score', 0):+d}</div>
+                    </div>
+                    <div class="alert-box">
+                        <div class="alert-label">{escape(tr_lens_name("Swing Map"))}</div>
+                        <div class="alert-value">{escape(tr_term(states.get('Swing Map', {}).get('label', 'N/A')))}</div>
+                        <div class="alert-sub">Score {states.get('Swing Map', {}).get('score', 0):+d}</div>
+                    </div>
+                    <div class="alert-box">
+                        <div class="alert-label">{escape(tr_lens_name("Position View"))}</div>
+                        <div class="alert-value">{escape(tr_term(states.get('Position View', {}).get('label', 'N/A')))}</div>
+                        <div class="alert-sub">Score {states.get('Position View', {}).get('score', 0):+d}</div>
+                    </div>
+                    <div class="alert-box">
+                        <div class="alert-label">{escape(tr_lens_name("Cycle View"))}</div>
+                        <div class="alert-value">{escape(tr_term(states.get('Cycle View', {}).get('label', 'N/A')))}</div>
+                        <div class="alert-sub">Score {states.get('Cycle View', {}).get('score', 0):+d}</div>
+                    </div>
                 </div>
-                <div class="alert-box">
-                    <div class="alert-label">{escape(tr_lens_name("Swing Map"))}</div>
-                    <div class="alert-value">{escape(tr_term(states.get('Swing Map', {}).get('label', 'N/A')))}</div>
-                    <div class="alert-sub">Score {states.get('Swing Map', {}).get('score', 0):+d}</div>
-                </div>
-                <div class="alert-box">
-                    <div class="alert-label">{escape(tr_lens_name("Position View"))}</div>
-                    <div class="alert-value">{escape(tr_term(states.get('Position View', {}).get('label', 'N/A')))}</div>
-                    <div class="alert-sub">Score {states.get('Position View', {}).get('score', 0):+d}</div>
-                </div>
-                <div class="alert-box">
-                    <div class="alert-label">{escape(tr_lens_name("Cycle View"))}</div>
-                    <div class="alert-value">{escape(tr_term(states.get('Cycle View', {}).get('label', 'N/A')))}</div>
-                    <div class="alert-sub">Score {states.get('Cycle View', {}).get('score', 0):+d}</div>
-                </div>
+                <div class="lens-alert-row">{''.join(chip_html)}</div>
+                <div class="lens-alert-note"><strong>{t("active_lens")}</strong> {escape(tr_lens_name(active_title))} · {escape(tr_term(active_state['label']))}</div>
+                <ul class="lens-alert-list">{reasons_html}</ul>
             </div>
-            <div class="lens-alert-row">{''.join(chip_html)}</div>
-            <div class="lens-alert-note"><strong>{t("active_lens_focus")}:</strong> {escape(tr_lens_name(active_title))} · {escape(tr_term(active_state.get('label', 'N/A')))}</div>
-            <ul class="crypto-reasons">{reasons_html}</ul>
-            <div class="lens-alert-note">{t("bullish_count", count=counts.get("bullish", 0))} · {t("neutral_count", count=counts.get("neutral", 0))} · {t("bearish_count", count=counts.get("bearish", 0))}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+            """
+        )
     )
-
-
 
 def compute_lens_adjustment(analysis: dict, intraday: dict, lens_meta: dict | None = None) -> tuple[int, list[str]]:
     lens_title = (lens_meta or {}).get("title", "Position View")
@@ -7177,37 +7264,38 @@ def render_feature_story(ticker: str, analysis: dict, news_items: list[dict]):
         pos = neg = 50
         why_copy = escape(tr_reason_text(analysis["summary"]))
 
-    st.markdown(
-        f"""
-        <div class="lead-story">
-            <div class="section-header" style="margin:0; color:#eef4ff;">{t("top_story")}</div>
-            <div class="lead-kicker">{escape(meta)}</div>
-            <div class="lead-title">{title}</div>
-            {summary_html}
-            <div class="lead-meta-row">
-                <span class="small-pill">{escape(direction_text)}</span>
-                <span class="small-pill">{t("estimated_effect_on", ticker=escape(display_ticker_label(ticker)), probability=probability)}</span>
-                <span class="small-pill">{escape(tr_news_label(analysis['news_pulse']['label']))}</span>
-                {link_html}
-            </div>
-            <div class="lead-story-board">
-                <div class="lead-story-panel">
-                    <div class="lead-panel-label">{t("why_this_matters_now")}</div>
-                    <div class="lead-panel-value">{t("setup_context", ticker=escape(display_ticker_label(ticker)))}</div>
-                    <div class="lead-panel-copy">{why_copy}</div>
+    render_html_block(
+        html_block(
+            f"""
+            <div class="lead-story">
+                <div class="section-header" style="margin:0; color:#eef4ff;">{t("top_story")}</div>
+                <div class="lead-kicker">{escape(meta)}</div>
+                <div class="lead-title">{title}</div>
+                {summary_html}
+                <div class="lead-meta-row">
+                    <span class="small-pill">{escape(direction_text)}</span>
+                    <span class="small-pill">{t("estimated_effect_on", ticker=escape(display_ticker_label(ticker)), probability=probability)}</span>
+                    <span class="small-pill">{escape(tr_news_label(analysis['news_pulse']['label']))}</span>
+                    {link_html}
                 </div>
-                <div class="lead-story-panel">
-                    <div class="lead-panel-label">{t("directional_pressure")}</div>
-                    <div class="lead-panel-value">{t("up_down_pressure", pos=pos, neg=neg)}</div>
-                    <div class="lead-panel-copy">{t("directional_pressure_copy")}</div>
-                    <div class="impact-meter" style="margin-top:12px;">
-                        <div class="impact-pos" style="width:{pos}%;"></div>
+                <div class="lead-story-board">
+                    <div class="lead-story-panel">
+                        <div class="lead-panel-label">{t("why_this_matters_now")}</div>
+                        <div class="lead-panel-value">{t("setup_context", ticker=escape(display_ticker_label(ticker)))}</div>
+                        <div class="lead-panel-copy">{why_copy}</div>
+                    </div>
+                    <div class="lead-story-panel">
+                        <div class="lead-panel-label">{t("directional_pressure")}</div>
+                        <div class="lead-panel-value">{t("up_down_pressure", pos=pos, neg=neg)}</div>
+                        <div class="lead-panel-copy">{t("directional_pressure_copy")}</div>
+                        <div class="impact-meter" style="margin-top:12px;">
+                            <div class="impact-pos" style="width:{pos}%;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+            """
+        )
     )
 
 def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
@@ -7219,42 +7307,42 @@ def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items:
     latest_trend_date = format_us_timestamp(analysis["latest_daily_ts"])
     top_reasons = "".join(f"<li>{escape(tr_reason_text(r))}</li>" for r in analysis["reasons"][:3])
     alert_html = "".join(f"<li>{escape(tr_reason_text(a))}</li>" for a in analysis.get("alerts", [])[:2]) or f"<li>{escape(tr_term('No urgent alert is active.'))}</li>"
-    st.markdown(
-        f"""
-        <div class="crypto-card">
-            <div class="crypto-kicker">{t("signal_deck")}</div>
-            <div class="crypto-signal {signal_class}">{escape(tr_signal(signal))}</div>
-            <div class="crypto-main-number">{analysis.get('pro_score', analysis['score']):+d}</div>
-            <div class="crypto-sub">{escape(tr_reason_text(analysis['summary']))}</div>
-            <div class="crypto-grid">
-                <div class="crypto-mini">
-                    <div class="crypto-mini-label">{t("confidence")}</div>
-                    <div class="crypto-mini-value">{escape(tr_confidence(analysis['confidence']))}</div>
-                    <div class="crypto-mini-sub">{t("trend_1y")}: {escape(tr_term(analysis['trend']))}</div>
+    render_html_block(
+        html_block(
+            f"""
+            <div class="crypto-card">
+                <div class="crypto-kicker">{t("signal_deck")}</div>
+                <div class="crypto-signal {signal_class}">{escape(tr_signal(signal))}</div>
+                <div class="crypto-main-number">{analysis.get('pro_score', analysis['score']):+d}</div>
+                <div class="crypto-sub">{escape(tr_reason_text(analysis['summary']))}</div>
+                <div class="crypto-grid">
+                    <div class="crypto-mini">
+                        <div class="crypto-mini-label">{t("confidence")}</div>
+                        <div class="crypto-mini-value">{escape(tr_confidence(analysis['confidence']))}</div>
+                        <div class="crypto-mini-sub">{t("trend_1y")}: {escape(tr_term(analysis['trend']))}</div>
+                    </div>
+                    <div class="crypto-mini">
+                        <div class="crypto-mini-label">{t("news_pulse")}</div>
+                        <div class="crypto-mini-value">{pulse['up']}/{pulse['down']}</div>
+                        <div class="crypto-mini-sub">{escape(tr_news_label(pulse['label']))}</div>
+                    </div>
+                    <div class="crypto-mini">
+                        <div class="crypto-mini-label">{t("intraday")}</div>
+                        <div class="crypto-mini-value">{intraday_change}</div>
+                        <div class="crypto-mini-sub">{intraday_price}</div>
+                    </div>
+                    <div class="crypto-mini">
+                        <div class="crypto-mini-label">{t("trading_lab")}</div>
+                        <div class="crypto-mini-value">{escape(tr_setup(analysis.get('trading_lab', {}).get('setup', 'Balanced')))}</div>
+                        <div class="crypto-mini-sub">{latest_trend_date}</div>
+                    </div>
                 </div>
-                <div class="crypto-mini">
-                    <div class="crypto-mini-label">{t("news_pulse")}</div>
-                    <div class="crypto-mini-value">{pulse['up']}/{pulse['down']}</div>
-                    <div class="crypto-mini-sub">{escape(tr_news_label(pulse['label']))}</div>
-                </div>
-                <div class="crypto-mini">
-                    <div class="crypto-mini-label">{t("intraday")}</div>
-                    <div class="crypto-mini-value">{intraday_change}</div>
-                    <div class="crypto-mini-sub">{intraday_price}</div>
-                </div>
-                <div class="crypto-mini">
-                    <div class="crypto-mini-label">{t("trading_lab")}</div>
-                    <div class="crypto-mini-value">{escape(tr_setup(analysis.get('trading_lab', {}).get('setup', 'Balanced')))}</div>
-                    <div class="crypto-mini-sub">{latest_trend_date}</div>
-                </div>
+                <ul class="crypto-reasons">{top_reasons}</ul>
+                <ul class="crypto-reasons">{alert_html}</ul>
             </div>
-            <ul class="crypto-reasons">{top_reasons}</ul>
-            <ul class="crypto-reasons">{alert_html}</ul>
-        </div>
-        """,
-        unsafe_allow_html=True,
+            """
+        )
     )
-
 
 def render_news_first_section(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
     left, center, right = st.columns([0.95, 1.95, 1.0], gap="large")
@@ -7321,41 +7409,41 @@ def build_decision_brief(analysis: dict, intraday: dict, news_items: list[dict])
 
 def render_decision_brief(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
     brief = build_decision_brief(analysis, intraday, news_items)
-    st.markdown(
-        f"""
-        <div class="brief-shell">
-            <div class="section-header" style="margin:0; color:#f5ead8;">{t('decision_brief')}</div>
-            <div class="brief-title">{t('what_matters_now_for', ticker=escape(display_ticker_label(ticker)))}</div>
-            <div class="brief-copy">{t('decision_brief_copy')}</div>
-            <div class="brief-grid">
-                <div class="brief-box">
-                    <div class="brief-label">{t('current_stance')}</div>
-                    <div style="margin-top:10px;"><span class="crypto-signal {brief['signal_class']}">{escape(tr_signal(brief['stance']))}</span></div>
-                    <div class="brief-sub">{escape(tr_confidence(brief['confidence']))} · {t('intraday')} {escape(brief['intraday_move'])}</div>
+    render_html_block(
+        html_block(
+            f"""
+            <div class="brief-shell">
+                <div class="section-header" style="margin:0; color:#f5ead8;">{t('decision_brief')}</div>
+                <div class="brief-title">{t('what_matters_now_for', ticker=escape(display_ticker_label(ticker)))}</div>
+                <div class="brief-copy">{t('decision_brief_copy')}</div>
+                <div class="brief-grid">
+                    <div class="brief-box">
+                        <div class="brief-label">{t('current_stance')}</div>
+                        <div style="margin-top:10px;"><span class="crypto-signal {brief['signal_class']}">{escape(tr_signal(brief['stance']))}</span></div>
+                        <div class="brief-sub">{escape(tr_confidence(brief['confidence']))} · {t('intraday')} {escape(brief['intraday_move'])}</div>
+                    </div>
+                    <div class="brief-box">
+                        <div class="brief-label">{t('dominant_catalyst')}</div>
+                        <div class="brief-value">{escape(tr_term(brief['dominant']))}</div>
+                        <div class="brief-sub">{escape(tr_news_label(brief['news_label']))}</div>
+                    </div>
+                    <div class="brief-box">
+                        <div class="brief-label">{t('best_execution_style')}</div>
+                        <div class="brief-value">{escape(tr_setup(brief['setup']))}</div>
+                        <div class="brief-sub">{escape(tr_term(brief['execution']))}</div>
+                    </div>
+                    <div class="brief-box">
+                        <div class="brief-label">{t('main_risk_flag')}</div>
+                        <div class="brief-value brief-risk">{escape((tr_term(brief['risk_flag']))[:68])}</div>
+                        <div class="brief-sub">{t('lead_story_label')}: {escape((brief['lead_story'])[:90])}</div>
+                    </div>
                 </div>
-                <div class="brief-box">
-                    <div class="brief-label">{t('dominant_catalyst')}</div>
-                    <div class="brief-value">{escape(tr_term(brief['dominant']))}</div>
-                    <div class="brief-sub">{escape(tr_news_label(brief['news_label']))}</div>
-                </div>
-                <div class="brief-box">
-                    <div class="brief-label">{t('best_execution_style')}</div>
-                    <div class="brief-value">{escape(tr_setup(brief['setup']))}</div>
-                    <div class="brief-sub">{escape(tr_term(brief['execution']))}</div>
-                </div>
-                <div class="brief-box">
-                    <div class="brief-label">{t('main_risk_flag')}</div>
-                    <div class="brief-value brief-risk">{escape((tr_term(brief['risk_flag']))[:68])}</div>
-                    <div class="brief-sub">{t('lead_story_label')}: {escape((brief['lead_story'])[:90])}</div>
-                </div>
+                <div class="brief-action">Next step</div>
+                <div class="brief-copy" style="margin-top:6px;">{escape(brief['action'])}</div>
             </div>
-            <div class="brief-action">Next step</div>
-            <div class="brief-copy" style="margin-top:6px;">{escape(brief['action'])}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+            """
+        )
     )
-
 
 def render_story_row(item: dict, ticker: str, idx: int):
     direction_text, tag_class, meter_class = article_direction_meta(item)
@@ -7436,7 +7524,6 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
         else "Review daily and intraday candlesticks, technical indicators, and the current trade structure."
     )
 
-    render_html_block('<div class="section-expander-wrap trend-expander-wrap">')
     with st.expander(
         planner_expander_label(trend_base_label, "trend", selected_count),
         expanded=planner_auto_expand("trend", selected_count),
@@ -9474,7 +9561,6 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         else "Review the winner card, opportunity radar, and cross-ticker comparison overview."
     )
 
-    render_html_block('<div class="section-expander-wrap comparison-expander-wrap">')
     with st.expander(
         planner_expander_label(comparison_base_label, "comparison", len(bundles)),
         expanded=planner_auto_expand("comparison", len(bundles)),
@@ -9588,8 +9674,6 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         """
         render_html_block(table_html)
 
-    render_html_block('</div>')
-
 def render_target_watch_section(ticker: str, context: dict):
     if not context:
         return
@@ -9693,7 +9777,6 @@ def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_dat
         else "This stack includes Scenario Model, Entry ladder ratio, Advanced decision board, Portfolio Execution framework, and Entry / Exit / Risk Summary."
     )
 
-    render_html_block('<div class="planner-expander-wrap">')
     with st.expander(
         planner_expander_label(planner_base_label, "scenario", len(bundles)),
         expanded=planner_auto_expand("scenario", len(bundles)),
@@ -9704,7 +9787,6 @@ def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_dat
             unsafe_allow_html=True,
         )
         render_position_scenario_planner(bundles)
-    render_html_block('</div>')
     render_html_block('<div class="planner-stack-spacer"></div>')
 
 
@@ -9749,7 +9831,6 @@ def render_precomparison_target_and_brief_groups(
         if get_language() == "zh_TW"
         else "Review target bands, current gaps, and target-related headlines before comparison."
     )
-    render_html_block('<div class="section-expander-wrap target-watch-expander-wrap">')
     with st.expander(
         planner_expander_label(target_base_label, "target", len(bundles)),
         expanded=planner_auto_expand("target", len(bundles)),
@@ -9771,7 +9852,6 @@ def render_precomparison_target_and_brief_groups(
             render_target_watch_section(ticker, context)
             if idx != len(bundles):
                 render_html_block('<div class="group-stack-divider"></div>')
-    render_html_block('</div>')
 
     brief_base_label = "展開／收合 Decision Brief" if get_language() == "zh_TW" else "Expand / collapse Decision Brief"
     brief_helper_base = (
@@ -9779,7 +9859,6 @@ def render_precomparison_target_and_brief_groups(
         if get_language() == "zh_TW"
         else "Review the current stance, dominant catalyst, and next-step execution brief for each ticker."
     )
-    render_html_block('<div class="section-expander-wrap brief-expander-wrap">')
     with st.expander(
         planner_expander_label(brief_base_label, "brief", len(bundles)),
         expanded=planner_auto_expand("brief", len(bundles)),
@@ -9793,8 +9872,6 @@ def render_precomparison_target_and_brief_groups(
             render_decision_brief(bundle["ticker"], bundle["analysis"], bundle["intraday"], bundle["news_items"])
             if idx != len(bundles):
                 render_html_block('<div class="group-stack-divider"></div>')
-    render_html_block('</div>')
-
 
 
 def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None, selected_count: int = 1):
@@ -9828,7 +9905,6 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
         if get_language() == "zh_TW"
         else "Review bullish, neutral, and bearish lens states plus the current focus."
     )
-    render_html_block('<div class="section-expander-wrap alert-expander-wrap">')
     with st.expander(
         planner_expander_label(alert_base_label, "alert", selected_count),
         expanded=planner_auto_expand("alert", selected_count),
@@ -9839,7 +9915,6 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
             unsafe_allow_html=True,
         )
         render_alert_layer(analysis, intraday)
-    render_html_block('</div>')
 
     render_reference_guide(analysis, ticker, news_items)
     render_news_stream(ticker, news_items)
