@@ -4908,7 +4908,8 @@ def inject_css():
             color: rgba(248,241,229,.82);
         }
 
-        .group-ticker-kicker {
+        
+.group-ticker-kicker {
             font-size: 12px;
             font-weight: 900;
             letter-spacing: .10em;
@@ -4917,9 +4918,101 @@ def inject_css():
             margin: 2px 0 10px 2px;
         }
 
+        .target-tracking-focus {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 14px 16px;
+            margin: 8px 0 14px 0;
+            border-radius: 22px;
+            background:
+                radial-gradient(circle at top right, rgba(84, 214, 255, 0.10) 0%, rgba(84, 214, 255, 0) 34%),
+                linear-gradient(135deg, rgba(255, 204, 115, 0.08) 0%, rgba(16, 26, 43, 0.90) 44%, rgba(9, 17, 31, 0.94) 100%);
+            border: 1px solid rgba(255, 204, 115, 0.16);
+            box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+
+        .target-tracking-focus-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .target-tracking-focus-index {
+            width: 40px;
+            height: 40px;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, rgba(255, 204, 115, 0.26) 0%, rgba(255, 154, 98, 0.18) 100%);
+            border: 1px solid rgba(255, 204, 115, 0.20);
+            color: #ffe7b0;
+            font-size: 13px;
+            font-weight: 900;
+            letter-spacing: .04em;
+            flex: 0 0 auto;
+        }
+
+        .target-tracking-focus-copy {
+            min-width: 0;
+        }
+
+        .target-tracking-focus-kicker {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: rgba(255, 231, 176, 0.72);
+            margin-bottom: 4px;
+        }
+
+        .target-tracking-focus-name {
+            font-size: 24px;
+            line-height: 1.08;
+            font-weight: 900;
+            color: #fff7e6;
+            letter-spacing: -0.02em;
+            word-break: break-word;
+        }
+
+        .target-tracking-focus-symbol {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 9px 12px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.10);
+            color: rgba(248,241,229,.90);
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            flex: 0 0 auto;
+        }
+
         .group-stack-divider {
             height: 10px;
         }
+
+        @media (max-width: 768px) {
+            .target-tracking-focus {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .target-tracking-focus-symbol {
+                margin-left: 52px;
+            }
+
+            .target-tracking-focus-name {
+                font-size: 20px;
+            }
+        }
+
 
 </style>
         """,
@@ -5508,7 +5601,14 @@ def inject_premium_overrides():
 def render_html_block(html: str):
     if html is None:
         return
-    st.markdown(textwrap.dedent(str(html)).strip(), unsafe_allow_html=True)
+    cleaned = textwrap.dedent(str(html)).strip()
+    if not cleaned:
+        return
+    if cleaned == "</div>":
+        return
+    if re.fullmatch(r'<div class="(?:section-expander-wrap [^"]+|planner-expander-wrap)">', cleaned):
+        return
+    st.markdown(cleaned, unsafe_allow_html=True)
 
 # ---------------------------
 # Data Fetch
@@ -9608,6 +9708,27 @@ def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_dat
     render_html_block('<div class="planner-stack-spacer"></div>')
 
 
+
+
+def render_target_tracking_focus_header(ticker: str, index: int):
+    name = escape(display_ticker_label(ticker))
+    symbol = escape(str(ticker).upper())
+    focus_label = "目標追蹤焦點" if get_language() == "zh_TW" else "Target tracking focus"
+    html = f'''
+    <div class="target-tracking-focus">
+        <div class="target-tracking-focus-left">
+            <div class="target-tracking-focus-index">#{index:02d}</div>
+            <div class="target-tracking-focus-copy">
+                <div class="target-tracking-focus-kicker">{escape(focus_label)}</div>
+                <div class="target-tracking-focus-name">{name}</div>
+            </div>
+        </div>
+        <div class="target-tracking-focus-symbol">{symbol}</div>
+    </div>
+    '''
+    render_html_block(html)
+
+
 def render_precomparison_target_and_brief_groups(
     daily_data: pd.DataFrame,
     intraday_data: pd.DataFrame | None,
@@ -9646,7 +9767,7 @@ def render_precomparison_target_and_brief_groups(
                 bundle["news_items"],
                 timeframe=active_target_watch_timeframe(ticker),
             )
-            render_html_block(f'<div class="group-ticker-kicker">{escape(display_ticker_label(ticker))}</div>')
+            render_target_tracking_focus_header(ticker, idx)
             render_target_watch_section(ticker, context)
             if idx != len(bundles):
                 render_html_block('<div class="group-stack-divider"></div>')
