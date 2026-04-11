@@ -4896,6 +4896,12 @@ def inject_css():
             background: transparent !important;
         }
 
+        .planner-expander-meta {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+
         .planner-expander-helper {
             font-size: 13px;
             line-height: 1.62;
@@ -5828,7 +5834,21 @@ def render_html_block(html: str):
     if not cleaned:
         return
 
-    st.markdown(cleaned, unsafe_allow_html=True)
+    if hasattr(st, "html"):
+        st.html(cleaned)
+    else:
+        st.markdown(cleaned, unsafe_allow_html=True)
+
+
+def render_expander_meta(section: str, item_count: int | None, helper_base: str):
+    helper_text = planner_expander_helper(helper_base, section, item_count)
+    meta_html = (
+        '<div class="planner-expander-meta">'
+        + planner_expander_badges(section, item_count)
+        + f'<div class="planner-expander-helper">{escape(helper_text)}</div>'
+        + '</div>'
+    )
+    render_html_block(meta_html)
 
 # ---------------------------
 # Data Fetch
@@ -7659,11 +7679,7 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
         planner_expander_label(trend_base_label, "trend", selected_count),
         expanded=planner_auto_expand("trend", selected_count),
     ):
-        render_html_block(planner_expander_badges("trend", selected_count))
-        st.markdown(
-            f'<div class="planner-expander-helper">{escape(planner_expander_helper(trend_helper_base, "trend", selected_count))}</div>',
-            unsafe_allow_html=True,
-        )
+        render_expander_meta("trend", selected_count, trend_helper_base)
 
         st.markdown(
             f"""
@@ -9696,11 +9712,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         planner_expander_label(comparison_base_label, "comparison", len(bundles)),
         expanded=planner_auto_expand("comparison", len(bundles)),
     ):
-        render_html_block(planner_expander_badges("comparison", len(bundles)))
-        st.markdown(
-            f'<div class="planner-expander-helper">{escape(planner_expander_helper(comparison_helper_base, "comparison", len(bundles)))}</div>',
-            unsafe_allow_html=True,
-        )
+        render_expander_meta("comparison", len(bundles), comparison_helper_base)
         render_winner_card(bundles, lens_meta=lens_meta)
         render_opportunity_radar(bundles, lens_meta=lens_meta)
 
@@ -9912,11 +9924,7 @@ def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_dat
         planner_expander_label(planner_base_label, "scenario", len(bundles)),
         expanded=planner_auto_expand("scenario", len(bundles)),
     ):
-        render_html_block(planner_expander_badges("scenario", len(bundles)))
-        st.markdown(
-            f'<div class="planner-expander-helper">{escape(planner_expander_helper(planner_helper_base, "scenario", len(bundles)))}</div>',
-            unsafe_allow_html=True,
-        )
+        render_expander_meta("scenario", len(bundles), planner_helper_base)
         render_position_scenario_planner(bundles)
     render_html_block('<div class="planner-stack-spacer"></div>')
 
@@ -9966,11 +9974,7 @@ def render_precomparison_target_and_brief_groups(
         planner_expander_label(target_base_label, "target", len(bundles)),
         expanded=planner_auto_expand("target", len(bundles)),
     ):
-        render_html_block(planner_expander_badges("target", len(bundles)))
-        st.markdown(
-            f'<div class="planner-expander-helper">{escape(planner_expander_helper(target_helper_base, "target", len(bundles)))}</div>',
-            unsafe_allow_html=True,
-        )
+        render_expander_meta("target", len(bundles), target_helper_base)
         for idx, bundle in enumerate(bundles, start=1):
             ticker = bundle["ticker"]
             context = build_target_watch_context(
@@ -9994,11 +9998,7 @@ def render_precomparison_target_and_brief_groups(
         planner_expander_label(brief_base_label, "brief", len(bundles)),
         expanded=planner_auto_expand("brief", len(bundles)),
     ):
-        render_html_block(planner_expander_badges("brief", len(bundles)))
-        st.markdown(
-            f'<div class="planner-expander-helper">{escape(planner_expander_helper(brief_helper_base, "brief", len(bundles)))}</div>',
-            unsafe_allow_html=True,
-        )
+        render_expander_meta("brief", len(bundles), brief_helper_base)
         for idx, bundle in enumerate(bundles, start=1):
             render_decision_brief(bundle["ticker"], bundle["analysis"], bundle["intraday"], bundle["news_items"])
             if idx != len(bundles):
@@ -10040,11 +10040,7 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
         planner_expander_label(alert_base_label, "alert", selected_count),
         expanded=planner_auto_expand("alert", selected_count),
     ):
-        render_html_block(planner_expander_badges("alert", selected_count))
-        st.markdown(
-            f'<div class="planner-expander-helper">{escape(planner_expander_helper(alert_helper_base, "alert", selected_count))}</div>',
-            unsafe_allow_html=True,
-        )
+        render_expander_meta("alert", selected_count, alert_helper_base)
         render_alert_layer(analysis, intraday)
 
     render_reference_guide(analysis, ticker, news_items)
