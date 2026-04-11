@@ -5057,6 +5057,107 @@ def inject_css():
             height: 10px;
         }
 
+
+        /* Layout hardening pass for HTML-heavy premium sections */
+        .global-indicator-shell,
+        .global-indicator-card,
+        .scenario-single-shell,
+        .scenario-single-card,
+        .target-watch-shell,
+        .benchmark-shell,
+        .compare-shell,
+        .decision-brief-shell,
+        .alert-shell,
+        .trend-shell {
+            min-width: 0;
+        }
+
+        .global-indicator-shell *,
+        .global-indicator-card *,
+        .scenario-single-shell *,
+        .scenario-single-card *,
+        .target-watch-shell *,
+        .benchmark-shell * {
+            writing-mode: horizontal-tb !important;
+        }
+
+        .global-indicator-card-grid {
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            align-items: stretch;
+        }
+
+        .global-indicator-card {
+            min-width: 0;
+        }
+
+        .global-indicator-card-top {
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+
+        .global-indicator-label,
+        .global-indicator-state-chip,
+        .global-indicator-mini-label,
+        .global-indicator-mini-value {
+            white-space: nowrap;
+        }
+
+        .global-indicator-state-chip {
+            flex: 0 0 auto;
+            text-align: left;
+        }
+
+        .scenario-single-grid {
+            grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
+            align-items: start;
+        }
+
+        .scenario-single-grid > div,
+        .scenario-single-card,
+        .scenario-ladder-row > div {
+            min-width: 0;
+        }
+
+        .scenario-ladder-row {
+            grid-template-columns: 96px minmax(0, 1fr);
+        }
+
+        .scenario-ladder-tag {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        .scenario-ladder-main,
+        .scenario-ladder-sub,
+        .scenario-single-copy {
+            white-space: normal;
+            word-break: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .scenario-ladder-main {
+            max-width: 100%;
+        }
+
+        @media (max-width: 1200px) {
+            .global-indicator-card-grid {
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            }
+        }
+
+        @media (max-width: 980px) {
+            .scenario-single-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .global-indicator-label,
+            .global-indicator-state-chip,
+            .global-indicator-mini-label,
+            .global-indicator-mini-value {
+                white-space: normal;
+            }
+        }
+
         @media (max-width: 768px) {
             .target-tracking-focus {
                 align-items: flex-start;
@@ -5657,43 +5758,73 @@ def inject_premium_overrides():
 
 
 
+
+SAFE_HTML_WRAPPER_EXACT = {
+    '</div>',
+    '<div></div>',
+    '<div class="planner-stack-spacer"></div>',
+    '<div class="candlestick-section-spacer"></div>',
+    '<div class="group-stack-divider"></div>',
+}
+
+SAFE_HTML_WRAPPER_PREFIXES = (
+    '<div class="section-expander-wrap',
+    '<div class="planner-expander-wrap',
+)
+
+SAFE_HTML_LEADING_STRIP_CLASSES = (
+    'lead-story-board',
+    'target-watch-board',
+    'brief-grid',
+    'compare-table-body',
+    'planner-expander-badge-row',
+)
+
+def _is_wrapper_only_html(fragment: str) -> bool:
+    probe = textwrap.dedent(str(fragment)).strip()
+    if not probe:
+        return True
+    if probe in SAFE_HTML_WRAPPER_EXACT:
+        return True
+    if any(probe.startswith(prefix) and probe.endswith('>') and '</div>' not in probe for prefix in SAFE_HTML_WRAPPER_PREFIXES):
+        return True
+    return False
+
+def _strip_known_wrapper_tokens(html: str) -> str:
+    cleaned = textwrap.dedent(str(html)).strip()
+    if not cleaned:
+        return ""
+
+    lines = [line.rstrip() for line in cleaned.splitlines()]
+    while lines and _is_wrapper_only_html(lines[0]):
+        lines.pop(0)
+    while lines and _is_wrapper_only_html(lines[-1]):
+        lines.pop()
+
+    cleaned = "\n".join(lines).strip()
+    if not cleaned:
+        return ""
+
+    # Only strip unmatched leading closing tags when the real block is one of our known safe roots.
+    safe_root_pattern = "|".join(re.escape(cls) for cls in SAFE_HTML_LEADING_STRIP_CLASSES)
+    cleaned = re.sub(
+        rf"^(?:\s*</div>\s*)+(?=<div class=\"(?:{safe_root_pattern})\")",
+        "",
+        cleaned,
+        flags=re.DOTALL,
+    ).strip()
+
+    # Strip standalone opening wrappers only when they are the entire remaining fragment.
+    if any(cleaned.startswith(prefix) and cleaned.endswith('>') and '</div>' not in cleaned for prefix in SAFE_HTML_WRAPPER_PREFIXES):
+        return ""
+
+    return cleaned
+
 def render_html_block(html: str):
     if html is None:
         return
 
-    cleaned = textwrap.dedent(str(html)).strip()
-    if not cleaned:
-        return
-
-    fragments = [frag.strip() for frag in re.split(r"\n+", cleaned) if frag.strip()]
-    if not fragments:
-        return
-
-    wrapper_only_patterns = [
-        r"</div>",
-        r'<div class="(?:section-expander-wrap[^"]*|planner-expander-wrap)"></div>',
-        r'<div class="(?:section-expander-wrap[^"]*|planner-expander-wrap)">',
-        r'<div class="(?:planner-stack-spacer|candlestick-section-spacer|group-stack-divider)"></div>',
-        r'<div[^>]*></div>',
-    ]
-
-    if len(fragments) == 1 and any(re.fullmatch(pattern, fragments[0]) for pattern in wrapper_only_patterns):
-        return
-
-    cleaned = re.sub(
-        r"^(?:\s*</div>\s*)+(?=<div class=\"(?:lead-story-board|target-watch-board|brief-grid|compare-table-body|planner-expander-badge-row)\")",
-        "",
-        cleaned,
-        flags=re.DOTALL,
-    ).strip()
-
-    cleaned = re.sub(
-        r"^(?:\s*<div class=\"(?:section-expander-wrap[^\"]*|planner-expander-wrap)\">\s*)+$",
-        "",
-        cleaned,
-        flags=re.DOTALL,
-    ).strip()
-
+    cleaned = _strip_known_wrapper_tokens(html)
     if not cleaned:
         return
 
