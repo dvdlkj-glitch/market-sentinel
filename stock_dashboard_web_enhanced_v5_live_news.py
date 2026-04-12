@@ -9423,15 +9423,27 @@ def render_position_scenario_planner(bundles: list[dict]):
             """
         )
 
-        control_cols = st.columns([1.1, 0.92, 0.92, 0.82, 0.78, 0.92, 0.92, 0.82])
-        with control_cols[0]:
-            capital_key = f"{key_prefix}_capital_text"
-            capital_default = default_planner_capital(currency)
-            apply_planner_capital_state(capital_key, capital_default)
-            if capital_key not in st.session_state:
-                legacy_capital = st.session_state.get(f"{key_prefix}_capital")
-                st.session_state[capital_key] = format_planner_capital_value(legacy_capital, capital_default)
-            capital_raw = st.text_input(
+        device_mode = get_effective_device_mode()
+        compact_planner_mode = device_mode in {
+            "iPad",
+            "Smartphone Fold Portrait",
+            "Smartphone Fold Landscape",
+            "Smartphone",
+        }
+        phone_planner_mode = device_mode == "Smartphone"
+
+        capital_key = f"{key_prefix}_capital_text"
+        capital_default = default_planner_capital(currency)
+        apply_planner_capital_state(capital_key, capital_default)
+        if capital_key not in st.session_state:
+            legacy_capital = st.session_state.get(f"{key_prefix}_capital")
+            st.session_state[capital_key] = format_planner_capital_value(legacy_capital, capital_default)
+
+        slider_mode_html = f'<div class="scenario-ratio-shell"><div class="scenario-ratio-title">{escape("滑桿調整" if lang_zh else "Slider mode")}</div><div class="scenario-ratio-copy">{escape("分批進場 / 分批停利改用滑桿調整，避免手打比例。" if lang_zh else "Entry and take-profit ladders now use sliders for faster tuning.")}</div></div>'
+        auto_ratio_html = f'<div class="scenario-ratio-shell"><div class="scenario-ratio-title">{escape("比率會自動正規化" if lang_zh else "Ratios auto-normalize")}</div><div class="scenario-ratio-copy">{escape("第 3 段會依前兩段自動補滿至 100%。" if lang_zh else "Stage 3 is automatically filled so the ladder always totals 100%.")}</div></div>'
+
+        def _render_capital_input_block():
+            capital_raw_local = st.text_input(
                 "投入金額" if lang_zh else "Investment amount",
                 key=capital_key,
                 placeholder="例如 100,000" if lang_zh else "e.g. 100,000",
@@ -9439,70 +9451,180 @@ def render_position_scenario_planner(bundles: list[dict]):
                 on_change=normalize_planner_capital_state,
                 args=(capital_key, capital_default),
             )
-            capital_value = parse_planner_capital_input(capital_raw, capital_default)
-            st.session_state[f"{key_prefix}_capital_value"] = capital_value
+            capital_value_local = parse_planner_capital_input(capital_raw_local, capital_default)
+            st.session_state[f"{key_prefix}_capital_value"] = capital_value_local
+
+            quick_options = planner_quick_amount_options(currency)
+            if phone_planner_mode:
+                for option_row in (quick_options[:2], quick_options[2:]):
+                    quick_amount_cols = st.columns(len(option_row))
+                    for quick_col, (quick_label, quick_value) in zip(quick_amount_cols, option_row):
+                        with quick_col:
+                            if st.button(quick_label, key=f"{key_prefix}_quick_{quick_value}", use_container_width=True):
+                                set_planner_capital_state(capital_key, quick_value, capital_default)
+                                st.rerun()
+            else:
+                quick_amount_cols = st.columns(len(quick_options))
+                for quick_col, (quick_label, quick_value) in zip(quick_amount_cols, quick_options):
+                    with quick_col:
+                        if st.button(quick_label, key=f"{key_prefix}_quick_{quick_value}", use_container_width=True):
+                            set_planner_capital_state(capital_key, quick_value, capital_default)
+                            st.rerun()
+
+            return capital_value_local
+
+        if compact_planner_mode:
+            capital_value = _render_capital_input_block()
             capital = float(capital_value)
 
-            quick_amount_cols = st.columns(4)
-            for quick_col, (quick_label, quick_value) in zip(quick_amount_cols, planner_quick_amount_options(currency)):
-                with quick_col:
-                    if st.button(quick_label, key=f"{key_prefix}_quick_{quick_value}", use_container_width=True):
-                        set_planner_capital_state(capital_key, quick_value, capital_default)
-                        st.rerun()
-        with control_cols[1]:
-            allocation_method = st.selectbox(
-                "配置方式" if lang_zh else "Allocation method",
-                options=["equal", "score_weighted"],
-                format_func=planner_allocation_label,
-                key=f"{key_prefix}_allocation",
-            )
-        with control_cols[2]:
-            stop_profile = st.selectbox(
-                "止損參考" if lang_zh else "Stop reference",
-                options=["tight", "balanced", "wide"],
-                format_func=planner_stop_profile_label,
-                index=1,
-                key=f"{key_prefix}_stop",
-            )
-        with control_cols[3]:
-            timeframe = st.selectbox(
-                "投資期限" if lang_zh else "Time frame",
-                options=PLANNER_TIMEFRAME_OPTIONS,
-                format_func=planner_timeframe_label,
-                index=PLANNER_TIMEFRAME_OPTIONS.index("6m"),
-                key=f"{key_prefix}_timeframe",
-            )
-            st.session_state["dashboard_target_watch_timeframe"] = normalize_planner_timeframe(timeframe)
-        with control_cols[4]:
-            acceptable_loss_pct = st.number_input(
-                "最大可承受虧損 %" if lang_zh else "Max loss %",
-                min_value=0.5,
-                max_value=20.0,
-                value=2.0,
-                step=0.5,
-                format="%.1f",
-                key=f"{key_prefix}_max_loss_pct",
-                help="若整體止損風險高於這個比例，系統會提示你縮小部位。" if lang_zh else "If total modeled stop-loss risk exceeds this share of capital, the planner will flag it.",
-            )
-        with control_cols[5]:
-            win_rate_mode = st.selectbox(
-                "勝率假設" if lang_zh else "Hit-rate mode",
-                options=["conservative", "balanced", "aggressive"],
-                format_func=planner_win_rate_label,
-                index=1,
-                key=f"{key_prefix}_win_rate_mode",
-            )
-        with control_cols[6]:
-            render_html_block(
-                f'<div class="scenario-ratio-shell"><div class="scenario-ratio-title">{escape("滑桿調整" if lang_zh else "Slider mode")}</div><div class="scenario-ratio-copy">{escape("分批進場 / 分批停利改用滑桿調整，避免手打比例。" if lang_zh else "Entry and take-profit ladders now use sliders for faster tuning.")}</div></div>'
-            )
-        with control_cols[7]:
-            render_html_block(
-                f'<div class="scenario-ratio-shell"><div class="scenario-ratio-title">{escape("比率會自動正規化" if lang_zh else "Ratios auto-normalize")}</div><div class="scenario-ratio-copy">{escape("第 3 段會依前兩段自動補滿至 100%。" if lang_zh else "Stage 3 is automatically filled so the ladder always totals 100%.")}</div></div>'
-            )
+            if phone_planner_mode:
+                allocation_method = st.selectbox(
+                    "配置方式" if lang_zh else "Allocation method",
+                    options=["equal", "score_weighted"],
+                    format_func=planner_allocation_label,
+                    key=f"{key_prefix}_allocation",
+                )
+                stop_profile = st.selectbox(
+                    "止損參考" if lang_zh else "Stop reference",
+                    options=["tight", "balanced", "wide"],
+                    format_func=planner_stop_profile_label,
+                    index=1,
+                    key=f"{key_prefix}_stop",
+                )
+                timeframe = st.selectbox(
+                    "投資期限" if lang_zh else "Time frame",
+                    options=PLANNER_TIMEFRAME_OPTIONS,
+                    format_func=planner_timeframe_label,
+                    index=PLANNER_TIMEFRAME_OPTIONS.index("6m"),
+                    key=f"{key_prefix}_timeframe",
+                )
+                st.session_state["dashboard_target_watch_timeframe"] = normalize_planner_timeframe(timeframe)
+                acceptable_loss_pct = st.number_input(
+                    "最大可承受虧損 %" if lang_zh else "Max loss %",
+                    min_value=0.5,
+                    max_value=20.0,
+                    value=2.0,
+                    step=0.5,
+                    format="%.1f",
+                    key=f"{key_prefix}_max_loss_pct",
+                    help="若整體止損風險高於這個比例，系統會提示你縮小部位。" if lang_zh else "If total modeled stop-loss risk exceeds this share of capital, the planner will flag it.",
+                )
+                win_rate_mode = st.selectbox(
+                    "勝率假設" if lang_zh else "Hit-rate mode",
+                    options=["conservative", "balanced", "aggressive"],
+                    format_func=planner_win_rate_label,
+                    index=1,
+                    key=f"{key_prefix}_win_rate_mode",
+                )
+                render_html_block(slider_mode_html)
+                render_html_block(auto_ratio_html)
+            else:
+                control_row_one = st.columns(3)
+                with control_row_one[0]:
+                    allocation_method = st.selectbox(
+                        "配置方式" if lang_zh else "Allocation method",
+                        options=["equal", "score_weighted"],
+                        format_func=planner_allocation_label,
+                        key=f"{key_prefix}_allocation",
+                    )
+                with control_row_one[1]:
+                    stop_profile = st.selectbox(
+                        "止損參考" if lang_zh else "Stop reference",
+                        options=["tight", "balanced", "wide"],
+                        format_func=planner_stop_profile_label,
+                        index=1,
+                        key=f"{key_prefix}_stop",
+                    )
+                with control_row_one[2]:
+                    timeframe = st.selectbox(
+                        "投資期限" if lang_zh else "Time frame",
+                        options=PLANNER_TIMEFRAME_OPTIONS,
+                        format_func=planner_timeframe_label,
+                        index=PLANNER_TIMEFRAME_OPTIONS.index("6m"),
+                        key=f"{key_prefix}_timeframe",
+                    )
+                    st.session_state["dashboard_target_watch_timeframe"] = normalize_planner_timeframe(timeframe)
 
-        slider_cols = st.columns(2)
-        with slider_cols[0]:
+                control_row_two = st.columns(2)
+                with control_row_two[0]:
+                    acceptable_loss_pct = st.number_input(
+                        "最大可承受虧損 %" if lang_zh else "Max loss %",
+                        min_value=0.5,
+                        max_value=20.0,
+                        value=2.0,
+                        step=0.5,
+                        format="%.1f",
+                        key=f"{key_prefix}_max_loss_pct",
+                        help="若整體止損風險高於這個比例，系統會提示你縮小部位。" if lang_zh else "If total modeled stop-loss risk exceeds this share of capital, the planner will flag it.",
+                    )
+                with control_row_two[1]:
+                    win_rate_mode = st.selectbox(
+                        "勝率假設" if lang_zh else "Hit-rate mode",
+                        options=["conservative", "balanced", "aggressive"],
+                        format_func=planner_win_rate_label,
+                        index=1,
+                        key=f"{key_prefix}_win_rate_mode",
+                    )
+
+                control_row_three = st.columns(2)
+                with control_row_three[0]:
+                    render_html_block(slider_mode_html)
+                with control_row_three[1]:
+                    render_html_block(auto_ratio_html)
+        else:
+            control_cols = st.columns([1.1, 0.92, 0.92, 0.82, 0.78, 0.92, 0.92, 0.82])
+            with control_cols[0]:
+                capital_value = _render_capital_input_block()
+                capital = float(capital_value)
+            with control_cols[1]:
+                allocation_method = st.selectbox(
+                    "配置方式" if lang_zh else "Allocation method",
+                    options=["equal", "score_weighted"],
+                    format_func=planner_allocation_label,
+                    key=f"{key_prefix}_allocation",
+                )
+            with control_cols[2]:
+                stop_profile = st.selectbox(
+                    "止損參考" if lang_zh else "Stop reference",
+                    options=["tight", "balanced", "wide"],
+                    format_func=planner_stop_profile_label,
+                    index=1,
+                    key=f"{key_prefix}_stop",
+                )
+            with control_cols[3]:
+                timeframe = st.selectbox(
+                    "投資期限" if lang_zh else "Time frame",
+                    options=PLANNER_TIMEFRAME_OPTIONS,
+                    format_func=planner_timeframe_label,
+                    index=PLANNER_TIMEFRAME_OPTIONS.index("6m"),
+                    key=f"{key_prefix}_timeframe",
+                )
+                st.session_state["dashboard_target_watch_timeframe"] = normalize_planner_timeframe(timeframe)
+            with control_cols[4]:
+                acceptable_loss_pct = st.number_input(
+                    "最大可承受虧損 %" if lang_zh else "Max loss %",
+                    min_value=0.5,
+                    max_value=20.0,
+                    value=2.0,
+                    step=0.5,
+                    format="%.1f",
+                    key=f"{key_prefix}_max_loss_pct",
+                    help="若整體止損風險高於這個比例，系統會提示你縮小部位。" if lang_zh else "If total modeled stop-loss risk exceeds this share of capital, the planner will flag it.",
+                )
+            with control_cols[5]:
+                win_rate_mode = st.selectbox(
+                    "勝率假設" if lang_zh else "Hit-rate mode",
+                    options=["conservative", "balanced", "aggressive"],
+                    format_func=planner_win_rate_label,
+                    index=1,
+                    key=f"{key_prefix}_win_rate_mode",
+                )
+            with control_cols[6]:
+                render_html_block(slider_mode_html)
+            with control_cols[7]:
+                render_html_block(auto_ratio_html)
+
+        if compact_planner_mode:
             entry_weights = render_planner_ratio_slider(
                 "分批進場比例" if lang_zh else "Entry ladder ratio",
                 "拖曳前兩段，第三段會自動補滿為 100%。" if lang_zh else "Adjust the first two stages. The last stage fills automatically to 100%.",
@@ -9510,7 +9632,6 @@ def render_position_scenario_planner(bundles: list[dict]):
                 (40, 35, 25),
                 fill_class="",
             )
-        with slider_cols[1]:
             take_profit_weights = render_planner_ratio_slider(
                 "分批停利比例" if lang_zh else "Take-profit ratio",
                 "拖曳前兩段，第三段會自動補滿為 100%。" if lang_zh else "Adjust the first two stages. The last stage fills automatically to 100%.",
@@ -9518,6 +9639,24 @@ def render_position_scenario_planner(bundles: list[dict]):
                 (30, 40, 30),
                 fill_class="scenario-ratio-fill-up",
             )
+        else:
+            slider_cols = st.columns(2)
+            with slider_cols[0]:
+                entry_weights = render_planner_ratio_slider(
+                    "分批進場比例" if lang_zh else "Entry ladder ratio",
+                    "拖曳前兩段，第三段會自動補滿為 100%。" if lang_zh else "Adjust the first two stages. The last stage fills automatically to 100%.",
+                    f"{key_prefix}_entry_ratio",
+                    (40, 35, 25),
+                    fill_class="",
+                )
+            with slider_cols[1]:
+                take_profit_weights = render_planner_ratio_slider(
+                    "分批停利比例" if lang_zh else "Take-profit ratio",
+                    "拖曳前兩段，第三段會自動補滿為 100%。" if lang_zh else "Adjust the first two stages. The last stage fills automatically to 100%.",
+                    f"{key_prefix}_tp_ratio",
+                    (30, 40, 30),
+                    fill_class="scenario-ratio-fill-up",
+                )
 
         scenario_df, summary = build_position_scenario_rows(
             group_bundles,
