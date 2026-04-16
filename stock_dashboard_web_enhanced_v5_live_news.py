@@ -1,10 +1,14 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import os
 import json
-from html import escape, unescape
+from pathlib import Path
 import re
+import sqlite3
 import textwrap
+from datetime import datetime, timezone
+from html import escape, unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
@@ -25,6 +29,38 @@ DEFAULT_PERIOD = "1y"
 DEFAULT_INTERVAL = "1d"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
+
+DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab"]
+
+
+def dashboard_mode_label(value: str) -> str:
+    labels = {
+        "General Market": t("dashboard_mode_main"),
+        "Active ETF Lab": t("dashboard_mode_active_etf"),
+    }
+    return labels.get(str(value), str(value))
+
+
+def _safe_secret(name: str, default: str = "") -> str:
+    try:
+        value = st.secrets.get(name, default)
+    except Exception:
+        value = default
+    return str(value).strip()
+
+
+SUPABASE_URL = _safe_secret("SUPABASE_URL", os.environ.get("SUPABASE_URL", "")).rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = _safe_secret("SUPABASE_PUBLISHABLE_KEY", os.environ.get("SUPABASE_PUBLISHABLE_KEY", ""))
+SUPABASE_PROFILE_TABLE = _safe_secret("SUPABASE_PROFILE_TABLE", os.environ.get("SUPABASE_PROFILE_TABLE", "dashboard_profiles")) or "dashboard_profiles"
+AUTH_MIN_PASSWORD_LENGTH = 8
+
+ACTIVE_ETF_TRACKER_SNAPSHOT_DB = Path(".dashboard_cache") / "active_etf_tracker.sqlite3"
+ACTIVE_ETF_HOLDINGS_SOURCE_LABEL = "Yahoo Finance funds_data"
+ACTIVE_ETF_UPDATE_NOTE_EN = "This section is designed for after-close review and refreshes after 4:00 PM Asia/Taipei."
+ACTIVE_ETF_UPDATE_NOTE_ZH = "本區為收盤後追蹤用途，資訊設計為每日下午 4:00（台北時間）後更新。"
+ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00982A", "00981A"]
+
+
 
 PLANNER_TIMEFRAME_OPTIONS = ["2w", "1m", "3m", "6m", "9m", "1y"]
 PLANNER_TIMEFRAME_MONTHS = {"2w": 0.5, "1m": 1.0, "3m": 3.0, "6m": 6.0, "9m": 9.0, "1y": 12.0}
@@ -170,6 +206,33 @@ TAIWAN_TICKER_METADATA = {
     "006208.TW": {"code": "006208", "zh": "富邦台50", "en": "Fubon Taiwan 50"},
 }
 
+
+
+def _normalize_holding_alias_text(value: str) -> str:
+    return re.sub(r"[^A-Z0-9\u4e00-\u9fff]+", "", str(value or "").upper()).strip()
+
+
+def _build_taiwan_holding_alias_map() -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    for ticker, meta in TAIWAN_TICKER_METADATA.items():
+        candidates = {
+            ticker,
+            meta.get("code", ""),
+            meta.get("zh", ""),
+            meta.get("en", ""),
+            f"{meta.get('code', '')}.TW",
+            f"{meta.get('code', '')}.TWO",
+        }
+        for alias in meta.get("aliases", []) or []:
+            candidates.add(alias)
+        for candidate in list(candidates):
+            normalized = _normalize_holding_alias_text(candidate)
+            if normalized:
+                alias_map[normalized] = ticker
+    return alias_map
+
+
+TAIWAN_HOLDING_ALIAS_MAP = _build_taiwan_holding_alias_map()
 DEFAULT_WATCHLIST_UNIVERSE = sorted({ticker for group in WATCHLIST_PRESETS.values() for ticker in group} | {"TSM"})
 INTRADAY_PERIOD = "5d"
 INTRADAY_INTERVAL = "5m"
@@ -875,6 +938,85 @@ TRANSLATIONS["English"].update({
     "tw_rank_of": "#{rank} of {total}",
 })
 
+
+TRANSLATIONS["English"].update({
+    "dashboard_mode": "Dashboard mode",
+    "dashboard_mode_note": "Main Dashboard keeps the full market workflow. Active ETF Dashboard shows only active-ETF research.",
+    "dashboard_mode_main": "Main Dashboard",
+    "dashboard_mode_active_etf": "Active ETF Dashboard",
+    "active_etf_vision_deck": "Active ETF Deck",
+    "active_etf_vision_deck_copy": "A dedicated selector and after-close workspace for Taiwan active ETFs. Main Dashboard watchlists remain unchanged.",
+    "active_etf_universe": "Active ETF universe",
+    "active_etf_selector_title": "Active ETF selector",
+    "active_etf_selector_copy": "Search, add, and manage only Taiwan active ETFs here. This list is separate from the Main Dashboard watchlist.",
+    "active_etf_custom_symbols_placeholder": "Add Taiwan active ETF symbols, e.g. 00982A, 00981A",
+    "active_etf_symbol_search_placeholder": "Try 00982A, 00981A, active ETF",
+    "active_etf_search_results_help": "Search or enter Taiwan active ETF symbols. Results are normalized to Yahoo Finance format automatically when possible.",
+    "active_etf_search_results_empty": "No active ETF matches were found. You can still type a raw symbol above.",
+    "active_etf_available": "Available active ETFs",
+    "active_etf_add_selected": "Add selected ETFs",
+    "active_etf_add_all": "Add all visible ETFs",
+    "active_etf_selected": "Selected active ETFs",
+    "active_etf_remove_selected": "Remove selected ETFs",
+    "active_etf_clear_selected": "Clear ETFs",
+    "active_etf_selected_count": "{count} active ETFs selected",
+    "active_etf_watchlist_caption": "This selector is dedicated to Active ETF Dashboard and does not overwrite the Main Dashboard watchlist.",
+    "active_etf_empty_state": "No active ETFs added yet. Add symbols from the sections above.",
+    "active_etf_no_dashboard_data": "There are no active ETFs to display yet. Add Taiwan active ETF symbols from the left sidebar first.",
+    "active_etf_dashboard_kicker": "Dashboard mode",
+    "active_etf_dashboard_title": "Taiwan active ETF after-close research deck",
+    "active_etf_dashboard_copy": "A dedicated active-ETF workspace with the same news judgment, signal stack, and after-close tracker used in the Main Dashboard.",
+    "active_etf_quick_picks": "Quick picks",
+    "active_etf_quick_picks_copy": "One-tap shortcuts for commonly watched Taiwan active ETFs.",
+    "active_etf_news_scoreboard": "Active ETF news scoreboard",
+    "active_etf_news_scoreboard_copy": "Uses the Main Dashboard news engine so selected active ETFs can be compared by news pulse, signal, catalyst, and lead story in one place.",
+    "active_etf_news_score": "News score",
+    "active_etf_news_mix": "News mix",
+    "active_etf_lead_story": "Lead story",
+    "active_etf_news_leader": "News leader",
+    "active_etf_signal_leader": "Signal leader",
+    "active_etf_news_focus_note": "{ticker} currently has the strongest news pulse among selected active ETFs.",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "dashboard_mode": "Dashboard 模式",
+    "dashboard_mode_note": "主 Dashboard 保留目前完整市場研究流程；主動式 ETF Dashboard 只顯示主動式 ETF 相關研究。",
+    "dashboard_mode_main": "主 Dashboard",
+    "dashboard_mode_active_etf": "主動式 ETF Dashboard",
+    "active_etf_vision_deck": "主動式 ETF 專區",
+    "active_etf_vision_deck_copy": "專門給台股主動式 ETF 的選股與收盤後研究工作台，不會覆蓋主 Dashboard 的原本觀察清單。",
+    "active_etf_universe": "主動式 ETF 範圍",
+    "active_etf_selector_title": "主動式 ETF 選股器",
+    "active_etf_selector_copy": "這裡只搜尋、加入與管理台股主動式 ETF，並與主 Dashboard 的一般觀察清單分開保存。",
+    "active_etf_custom_symbols_placeholder": "加入台股主動式 ETF 代號，例如 00982A、00981A",
+    "active_etf_symbol_search_placeholder": "可試試 00982A、00981A、主動式 ETF",
+    "active_etf_search_results_help": "可搜尋或直接輸入台股主動式 ETF 代號，系統會盡量自動轉成 Yahoo Finance 格式。",
+    "active_etf_search_results_empty": "目前找不到符合的主動式 ETF，你仍可在上方直接輸入原始代號。",
+    "active_etf_available": "可加入的主動式 ETF",
+    "active_etf_add_selected": "加入勾選 ETF",
+    "active_etf_add_all": "加入目前可見 ETF",
+    "active_etf_selected": "已選主動式 ETF",
+    "active_etf_remove_selected": "移除勾選 ETF",
+    "active_etf_clear_selected": "清空 ETF",
+    "active_etf_selected_count": "已選 {count} 檔主動式 ETF",
+    "active_etf_watchlist_caption": "這個選股器專門給 Active ETF Dashboard 使用，不會覆蓋主 Dashboard 的原始觀察清單。",
+    "active_etf_empty_state": "目前尚未加入主動式 ETF，請先從上方加入。",
+    "active_etf_no_dashboard_data": "目前沒有可顯示的主動式 ETF。請先在左側加入台股主動式 ETF 代號。",
+    "active_etf_dashboard_kicker": "Dashboard 模式",
+    "active_etf_dashboard_title": "台股主動式 ETF 收盤後研究台",
+    "active_etf_dashboard_copy": "把主 Dashboard 的新聞判別、訊號堆疊與主動式 ETF 收盤後追蹤，整合到同一個專屬工作台。",
+    "active_etf_quick_picks": "熱門快捷",
+    "active_etf_quick_picks_copy": "一鍵加入常看的台股主動式 ETF。",
+    "active_etf_news_scoreboard": "主動式 ETF 新聞比分板",
+    "active_etf_news_scoreboard_copy": "沿用主 Dashboard 的新聞引擎，讓已選主動式 ETF 可以直接比較新聞脈動、訊號、催化劑與主導新聞。",
+    "active_etf_news_score": "新聞分數",
+    "active_etf_news_mix": "新聞結構",
+    "active_etf_lead_story": "主導新聞",
+    "active_etf_news_leader": "新聞領先",
+    "active_etf_signal_leader": "訊號領先",
+    "active_etf_news_focus_note": "{ticker} 目前在已選主動式 ETF 中擁有最強的新聞脈動。",
+})
+
 TRANSLATIONS["繁體中文"].update({
     "saved_preferences_note": "目前的設定會同步寫進網址，因此重新整理後也會保留相同的語言、新聞模式、市場範圍、觀察清單與趨勢鏡頭。",
     "tw_benchmark_layer": "台股基準層",
@@ -1128,6 +1270,54 @@ def planner_expander_helper(base_text: str, section: str, item_count: int | None
         scope_text = "依目前版型自動調整預設展開狀態。" if lang_zh else "Default expanded state adapts to the current layout mode."
 
     return f"{base_text} · {scope_text} · {mode_text}"
+
+
+def planner_panel_state_key(section: str, panel_key: str | None = None) -> str:
+    normalized = re.sub(r"[^a-z0-9_-]+", "-", str(panel_key or section).strip().lower()).strip("-")
+    return f"planner_panel_open::{section}::{normalized or section}"
+
+
+def planner_panel_state_text(is_open: bool) -> str:
+    if get_language() == "zh_TW":
+        return "目前顯示中" if is_open else "目前已隱藏"
+    return "Visible now" if is_open else "Hidden now"
+
+
+def render_dashboard_section_panel(
+    label: str,
+    section: str,
+    *,
+    item_count: int | None = None,
+    helper_base: str = "",
+    expanded: bool = False,
+    panel_key: str | None = None,
+) -> bool:
+    state_key = planner_panel_state_key(section, panel_key)
+    if state_key not in st.session_state:
+        st.session_state[state_key] = bool(expanded)
+
+    toggle_label = "顯示內容" if get_language() == "zh_TW" else "Show section"
+
+    toggle_col, title_col = st.columns([0.9, 9.1], gap="small")
+    with toggle_col:
+        is_open = st.toggle(toggle_label, key=state_key, label_visibility="collapsed")
+
+    with title_col:
+        render_html_block(
+            f"""
+            <div class="planner-panel-shell">
+                <div class="planner-panel-heading-row">
+                    <div class="planner-panel-heading">{escape(label)}</div>
+                    <div class="planner-panel-state-pill">{escape(planner_panel_state_text(bool(is_open)))}</div>
+                </div>
+            </div>
+            """
+        )
+
+    if is_open:
+        render_expander_meta(section, item_count, helper_base)
+
+    return bool(is_open)
 
 
 def normalize_device_mode(value: str | None) -> str:
@@ -1669,7 +1859,12 @@ def ticker_base_code(ticker: str) -> str:
 
 def is_taiwan_ticker(ticker: str) -> bool:
     ticker_upper = str(ticker).upper()
-    return ticker_upper.endswith(".TW") or ticker_upper.endswith(".TWO") or ticker_upper in TAIWAN_TICKER_METADATA
+    return (
+        ticker_upper.endswith(".TW")
+        or ticker_upper.endswith(".TWO")
+        or ticker_upper in TAIWAN_TICKER_METADATA
+        or bool(ACTIVE_ETF_SYMBOL_PATTERN.fullmatch(ticker_upper))
+    )
 
 
 def _normalize_symbol_lookup_token(value: str) -> str:
@@ -1908,11 +2103,63 @@ def build_symbol_search_results(query: str, scope: str, max_results: int = 12) -
     return results
 
 
+ACTIVE_ETF_SYMBOL_PATTERN = re.compile(r"^\d{5}A(?:\.(?:TW|TWO))?$", re.IGNORECASE)
+
+
+def normalize_taiwan_active_etf_symbol(raw_symbol: str) -> str:
+    symbol = str(raw_symbol or "").upper().replace(" ", "").strip()
+    if not symbol:
+        return ""
+    if not ACTIVE_ETF_SYMBOL_PATTERN.fullmatch(symbol):
+        return ""
+    base = symbol.split(".", 1)[0]
+    if symbol.endswith(".TW") or symbol.endswith(".TWO"):
+        return symbol
+    for suffix in (".TW", ".TWO"):
+        candidate = f"{base}{suffix}"
+        if yahoo_symbol_has_history(candidate):
+            return candidate
+    return f"{base}.TW"
+
+
+def filter_active_etf_tickers(tickers: list[str]) -> list[str]:
+    filtered: list[str] = []
+    for ticker in tickers:
+        normalized = normalize_taiwan_active_etf_symbol(ticker) or normalize_dashboard_ticker(ticker)
+        if not normalized or not is_taiwan_active_etf(normalized):
+            continue
+        filtered.append(normalized)
+    return dedupe_keep_order(filtered)
+
+
+def build_active_etf_search_results(query: str, max_results: int = 12) -> list[str]:
+    query_text = str(query or "").strip()
+    if not query_text:
+        return []
+
+    results: list[str] = []
+    direct_symbol = normalize_taiwan_active_etf_symbol(query_text)
+    if direct_symbol:
+        results.append(direct_symbol)
+
+    for item in fetch_remote_symbol_search(query_text, max_results=max_results):
+        symbol = normalize_taiwan_active_etf_symbol(item.get("symbol", ""))
+        if not symbol or not is_taiwan_active_etf(symbol):
+            continue
+        register_runtime_symbol_metadata(symbol, name=item.get("name", ""), exchange=item.get("exchange", ""), market="TW")
+        results.append(symbol)
+
+    return sort_ticker_options(results)
+
+
 def normalize_dashboard_ticker(raw_symbol: str) -> str:
     symbol_raw = str(raw_symbol).strip()
     symbol = symbol_raw.upper().replace(" ", "")
     if not symbol:
         return ""
+    active_etf_symbol = normalize_taiwan_active_etf_symbol(symbol_raw)
+    if active_etf_symbol:
+        return active_etf_symbol
     alias_hit = TAIWAN_ALIAS_INDEX.get(_normalize_symbol_lookup_token(symbol_raw))
     if alias_hit:
         return alias_hit
@@ -2102,8 +2349,367 @@ def _current_query_param_map() -> dict[str, str]:
     return {key: _query_param_first(key) for key in keys if _query_param_first(key)}
 
 
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+
+def init_auth_db() -> None:
+    return
+
+
+def normalize_auth_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def _supabase_is_configured() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY)
+
+
+def _supabase_headers(*, include_auth: bool = False, extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_PUBLISHABLE_KEY,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if include_auth:
+        token = st.session_state.get("auth_access_token")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _supabase_request(
+    method: str,
+    path: str,
+    *,
+    payload: dict | list | None = None,
+    include_auth: bool = False,
+    extra_headers: dict[str, str] | None = None,
+) -> tuple[int, dict | list | str]:
+    url = f"{SUPABASE_URL}{path}"
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers=_supabase_headers(include_auth=include_auth, extra=extra_headers),
+        method=method.upper(),
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            raw = response.read().decode("utf-8")
+            if not raw:
+                return response.status, {}
+            try:
+                return response.status, json.loads(raw)
+            except Exception:
+                return response.status, raw
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = raw or str(exc)
+        return exc.code, payload
+    except URLError as exc:
+        return 0, {"message": f"Supabase connection error: {exc.reason}"}
+    except Exception as exc:
+        return 0, {"message": f"Supabase request failed: {exc}"}
+
+
+def _auth_response_error(payload: dict | list | str, fallback: str) -> str:
+    if isinstance(payload, dict):
+        for key in ("msg", "message", "error_description", "error"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+    if isinstance(payload, str) and payload.strip():
+        return payload.strip()
+    return fallback
+
+
+def _store_authenticated_session(payload: dict) -> None:
+    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    access_token = payload.get("access_token") or payload.get("session", {}).get("access_token")
+    refresh_token = payload.get("refresh_token") or payload.get("session", {}).get("refresh_token")
+    expires_in = payload.get("expires_in") or payload.get("session", {}).get("expires_in")
+    email = normalize_auth_email(user.get("email") or payload.get("email"))
+    user_id = str(user.get("id") or "")
+
+    if access_token:
+        st.session_state["auth_access_token"] = str(access_token)
+    if refresh_token:
+        st.session_state["auth_refresh_token"] = str(refresh_token)
+    if expires_in:
+        try:
+            st.session_state["auth_expires_at"] = int(datetime.now(timezone.utc).timestamp()) + int(expires_in)
+        except Exception:
+            st.session_state.pop("auth_expires_at", None)
+    if email:
+        st.session_state["auth_user_email"] = email
+    if user_id:
+        st.session_state["auth_user_id"] = user_id
+
+
+def _ensure_active_supabase_session() -> bool:
+    if not is_authenticated():
+        return False
+
+    expires_at = st.session_state.get("auth_expires_at")
+    try:
+        expires_at_int = int(expires_at) if expires_at is not None else None
+    except Exception:
+        expires_at_int = None
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if expires_at_int and now_ts < max(expires_at_int - 60, 0):
+        return True
+
+    refresh_token = st.session_state.get("auth_refresh_token")
+    if not refresh_token:
+        return bool(st.session_state.get("auth_access_token"))
+
+    status, payload = _supabase_request(
+        "POST",
+        "/auth/v1/token?grant_type=refresh_token",
+        payload={"refresh_token": refresh_token},
+    )
+    if 200 <= status < 300 and isinstance(payload, dict):
+        _store_authenticated_session(payload)
+        return True
+
+    logout_authenticated_user()
+    return False
+
+
+def register_auth_user(email: str, password: str) -> tuple[bool, str]:
+    if not _supabase_is_configured():
+        return False, "Supabase is not configured."
+    email_normalized = normalize_auth_email(email)
+    password_value = str(password or "")
+
+    if not email_normalized or "@" not in email_normalized:
+        return False, "Please enter a valid email address."
+    if len(password_value) < AUTH_MIN_PASSWORD_LENGTH:
+        return False, f"Password must be at least {AUTH_MIN_PASSWORD_LENGTH} characters."
+
+    status, payload = _supabase_request(
+        "POST",
+        "/auth/v1/signup",
+        payload={"email": email_normalized, "password": password_value},
+    )
+    if not (200 <= status < 300):
+        return False, _auth_response_error(payload, "Unable to create account.")
+
+    if isinstance(payload, dict):
+        if payload.get("access_token") or payload.get("session"):
+            _store_authenticated_session(payload)
+            return True, "Account created and signed in."
+        return True, "Account created. Please confirm your email if confirmation is enabled, then sign in."
+
+    return True, "Account created."
+
+
+def authenticate_auth_user(email: str, password: str) -> tuple[bool, str]:
+    if not _supabase_is_configured():
+        return False, "Supabase is not configured."
+    email_normalized = normalize_auth_email(email)
+    status, payload = _supabase_request(
+        "POST",
+        "/auth/v1/token?grant_type=password",
+        payload={"email": email_normalized, "password": str(password or "")},
+    )
+    if not (200 <= status < 300) or not isinstance(payload, dict):
+        return False, _auth_response_error(payload, "Incorrect email or password.")
+
+    _store_authenticated_session(payload)
+    return True, normalize_auth_email(st.session_state.get("auth_user_email", email_normalized))
+
+
+def load_user_profile(email: str) -> dict[str, str]:
+    email_normalized = normalize_auth_email(email)
+    user_id = str(st.session_state.get("auth_user_id", "")).strip()
+    if not email_normalized or not user_id:
+        return {}
+    if not _ensure_active_supabase_session():
+        return {}
+
+    select_query = quote_plus("user_id,email,preferences,updated_at")
+    path = f"/rest/v1/{SUPABASE_PROFILE_TABLE}?select={select_query}&user_id=eq.{quote_plus(user_id)}&limit=1"
+    status, payload = _supabase_request("GET", path, include_auth=True)
+    if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
+        return {}
+
+    row = payload[0] if isinstance(payload[0], dict) else {}
+    preferences = row.get("preferences", {})
+    if isinstance(preferences, str):
+        try:
+            preferences = json.loads(preferences)
+        except Exception:
+            preferences = {}
+    if not isinstance(preferences, dict):
+        preferences = {}
+
+    clean = {str(key): str(value) for key, value in preferences.items() if value is not None}
+    st.session_state["_auth_last_saved_profile_payload"] = clean
+    return clean
+
+
+def save_user_profile(email: str, params: dict[str, str]) -> None:
+    email_normalized = normalize_auth_email(email)
+    user_id = str(st.session_state.get("auth_user_id", "")).strip()
+    if not email_normalized or not user_id:
+        return
+    if not _ensure_active_supabase_session():
+        return
+
+    clean = {str(key): str(value) for key, value in params.items() if value not in (None, "")}
+    last_saved = st.session_state.get("_auth_last_saved_profile_payload")
+    if clean == last_saved:
+        return
+
+    row = {
+        "user_id": user_id,
+        "email": email_normalized,
+        "preferences": clean,
+        "updated_at": _utc_now_iso(),
+    }
+    path = f"/rest/v1/{SUPABASE_PROFILE_TABLE}?on_conflict=user_id"
+    status, payload = _supabase_request(
+        "POST",
+        path,
+        payload=row,
+        include_auth=True,
+        extra_headers={"Prefer": "resolution=merge-duplicates,return=representation"},
+    )
+    if 200 <= status < 300:
+        st.session_state["_auth_last_saved_profile_payload"] = clean
+        return
+
+    error_message = _auth_response_error(
+        payload,
+        f"Unable to save profile to `{SUPABASE_PROFILE_TABLE}`. Please create the table and RLS policies in Supabase.",
+    )
+    st.session_state["auth_profile_save_error"] = error_message
+
+
+def is_authenticated() -> bool:
+    return bool(normalize_auth_email(st.session_state.get("auth_user_email", ""))) and bool(st.session_state.get("auth_access_token"))
+
+
+def get_authenticated_email() -> str:
+    return normalize_auth_email(st.session_state.get("auth_user_email", ""))
+
+
+def logout_authenticated_user() -> None:
+    for key in [
+        "auth_user_email",
+        "auth_user_id",
+        "auth_access_token",
+        "auth_refresh_token",
+        "auth_expires_at",
+        "_auth_last_saved_profile_payload",
+        "_dashboard_prefs_loaded",
+        "auth_profile_save_error",
+    ]:
+        st.session_state.pop(key, None)
+
+
+def auth_label(en_text: str, zh_text: str) -> str:
+    return zh_text if st.session_state.get("dashboard_language") == "繁體中文" else en_text
+
+
+def render_auth_sidebar() -> None:
+    render_html_block(f'<div class="side-group-label">{auth_label("Account", "帳號")}</div>')
+    render_html_block(
+        f'''
+        <div class="sidebar-auth-shell">
+            <div class="sidebar-auth-title">{escape(auth_label("Member access", "會員登入"))}</div>
+            <div class="sidebar-auth-copy">{escape(auth_label("Sign in to keep your personal dashboard selections, language, watchlists, and device preferences in sync.", "登入後可保留你的儀表板選擇、語言、觀察清單與裝置偏好設定。"))}</div>
+        </div>
+        '''
+    )
+    if not _supabase_is_configured():
+        st.warning(auth_label("Supabase is not configured yet.", "Supabase 尚未設定完成。"))
+        return
+
+    profile_error = st.session_state.get("auth_profile_save_error")
+    if profile_error and not is_authenticated():
+        st.session_state.pop("auth_profile_save_error", None)
+
+    if is_authenticated():
+        _ensure_active_supabase_session()
+        email = get_authenticated_email()
+        st.success(auth_label(f"Signed in as {email}", f"已登入：{email}"))
+        st.caption(auth_label("Your dashboard selections are saved to your Supabase profile automatically.", "你的儀表板選擇會自動儲存到 Supabase 個人設定。"))
+        if profile_error:
+            st.warning(profile_error)
+        col_save, col_logout = st.columns(2)
+        with col_save:
+            if st.button(auth_label("Reload profile", "重新載入設定"), use_container_width=True, key="auth_reload_profile_button"):
+                st.session_state["_dashboard_prefs_loaded"] = False
+                st.rerun()
+        with col_logout:
+            if st.button(auth_label("Log out", "登出"), use_container_width=True, key="auth_logout_button"):
+                logout_authenticated_user()
+                st.rerun()
+        return
+
+    login_tab, register_tab = st.tabs(
+        [
+            auth_label("Sign in", "登入"),
+            auth_label("Register", "註冊"),
+        ]
+    )
+
+    with login_tab:
+        login_email = st.text_input(
+            auth_label("Email", "電子郵件"),
+            key="auth_login_email",
+            placeholder="name@example.com",
+        )
+        login_password = st.text_input(
+            auth_label("Password", "密碼"),
+            type="password",
+            key="auth_login_password",
+        )
+        if st.button(auth_label("Sign in", "登入"), use_container_width=True, key="auth_login_submit"):
+            ok, payload = authenticate_auth_user(login_email, login_password)
+            if ok:
+                st.session_state["_auth_last_saved_profile_payload"] = load_user_profile(payload)
+                st.session_state["_dashboard_prefs_loaded"] = False
+                st.rerun()
+            st.error(payload)
+
+    with register_tab:
+        register_email = st.text_input(
+            auth_label("Email", "電子郵件"),
+            key="auth_register_email",
+            placeholder="name@example.com",
+        )
+        register_password = st.text_input(
+            auth_label("Password", "密碼"),
+            type="password",
+            key="auth_register_password",
+        )
+        if st.button(auth_label("Create account", "建立帳號"), use_container_width=True, key="auth_register_submit"):
+            ok, payload = register_auth_user(register_email, register_password)
+            if ok:
+                st.success(payload)
+                if is_authenticated():
+                    st.session_state["_dashboard_prefs_loaded"] = False
+                    st.rerun()
+            else:
+                st.error(payload)
+
+
 def save_dashboard_preferences(params: dict[str, str]) -> None:
     clean = {key: str(value) for key, value in params.items() if value not in (None, "")}
+    if is_authenticated():
+        save_user_profile(get_authenticated_email(), clean)
     if clean == _current_query_param_map():
         return
     try:
@@ -2125,50 +2731,67 @@ def load_dashboard_preferences() -> None:
     if st.session_state.get("_dashboard_prefs_loaded"):
         return
 
-    language = _query_param_first("lang") or st.session_state.get("dashboard_language", "English")
+    user_profile = load_user_profile(get_authenticated_email()) if is_authenticated() else {}
+
+    def _profile_value(key: str) -> str:
+        return str(user_profile.get(key, "")) if key in user_profile else ""
+
+    dashboard_mode = _query_param_first("mode") or _profile_value("mode") or st.session_state.get("dashboard_mode", "General Market")
+    if dashboard_mode not in DASHBOARD_MODE_OPTIONS:
+        dashboard_mode = "General Market"
+
+    language = _query_param_first("lang") or _profile_value("lang") or st.session_state.get("dashboard_language", "English")
     if language not in LANGUAGE_OPTIONS:
         language = "English"
 
-    news_mode = _query_param_first("news") or st.session_state.get("dashboard_news_mode", "Original source")
+    news_mode = _query_param_first("news") or _profile_value("news") or st.session_state.get("dashboard_news_mode", "Original source")
     if news_mode not in NEWS_DISPLAY_OPTIONS:
         news_mode = "Original source"
 
-    device_control_mode = _query_param_first("devicectl") or st.session_state.get("dashboard_device_control_mode", "Auto detect")
+    device_control_mode = _query_param_first("devicectl") or _profile_value("devicectl") or st.session_state.get("dashboard_device_control_mode", "Auto detect")
     if device_control_mode not in DEVICE_CONTROL_OPTIONS:
         device_control_mode = "Auto detect"
 
-    device_mode = normalize_device_mode(_query_param_first("device") or st.session_state.get("dashboard_device_mode", "Desktop"))
+    device_mode = normalize_device_mode(_query_param_first("device") or _profile_value("device") or st.session_state.get("dashboard_device_mode", "Desktop"))
 
-    market_scope = _query_param_first("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    market_scope = _query_param_first("scope") or _profile_value("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
     if market_scope not in MARKET_SCOPE_OPTIONS:
         market_scope = "Mixed (U.S. + Taiwan)"
 
-    groups = _csv_decode(_query_param_first("groups"))
+    groups = _csv_decode(_query_param_first("groups") or _profile_value("groups"))
     groups = [group for group in groups if group in market_scope_group_options(market_scope)]
     if not groups:
         groups = list(MARKET_SCOPE_DEFAULT_GROUPS[market_scope])
 
-    picks_param_present = _query_param_exists("picks")
+    picks_param_present = _query_param_exists("picks") or bool(_profile_value("picks"))
     picks = [
         normalize_dashboard_ticker(value)
-        for value in _csv_decode(_query_param_first("picks"), empty_sentinel=EMPTY_SELECTION_SENTINEL)
+        for value in _csv_decode(_query_param_first("picks") or _profile_value("picks"), empty_sentinel=EMPTY_SELECTION_SENTINEL)
     ]
     picks = filter_tickers_for_market_scope(picks, market_scope)
-    custom_symbols = _query_param_first("custom") or st.session_state.get("dashboard_custom_symbols", "")
-    symbol_search = _query_param_first("search") or st.session_state.get("dashboard_symbol_search", "")
+    custom_symbols = _query_param_first("custom") or _profile_value("custom") or st.session_state.get("dashboard_custom_symbols", "")
+    symbol_search = _query_param_first("search") or _profile_value("search") or st.session_state.get("dashboard_symbol_search", "")
 
-    lens_name = _query_param_first("lens") or st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
+    active_etf_picks_param_present = _query_param_exists("etfpicks") or bool(_profile_value("etfpicks"))
+    active_etf_picks = filter_active_etf_tickers(
+        _csv_decode(_query_param_first("etfpicks") or _profile_value("etfpicks"), empty_sentinel=EMPTY_SELECTION_SENTINEL)
+    )
+    active_etf_custom_symbols = _query_param_first("etfcustom") or _profile_value("etfcustom") or st.session_state.get("dashboard_active_etf_custom_symbols", "")
+    active_etf_symbol_search = _query_param_first("etfsearch") or _profile_value("etfsearch") or st.session_state.get("dashboard_active_etf_symbol_search", "")
+
+    lens_name = _query_param_first("lens") or _profile_value("lens") or st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
     if lens_name not in TREND_LENSES:
         lens_name = DEFAULT_TREND_LENS
 
-    manual_override = (_query_param_first("manual") or "0") == "1"
-    manual_period = _query_param_first("period") or st.session_state.get("dashboard_manual_period", DEFAULT_PERIOD)
+    manual_override = ((_query_param_first("manual") or _profile_value("manual") or "0") == "1")
+    manual_period = _query_param_first("period") or _profile_value("period") or st.session_state.get("dashboard_manual_period", DEFAULT_PERIOD)
     if manual_period not in SUPPORTED_PERIODS:
         manual_period = DEFAULT_PERIOD
-    manual_interval = _query_param_first("interval") or st.session_state.get("dashboard_manual_interval", DEFAULT_INTERVAL)
+    manual_interval = _query_param_first("interval") or _profile_value("interval") or st.session_state.get("dashboard_manual_interval", DEFAULT_INTERVAL)
     if manual_interval not in SUPPORTED_INTERVALS:
         manual_interval = DEFAULT_INTERVAL
 
+    st.session_state["dashboard_mode"] = dashboard_mode
     st.session_state["dashboard_language"] = language
     st.session_state["dashboard_news_mode"] = news_mode
     st.session_state["dashboard_device_control_mode"] = device_control_mode
@@ -2180,6 +2803,10 @@ def load_dashboard_preferences() -> None:
     st.session_state["dashboard_selected_tickers_initialized"] = picks_param_present or bool(picks)
     st.session_state["dashboard_custom_symbols"] = custom_symbols
     st.session_state["dashboard_symbol_search"] = symbol_search
+    st.session_state["dashboard_active_etf_tickers"] = active_etf_picks
+    st.session_state["dashboard_active_etf_tickers_initialized"] = active_etf_picks_param_present or bool(active_etf_picks)
+    st.session_state["dashboard_active_etf_custom_symbols"] = active_etf_custom_symbols
+    st.session_state["dashboard_active_etf_symbol_search"] = active_etf_symbol_search
     st.session_state["dashboard_lens_name"] = lens_name
     st.session_state["dashboard_manual_override"] = manual_override
     st.session_state["dashboard_manual_period"] = manual_period
@@ -2674,6 +3301,82 @@ def inject_css():
             border-radius: 18px;
             font-weight: 900;
             box-shadow: 0 14px 30px rgba(0,0,0,.20);
+        }
+
+        .sidebar-auth-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top right, rgba(230, 181, 94, 0.18) 0%, rgba(230, 181, 94, 0) 34%),
+                linear-gradient(180deg, rgba(17, 25, 43, 0.96) 0%, rgba(10, 16, 33, 0.98) 100%);
+            border: 1px solid rgba(230,181,94,0.18);
+            border-radius: 22px;
+            padding: 16px 16px 14px 16px;
+            box-shadow: 0 18px 36px rgba(0,0,0,.20);
+            margin-top: 8px;
+            margin-bottom: 14px;
+        }
+
+        .sidebar-auth-title {
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: -0.03em;
+            color: #fff8ea !important;
+            line-height: 1.05;
+        }
+
+        .sidebar-auth-copy {
+            font-size: 13px;
+            line-height: 1.58;
+            color: rgba(238,242,255,.78) !important;
+            margin-top: 8px;
+        }
+
+        section[data-testid="stSidebar"] .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+            background: rgba(255,255,255,.05) !important;
+            border: 1px solid rgba(255,255,255,.10) !important;
+            border-radius: 18px !important;
+            padding: 6px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.02), 0 10px 24px rgba(0,0,0,.14) !important;
+            margin-top: 8px;
+            margin-bottom: 12px;
+        }
+
+        section[data-testid="stSidebar"] .stTabs [data-baseweb="tab-list"]::before {
+            content: none !important;
+            display: none !important;
+        }
+
+        section[data-testid="stSidebar"] .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(255,255,255,.04) 0%, rgba(255,255,255,.02) 100%) !important;
+            border: 1px solid rgba(255,255,255,.08) !important;
+            border-radius: 999px !important;
+            color: rgba(238,242,255,.82) !important;
+            min-height: 44px !important;
+            padding: 10px 14px !important;
+            font-weight: 800 !important;
+            box-shadow: none !important;
+        }
+
+        section[data-testid="stSidebar"] .stTabs [aria-selected="true"] {
+            background:
+                radial-gradient(circle at top left, rgba(230,181,94,.18) 0%, rgba(230,181,94,0) 36%),
+                linear-gradient(180deg, rgba(31, 40, 65, 0.96) 0%, rgba(16, 24, 43, 0.98) 100%) !important;
+            border-color: rgba(230,181,94,.24) !important;
+            color: #fff8ea !important;
+            box-shadow: inset 0 -2px 0 rgba(230,181,94,.92), 0 12px 24px rgba(0,0,0,.16) !important;
+        }
+
+        section[data-testid="stSidebar"] .stTabs [aria-selected="true"] * {
+            color: #fff8ea !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stAlert"] {
+            background: linear-gradient(180deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%) !important;
+            border: 1px solid rgba(255,255,255,.10) !important;
+            border-radius: 18px !important;
+            color: #eef2ff !important;
         }
 
         .editorial-hero {
@@ -4801,6 +5504,49 @@ def inject_css():
             margin: 10px 0 18px 0;
         }
 
+        .planner-panel-shell {
+            background:
+                radial-gradient(circle at top left, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 34%),
+                linear-gradient(180deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%);
+            border: 1px solid rgba(244, 197, 106, 0.14);
+            border-radius: 18px;
+            padding: 13px 16px;
+            box-shadow: 0 14px 30px rgba(0,0,0,.18);
+            margin: 0 0 6px 0;
+        }
+
+        .planner-panel-heading-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .planner-panel-heading {
+            color: #f8f1e5;
+            font-weight: 900;
+            letter-spacing: .03em;
+            font-size: 1.02rem;
+            line-height: 1.35;
+        }
+
+        .planner-panel-state-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 11px;
+            border-radius: 999px;
+            background: rgba(12, 30, 67, 0.78);
+            border: 1px solid rgba(104, 186, 255, 0.22);
+            color: #b8dfff;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
         .planner-stack-spacer {
             height: 18px;
         }
@@ -4810,22 +5556,45 @@ def inject_css():
         }
 
         .streamlit-expanderHeader,
-        details[data-testid="stExpander"] summary {
+        details[data-testid="stExpander"] > summary,
+        details[data-testid="stExpander"] > summary:hover,
+        details[data-testid="stExpander"] > summary:focus,
+        details[data-testid="stExpander"] > summary:focus-visible {
             background:
                 radial-gradient(circle at top left, rgba(244, 197, 106, 0.10) 0%, rgba(244, 197, 106, 0) 34%),
-                linear-gradient(180deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%);
-            border: 1px solid rgba(244, 197, 106, 0.14);
-            border-radius: 18px;
+                linear-gradient(180deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%) !important;
+            border: 1px solid rgba(244, 197, 106, 0.14) !important;
+            border-radius: 18px !important;
             color: #f8f1e5 !important;
             font-weight: 900 !important;
             letter-spacing: .03em;
             padding: 13px 16px !important;
-            box-shadow: 0 14px 30px rgba(0,0,0,.18);
+            box-shadow: 0 14px 30px rgba(0,0,0,.18) !important;
+            outline: none !important;
+            list-style: none !important;
+            overflow: hidden !important;
         }
 
-        details[data-testid="stExpander"] summary:hover {
-            border-color: rgba(244, 197, 106, 0.24);
-            box-shadow: 0 16px 34px rgba(0,0,0,.22);
+        details[data-testid="stExpander"] > summary::-webkit-details-marker {
+            display: none !important;
+        }
+
+        details[data-testid="stExpander"] > summary::marker {
+            content: "" !important;
+        }
+
+        details[data-testid="stExpander"] > summary > *,
+        details[data-testid="stExpander"] > summary [data-testid="stMarkdownContainer"],
+        details[data-testid="stExpander"] > summary [data-testid="stMarkdownContainer"] > p,
+        details[data-testid="stExpander"] > summary p {
+            background: transparent !important;
+            color: inherit !important;
+            margin-bottom: 0 !important;
+        }
+
+        details[data-testid="stExpander"] > summary:hover {
+            border-color: rgba(244, 197, 106, 0.24) !important;
+            box-shadow: 0 16px 34px rgba(0,0,0,.22) !important;
         }
 
         details[data-testid="stExpander"] {
@@ -5180,7 +5949,16 @@ def inject_css():
         }
 
 
-</style>
+
+        .etf-tracker-shell, .etf-tracker-panel-shell {
+            background: linear-gradient(180deg, var(--paper) 0%, #fbf8f1 100%);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-md);
+        }
+        .etf-tracker-panel-shell { padding-bottom: 8px; }
+
+        </style>
         """,
         unsafe_allow_html=True,
     )
@@ -5757,6 +6535,15 @@ def inject_premium_overrides():
                 font-size: 13px !important;
             }
         }
+        
+        .etf-tracker-shell, .etf-tracker-panel-shell {
+            background: linear-gradient(180deg, var(--paper) 0%, #fbf8f1 100%);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-md);
+        }
+        .etf-tracker-panel-shell { padding-bottom: 8px; }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -7665,9 +8452,9 @@ def render_news_stream(ticker: str, news_items: list[dict]):
 def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None, selected_count: int = 1):
     lens_display = tr_lens_meta(lens_meta or {"title": "Position View", "how_to_read": "Use this view to confirm structure."})
     trend_base_label = (
-        "展開／收合 Trend Lab 與 K 線確認"
+        "Trend Lab 與 K 線確認"
         if get_language() == "zh_TW"
-        else "Expand / collapse Trend Lab & candlestick confirmation"
+        else "Trend Lab & candlestick confirmation"
     )
     trend_helper_base = (
         "檢視日線／盤中 K 線、技術指標與目前的交易結構。"
@@ -7675,11 +8462,15 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
         else "Review daily and intraday candlesticks, technical indicators, and the current trade structure."
     )
 
-    with st.expander(
+    trend_panel_open = render_dashboard_section_panel(
         planner_expander_label(trend_base_label, "trend", selected_count),
+        "trend",
+        item_count=selected_count,
+        helper_base=trend_helper_base,
         expanded=planner_auto_expand("trend", selected_count),
-    ):
-        render_expander_meta("trend", selected_count, trend_helper_base)
+        panel_key=f"trend::{str(analysis.get('ticker') or 'panel').upper()}",
+    )
+    if trend_panel_open:
 
         st.markdown(
             f"""
@@ -9836,10 +10627,12 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
     if len(bundles) < 2:
         return
 
+    active_etf_bundles = [bundle for bundle in bundles if is_taiwan_active_etf(bundle["ticker"])]
+
     comparison_base_label = (
-        "展開／收合 Comparison Arena"
+        "Comparison Arena"
         if get_language() == "zh_TW"
-        else "Expand / collapse Comparison Arena"
+        else "Comparison Arena"
     )
     comparison_helper_base = (
         "檢視多檔股票的贏家卡、機會雷達與比較總覽。"
@@ -9847,11 +10640,19 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         else "Review the winner card, opportunity radar, and cross-ticker comparison overview."
     )
 
-    with st.expander(
+    comparison_panel_open = render_dashboard_section_panel(
         planner_expander_label(comparison_base_label, "comparison", len(bundles)),
+        "comparison",
+        item_count=len(bundles),
+        helper_base=comparison_helper_base,
         expanded=planner_auto_expand("comparison", len(bundles)),
-    ):
-        render_expander_meta("comparison", len(bundles), comparison_helper_base)
+        panel_key="comparison-arena",
+    )
+    if comparison_panel_open:
+
+        if len(active_etf_bundles) == 2:
+            render_active_etf_pair_comparison(active_etf_bundles[0]["ticker"], active_etf_bundles[1]["ticker"])
+
         render_winner_card(bundles, lens_meta=lens_meta)
         render_opportunity_radar(bundles, lens_meta=lens_meta)
 
@@ -10051,7 +10852,7 @@ def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_dat
         return
 
     planner_base_label = (
-        "展開／收合情境規劃組" if get_language() == "zh_TW" else "Expand / collapse scenario planning stack"
+        "情境規劃組" if get_language() == "zh_TW" else "Scenario planning stack"
     )
     planner_helper_base = (
         "這一組包含 Scenario Model、Entry ladder ratio、Advanced decision board、Portfolio Execution framework，以及 Entry / Exit / Risk Summary。"
@@ -10059,11 +10860,15 @@ def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_dat
         else "This stack includes Scenario Model, Entry ladder ratio, Advanced decision board, Portfolio Execution framework, and Entry / Exit / Risk Summary."
     )
 
-    with st.expander(
+    scenario_panel_open = render_dashboard_section_panel(
         planner_expander_label(planner_base_label, "scenario", len(bundles)),
+        "scenario",
+        item_count=len(bundles),
+        helper_base=planner_helper_base,
         expanded=planner_auto_expand("scenario", len(bundles)),
-    ):
-        render_expander_meta("scenario", len(bundles), planner_helper_base)
+        panel_key="scenario-planning-stack",
+    )
+    if scenario_panel_open:
         render_position_scenario_planner(bundles)
     render_html_block('<div class="planner-stack-spacer"></div>')
 
@@ -10103,17 +10908,21 @@ def render_precomparison_target_and_brief_groups(
     if not bundles:
         return
 
-    target_base_label = "展開／收合 Target Tracking" if get_language() == "zh_TW" else "Expand / collapse Target Tracking"
+    target_base_label = "Target Tracking" if get_language() == "zh_TW" else "Target Tracking"
     target_helper_base = (
         "先看各檔股票的目標價區間、落差與目標價相關新聞。"
         if get_language() == "zh_TW"
         else "Review target bands, current gaps, and target-related headlines before comparison."
     )
-    with st.expander(
+    target_panel_open = render_dashboard_section_panel(
         planner_expander_label(target_base_label, "target", len(bundles)),
+        "target",
+        item_count=len(bundles),
+        helper_base=target_helper_base,
         expanded=planner_auto_expand("target", len(bundles)),
-    ):
-        render_expander_meta("target", len(bundles), target_helper_base)
+        panel_key="target-tracking-stack",
+    )
+    if target_panel_open:
         for idx, bundle in enumerate(bundles, start=1):
             ticker = bundle["ticker"]
             context = build_target_watch_context(
@@ -10127,30 +10936,33 @@ def render_precomparison_target_and_brief_groups(
             if idx != len(bundles):
                 render_html_block('<div class="group-stack-divider"></div>')
 
-    brief_base_label = "展開／收合 Decision Brief" if get_language() == "zh_TW" else "Expand / collapse Decision Brief"
+    brief_base_label = "Decision Brief" if get_language() == "zh_TW" else "Decision Brief"
     brief_helper_base = (
         "先掌握每檔股票的目前立場、主導催化與下一步執行摘要。"
         if get_language() == "zh_TW"
         else "Review the current stance, dominant catalyst, and next-step execution brief for each ticker."
     )
-    with st.expander(
+    brief_panel_open = render_dashboard_section_panel(
         planner_expander_label(brief_base_label, "brief", len(bundles)),
+        "brief",
+        item_count=len(bundles),
+        helper_base=brief_helper_base,
         expanded=planner_auto_expand("brief", len(bundles)),
-    ):
-        render_expander_meta("brief", len(bundles), brief_helper_base)
+        panel_key="decision-brief-stack",
+    )
+    if brief_panel_open:
         for idx, bundle in enumerate(bundles, start=1):
             render_decision_brief(bundle["ticker"], bundle["analysis"], bundle["intraday"], bundle["news_items"])
             if idx != len(bundles):
                 render_html_block('<div class="group-stack-divider"></div>')
 
 
-def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None, selected_count: int = 1):
-    bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
-    if bundle is None:
-        st.warning("找不到可用的價格序列。" if get_lang() == "繁體中文" else f"No usable price series found for {display_ticker_label(ticker)}.")
+def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selected_count: int = 1):
+    ticker = str(bundle.get("ticker", "")).upper()
+    if not ticker:
         return
 
-    if bundle["news_error"]:
+    if bundle.get("news_error"):
         st.warning(bundle["news_error"])
 
     analysis = bundle["analysis"]
@@ -10160,26 +10972,34 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
     intraday_ohlc = bundle.get("intraday_ohlc", pd.DataFrame())
 
     render_news_first_section(ticker, analysis, intraday, news_items)
+    render_decision_brief(ticker, analysis, intraday, news_items)
 
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
         render_taiwan_benchmark_layer(ticker, benchmark)
 
+    if is_taiwan_active_etf(ticker):
+        render_active_etf_tracker_section(ticker, selected_count=selected_count)
+
     alert_base_label = (
-        f"展開／收合 {display_ticker_label(ticker)} 警示層"
+        f"{display_ticker_label(ticker)} 警示層"
         if get_language() == "zh_TW"
-        else f"Expand / collapse {display_ticker_label(ticker)} alert layer"
+        else f"{display_ticker_label(ticker)} alert layer"
     )
     alert_helper_base = (
         "檢視不同鏡頭下的多空狀態與目前焦點。"
         if get_language() == "zh_TW"
         else "Review bullish, neutral, and bearish lens states plus the current focus."
     )
-    with st.expander(
+    alert_panel_open = render_dashboard_section_panel(
         planner_expander_label(alert_base_label, "alert", selected_count),
+        "alert",
+        item_count=selected_count,
+        helper_base=alert_helper_base,
         expanded=planner_auto_expand("alert", selected_count),
-    ):
-        render_expander_meta("alert", selected_count, alert_helper_base)
+        panel_key=f"alert::{ticker}",
+    )
+    if alert_panel_open:
         render_alert_layer(analysis, intraday)
 
     render_reference_guide(analysis, ticker, news_items)
@@ -10192,6 +11012,1764 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
         intraday_ohlc=intraday_ohlc,
         selected_count=selected_count,
     )
+
+
+def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None, selected_count: int = 1):
+    bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
+    if bundle is None:
+        st.warning("找不到可用的價格序列。" if get_lang() == "繁體中文" else f"No usable price series found for {display_ticker_label(ticker)}.")
+        return
+    render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=selected_count)
+
+
+def is_taiwan_active_etf(ticker: str) -> bool:
+    ticker_upper = str(ticker or "").upper().strip()
+    if not is_taiwan_ticker(ticker_upper):
+        return False
+    code = ticker_base_code(ticker_upper)
+    return len(code) == 6 and code.endswith("A")
+
+
+def _safe_float(value, default: float = float("nan")) -> float:
+    try:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return default
+        if isinstance(value, str):
+            cleaned = (
+                value.replace(",", "")
+                .replace("%", "")
+                .replace("＋", "")
+                .replace("+", "")
+                .replace("--", "")
+                .strip()
+            )
+            if cleaned in {"", "-", "nan", "None"}:
+                return default
+            return float(cleaned)
+        return float(value)
+    except Exception:
+        return default
+
+
+def _format_signed_integer(value: float, unit: str = "") -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    prefix = "+" if value > 0 else ""
+    return f"{prefix}{int(round(value)):,}{unit}"
+
+
+def _format_percent_compact(value: float, digits: int = 2) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:+.{digits}f}%"
+
+
+def _ensure_active_etf_snapshot_db() -> None:
+    ACTIVE_ETF_TRACKER_SNAPSHOT_DB.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(ACTIVE_ETF_TRACKER_SNAPSHOT_DB) as conn:
+        conn.execute(
+            """
+            create table if not exists etf_holdings_snapshots (
+                ticker text not null,
+                snapshot_date text not null,
+                holdings_json text not null,
+                source text not null default '',
+                created_at text not null default current_timestamp,
+                primary key (ticker, snapshot_date)
+            )
+            """
+        )
+        conn.commit()
+
+
+def _normalize_holdings_records(records: list[dict], max_items: int = 15) -> list[dict]:
+    cleaned: list[dict] = []
+    for item in records or []:
+        name = str(item.get("name", "")).strip()
+        weight = _safe_float(item.get("weight"))
+        if not name or pd.isna(weight):
+            continue
+        if abs(weight) <= 1.5:
+            weight *= 100.0
+        cleaned.append({"name": name, "weight": float(weight)})
+    cleaned.sort(key=lambda row: row["weight"], reverse=True)
+    return cleaned[:max_items]
+
+
+def _snapshot_today_string() -> str:
+    return datetime.now(TW_TZ).date().isoformat()
+
+
+def _upsert_active_etf_snapshot(ticker: str, records: list[dict], source: str = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL) -> None:
+    normalized = _normalize_holdings_records(records)
+    if not normalized:
+        return
+    _ensure_active_etf_snapshot_db()
+    snapshot_date = _snapshot_today_string()
+    with sqlite3.connect(ACTIVE_ETF_TRACKER_SNAPSHOT_DB) as conn:
+        conn.execute(
+            """
+            insert into etf_holdings_snapshots (ticker, snapshot_date, holdings_json, source)
+            values (?, ?, ?, ?)
+            on conflict(ticker, snapshot_date) do update set
+                holdings_json = excluded.holdings_json,
+                source = excluded.source,
+                created_at = current_timestamp
+            """,
+            (str(ticker).upper(), snapshot_date, json.dumps(normalized, ensure_ascii=False), source),
+        )
+        conn.commit()
+
+
+def _load_previous_active_etf_snapshot(ticker: str) -> tuple[list[dict], str | None, str]:
+    _ensure_active_etf_snapshot_db()
+    current_date = _snapshot_today_string()
+    with sqlite3.connect(ACTIVE_ETF_TRACKER_SNAPSHOT_DB) as conn:
+        row = conn.execute(
+            """
+            select holdings_json, snapshot_date, source
+            from etf_holdings_snapshots
+            where ticker = ? and snapshot_date < ?
+            order by snapshot_date desc
+            limit 1
+            """,
+            (str(ticker).upper(), current_date),
+        ).fetchone()
+    if not row:
+        return [], None, ""
+    try:
+        payload = json.loads(row[0]) if row[0] else []
+    except Exception:
+        payload = []
+    return payload, row[1], row[2] or ""
+
+
+def _pick_name_and_weight_columns(df: pd.DataFrame) -> tuple[str | None, str | None]:
+    columns = list(df.columns)
+    lowered = {str(col).lower(): col for col in columns}
+    for candidate in ("holding", "name", "company", "symbol", "ticker"):
+        for lower_name, original in lowered.items():
+            if candidate in lower_name:
+                name_col = original
+                break
+        else:
+            continue
+        break
+    else:
+        name_col = None
+
+    weight_col = None
+    for candidate in ("weight", "holding", "percent", "percentage", "portfolio"):
+        for lower_name, original in lowered.items():
+            if candidate in lower_name:
+                weight_col = original
+                break
+        if weight_col is not None:
+            break
+
+    if name_col is None and len(columns) >= 1:
+        first = columns[0]
+        if not pd.api.types.is_numeric_dtype(df[first]):
+            name_col = first
+
+    if weight_col is None:
+        numeric_candidates = [col for col in columns if pd.api.types.is_numeric_dtype(df[col])]
+        if numeric_candidates:
+            weight_col = numeric_candidates[0]
+        elif len(columns) >= 2:
+            weight_col = columns[-1]
+    return name_col, weight_col
+
+
+
+
+def _is_numericish_holding_token(value) -> bool:
+    raw = str(value or "").strip().replace(",", "").replace("%", "")
+    if not raw:
+        return False
+    try:
+        float(raw)
+        return True
+    except Exception:
+        return False
+
+
+def resolve_holding_display_name(name: str) -> str:
+    raw_name = str(name or "").strip()
+    if not raw_name:
+        return "N/A"
+
+    normalized = normalize_dashboard_ticker(raw_name)
+    if normalized and normalized != raw_name and (normalized in TAIWAN_TICKER_METADATA or is_taiwan_ticker(normalized)):
+        return display_ticker_label(normalized)
+
+    if raw_name.upper() in TAIWAN_TICKER_METADATA or is_taiwan_ticker(raw_name):
+        return display_ticker_label(raw_name)
+
+    base_code_match = re.search(r"\b(\d{4,6})(?:\.TW|\.TWO)?\b", raw_name.upper())
+    if base_code_match:
+        resolved = normalize_dashboard_ticker(base_code_match.group(1))
+        if resolved:
+            label = display_ticker_label(resolved)
+            if label:
+                return label
+
+    alias_key = _normalize_holding_alias_text(raw_name)
+    matched_ticker = TAIWAN_HOLDING_ALIAS_MAP.get(alias_key)
+    if matched_ticker:
+        return display_ticker_label(matched_ticker)
+
+    for alias, ticker in TAIWAN_HOLDING_ALIAS_MAP.items():
+        if alias and (alias in alias_key or alias_key in alias):
+            return display_ticker_label(ticker)
+
+    return raw_name
+
+
+def inject_active_etf_tracker_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .etf-tracker-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.92) 0%, rgba(8, 14, 28, 0.98) 100%);
+            box-shadow: 0 18px 40px rgba(0,0,0,.20);
+        }
+        .etf-tracker-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 560px;
+        }
+        .etf-tracker-table thead th {
+            text-align: left;
+            padding: 13px 14px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: rgba(231, 216, 179, 0.90);
+            background: linear-gradient(180deg, rgba(33, 41, 66, 0.88) 0%, rgba(19, 27, 47, 0.96) 100%);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            white-space: nowrap;
+        }
+        .etf-tracker-table tbody td {
+            padding: 13px 14px;
+            font-size: 14px;
+            line-height: 1.45;
+            color: rgba(241, 245, 255, 0.92);
+            border-top: 1px solid rgba(255,255,255,0.06);
+            vertical-align: top;
+        }
+        .etf-tracker-table tbody tr:hover td {
+            background: rgba(255,255,255,0.02);
+        }
+        .etf-tracker-name {
+            font-weight: 800;
+            color: #ffffff;
+        }
+        .etf-tracker-sub {
+            margin-top: 4px;
+            font-size: 12px;
+            color: rgba(203, 213, 225, 0.76);
+        }
+        .etf-tracker-value {
+            font-weight: 800;
+            color: #ffffff;
+            white-space: nowrap;
+        }
+        .etf-tracker-delta-up { color: #7ce7ba; font-weight: 800; }
+        .etf-tracker-delta-down { color: #ffb3b3; font-weight: 800; }
+        .etf-tracker-delta-flat { color: rgba(226,232,240,.86); font-weight: 700; }
+        .etf-tracker-text {
+            color: rgba(241, 245, 255, 0.92);
+            line-height: 1.52;
+        }
+        .etf-tracker-muted {
+            margin-top: 4px;
+            font-size: 12px;
+            color: rgba(203, 213, 225, 0.76);
+            line-height: 1.45;
+        }
+        .etf-tracker-status-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            border: 1px solid rgba(255,255,255,.10);
+        }
+        .etf-tracker-status-up {
+            background: rgba(16,185,129,.14);
+            border-color: rgba(16,185,129,.26);
+            color: #9ef0c8;
+        }
+        .etf-tracker-status-down {
+            background: rgba(239,68,68,.14);
+            border-color: rgba(239,68,68,.26);
+            color: #ffc2c2;
+        }
+        .etf-tracker-status-flat {
+            background: rgba(148,163,184,.14);
+            border-color: rgba(148,163,184,.22);
+            color: #e2e8f0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_active_etf_tracker_table(headers: list[str], rows: list[list[str]], empty_text: str) -> None:
+    if not rows:
+        st.caption(empty_text)
+        return
+    thead = "".join(f"<th>{escape(header)}</th>" for header in headers)
+    body_rows = []
+    for row in rows:
+        body_rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>")
+    st.markdown(
+        f"""
+        <div class="etf-tracker-table-wrap">
+            <table class="etf-tracker-table">
+                <thead><tr>{thead}</tr></thead>
+                <tbody>{''.join(body_rows)}</tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _active_etf_plain_cell(value: object, *, class_name: str = "etf-tracker-value") -> str:
+    return f'<div class="{class_name}">{escape(str(value))}</div>'
+
+
+def _active_etf_story_cell(title: str, subtitle: str = "") -> str:
+    title_html = f'<div class="etf-tracker-text">{escape(str(title or "—"))}</div>'
+    if subtitle:
+        title_html += f'<div class="etf-tracker-muted">{escape(str(subtitle))}</div>'
+    return title_html
+
+
+def _active_etf_score_cell(score: float) -> str:
+    if score > 0:
+        cls = "etf-tracker-delta-up"
+    elif score < 0:
+        cls = "etf-tracker-delta-down"
+    else:
+        cls = "etf-tracker-delta-flat"
+    return f'<div class="{cls}">{score:+.2f}</div>'
+
+
+def _extract_holdings_records_from_frame(frame: pd.DataFrame) -> list[dict]:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return []
+    df = frame.copy()
+
+    if df.shape[0] == 1 and df.shape[1] > 1:
+        row = pd.to_numeric(df.iloc[0], errors="coerce").dropna()
+        records = [{"name": str(col), "weight": float(val)} for col, val in row.items() if not _is_numericish_holding_token(col)]
+        normalized = _normalize_holdings_records(records)
+        if normalized:
+            return normalized
+
+    if len(df.columns) == 1 and df.index.notna().all():
+        only_col = df.columns[0]
+        series = pd.to_numeric(df[only_col], errors="coerce")
+        index_values = [str(idx).strip() for idx in series.dropna().index]
+        numeric_index_ratio = (
+            sum(1 for value in index_values if _is_numericish_holding_token(value)) / max(len(index_values), 1)
+        )
+        if numeric_index_ratio < 0.6:
+            records = [{"name": str(idx), "weight": float(val)} for idx, val in series.dropna().items()]
+            return _normalize_holdings_records(records)
+        return []
+
+    if df.shape[1] >= 2:
+        first_col, second_col = df.columns[:2]
+        first_series = df[first_col].astype(str).str.strip()
+        second_series = pd.to_numeric(df[second_col], errors="coerce")
+        if second_series.notna().sum() >= max(3, int(len(df) * 0.5)) and first_series.map(_is_numericish_holding_token).mean() < 0.5:
+            records = []
+            for idx in df.index:
+                name = str(df.at[idx, first_col]).strip()
+                weight = pd.to_numeric(pd.Series([df.at[idx, second_col]]), errors="coerce").iloc[0]
+                if name and name.lower() not in {"nan", "none"} and pd.notna(weight):
+                    records.append({"name": name, "weight": float(weight)})
+            normalized = _normalize_holdings_records(records)
+            if normalized:
+                return normalized
+
+    name_col, weight_col = _pick_name_and_weight_columns(df)
+    records: list[dict] = []
+
+    if name_col is not None and weight_col is not None:
+        weights = pd.to_numeric(df[weight_col], errors="coerce")
+        for _, row in df.assign(__weight=weights).dropna(subset=["__weight"]).iterrows():
+            name = str(row[name_col]).strip()
+            if name and name.lower() not in {"nan", "none"} and not _is_numericish_holding_token(name):
+                records.append({"name": name, "weight": float(row["__weight"])})
+        normalized = _normalize_holdings_records(records)
+        if normalized:
+            return normalized
+
+    if df.index.notna().all():
+        for idx, row in df.iterrows():
+            if _is_numericish_holding_token(idx):
+                continue
+            numeric_values = pd.to_numeric(pd.Series(row), errors="coerce").dropna()
+            if not numeric_values.empty:
+                records.append({"name": str(idx), "weight": float(numeric_values.iloc[0])})
+    return _normalize_holdings_records(records)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict:
+    ticker_upper = str(ticker).upper()
+    result = {"items": [], "source": "", "error": ""}
+    try:
+        tk = yf.Ticker(ticker_upper)
+        candidates = []
+
+        funds_data = getattr(tk, "funds_data", None)
+        if funds_data is not None:
+            for attr in ("top_holdings", "equity_holdings"):
+                try:
+                    candidate = getattr(funds_data, attr, None)
+                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                        candidates.append(candidate)
+                except Exception:
+                    pass
+
+        for attr in ("fund_top_holdings", "top_holdings"):
+            try:
+                candidate = getattr(tk, attr, None)
+                if isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                    candidates.append(candidate)
+            except Exception:
+                pass
+
+        try:
+            info = getattr(tk, "get_info", None)
+            info_payload = info() if callable(info) else getattr(tk, "info", {})
+            if isinstance(info_payload, dict):
+                holdings = info_payload.get("holdings") or info_payload.get("topHoldings")
+                if isinstance(holdings, list) and holdings:
+                    result["items"] = _normalize_holdings_records(
+                        [{"name": row.get("holdingName") or row.get("symbol") or row.get("name"), "weight": row.get("holdingPercent") or row.get("weight")} for row in holdings],
+                        max_items=max_items,
+                    )
+                    if result["items"]:
+                        result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
+                        return result
+        except Exception:
+            pass
+
+        for frame in candidates:
+            items = _extract_holdings_records_from_frame(frame)
+            if items:
+                result["items"] = items[:max_items]
+                result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
+                return result
+
+        result["error"] = "No current holdings snapshot available."
+        return result
+    except Exception as exc:
+        result["error"] = f"Holdings snapshot unavailable: {exc}"
+        return result
+
+
+def build_active_etf_holdings_changes(ticker: str, current_items: list[dict]) -> dict:
+    current_clean = _normalize_holdings_records(current_items)
+    if current_clean:
+        _upsert_active_etf_snapshot(ticker, current_clean)
+    previous_items, previous_date, previous_source = _load_previous_active_etf_snapshot(ticker)
+
+    prev_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(previous_items, max_items=50)}
+    curr_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(current_clean, max_items=50)}
+
+    deltas = []
+    for name in sorted(set(prev_map) | set(curr_map)):
+        previous = prev_map.get(name, 0.0)
+        current = curr_map.get(name, 0.0)
+        delta = current - previous
+        status = "unchanged"
+        if previous == 0 and current > 0:
+            status = "new"
+        elif current == 0 and previous > 0:
+            status = "removed"
+        elif delta > 0:
+            status = "increase"
+        elif delta < 0:
+            status = "decrease"
+        deltas.append(
+            {
+                "name": name,
+                "previous": previous,
+                "current": current,
+                "delta": delta,
+                "status": status,
+            }
+        )
+
+    adds = [row for row in deltas if row["status"] in {"new", "increase"} and row["current"] > 0]
+    cuts = [row for row in deltas if row["status"] in {"removed", "decrease"} and row["previous"] > 0]
+    adds.sort(key=lambda row: (row["status"] != "new", row["delta"]), reverse=True)
+    cuts.sort(key=lambda row: (row["status"] != "removed", abs(row["delta"])), reverse=True)
+
+    return {
+        "previous_date": previous_date,
+        "previous_source": previous_source,
+        "adds": adds[:8],
+        "cuts": cuts[:8],
+        "current_top": current_clean[:10],
+        "has_history": bool(previous_date),
+    }
+
+
+def _twse_request_json(url: str) -> dict:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,text/plain,*/*",
+        },
+        method="GET",
+    )
+    with urlopen(request, timeout=20) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+    return json.loads(raw)
+
+
+def _parse_twse_etf_flow_payload(payload: dict) -> pd.DataFrame:
+    data = payload.get("data") or []
+    fields = payload.get("fields") or []
+    if not data or not fields:
+        return pd.DataFrame()
+    df = pd.DataFrame(data, columns=fields[: len(data[0])])
+    rename_map = {}
+    for col in df.columns:
+        col_text = str(col)
+        if "證券代號" in col_text or col_text == "代號":
+            rename_map[col] = "code"
+        elif "證券名稱" in col_text or col_text == "名稱":
+            rename_map[col] = "name"
+        elif "外陸資買進股數" in col_text or ("外資" in col_text and "買進股數" in col_text):
+            rename_map[col] = "foreign_buy"
+        elif "外陸資賣出股數" in col_text or ("外資" in col_text and "賣出股數" in col_text):
+            rename_map[col] = "foreign_sell"
+        elif "外陸資買賣超股數" in col_text or ("外資" in col_text and "買賣超股數" in col_text):
+            rename_map[col] = "foreign_net"
+        elif "投信買進股數" in col_text:
+            rename_map[col] = "trust_buy"
+        elif "投信賣出股數" in col_text:
+            rename_map[col] = "trust_sell"
+        elif "投信買賣超股數" in col_text:
+            rename_map[col] = "trust_net"
+        elif "自營商買賣超股數" in col_text and "自行買賣" not in col_text and "避險" not in col_text:
+            rename_map[col] = "dealer_net"
+        elif "自營商自行買賣買進股數" in col_text:
+            rename_map[col] = "dealer_self_buy"
+        elif "自營商自行買賣賣出股數" in col_text:
+            rename_map[col] = "dealer_self_sell"
+        elif "自營商自行買賣買賣超股數" in col_text:
+            rename_map[col] = "dealer_self_net"
+        elif "自營商避險買進股數" in col_text:
+            rename_map[col] = "dealer_hedge_buy"
+        elif "自營商避險賣出股數" in col_text:
+            rename_map[col] = "dealer_hedge_sell"
+        elif "自營商避險買賣超股數" in col_text:
+            rename_map[col] = "dealer_hedge_net"
+        elif "三大法人買賣超股數" in col_text:
+            rename_map[col] = "three_net"
+    df = df.rename(columns=rename_map)
+
+    for col in (
+        "foreign_buy", "foreign_sell", "foreign_net",
+        "trust_buy", "trust_sell", "trust_net",
+        "dealer_net", "dealer_self_buy", "dealer_self_sell", "dealer_self_net",
+        "dealer_hedge_buy", "dealer_hedge_sell", "dealer_hedge_net", "three_net",
+    ):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
+    code = ticker_base_code(ticker)
+    today = datetime.now(TW_TZ).date()
+    errors = []
+    for offset in range(0, 8):
+        trade_date = today - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={date_str}&selectType=ETF"
+        try:
+            payload = _twse_request_json(url)
+            if str(payload.get("stat", "")).startswith("很抱歉"):
+                continue
+            frame = _parse_twse_etf_flow_payload(payload)
+            if frame.empty or "code" not in frame.columns:
+                continue
+            match = frame[frame["code"].astype(str).str.strip() == code]
+            if match.empty:
+                continue
+            row = match.iloc[0].to_dict()
+            return {
+                "date": trade_date.isoformat(),
+                "record": row,
+                "source": "TWSE T86 ETF",
+                "error": "",
+            }
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+    return {"date": None, "record": {}, "source": "TWSE T86 ETF", "error": errors[-1] if errors else "No ETF institutional flow found."}
+
+
+def _tracker_status_chip(label: str, tone: str) -> str:
+    cls_map = {
+        "up": "chip-buy",
+        "down": "chip-sell",
+        "neutral": "chip-hold",
+        "info": "chip-info",
+    }
+    return f'<span class="chip {cls_map.get(tone, "chip-info")}">{escape(label)}</span>'
+
+
+def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> None:
+    if not is_taiwan_active_etf(ticker):
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    base_code = ticker_base_code(ticker)
+    tracker_label = (
+        f"{display_ticker_label(ticker)} 主動式 ETF 收盤後追蹤"
+        if lang_zh
+        else f"{display_ticker_label(ticker)} active ETF post-close tracker"
+    )
+    helper_text = (
+        "比較最新持股快照與先前快照，並搭配 ETF 本身三大法人資金流。"
+        if lang_zh
+        else "Compare the latest holdings snapshot against the previous snapshot and pair it with official institutional ETF flows."
+    )
+
+    tracker_panel_open = render_dashboard_section_panel(
+        tracker_label,
+        "target",
+        item_count=selected_count,
+        helper_base=helper_text,
+        expanded=planner_auto_expand("target", selected_count),
+        panel_key=f"active-etf-tracker::{ticker}",
+    )
+    if tracker_panel_open:
+        inject_active_etf_tracker_css()
+
+        holdings_payload = fetch_active_etf_holdings_snapshot(ticker)
+        holdings_items = holdings_payload.get("items", [])
+        holdings_model = build_active_etf_holdings_changes(ticker, holdings_items)
+        flow_payload = fetch_twse_etf_institutional_flow(ticker)
+        flow = flow_payload.get("record", {}) or {}
+
+        now_tw = datetime.now(TW_TZ)
+        timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+        update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
+
+        header_chips = [
+            _tracker_status_chip(
+                ("主動式 ETF 持股異動追蹤" if lang_zh else "Active ETF holdings tracker"),
+                "info",
+            ),
+            _tracker_status_chip(
+                (f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"),
+                "neutral",
+            ),
+            _tracker_status_chip(
+                ("收盤後 16:00+" if lang_zh else "After close 16:00+"),
+                "up",
+            ),
+        ]
+        st.markdown(
+            f"""
+            <div class="guide-shell etf-tracker-shell">
+                <div class="section-header">{'台股主動式 ETF 追蹤' if lang_zh else 'Taiwan active ETF tracker'}</div>
+                <div class="guide-title">{escape(display_ticker_label(ticker))} · {'收盤後雙面板' if lang_zh else 'post-close dual panel'}</div>
+                <div class="guide-copy">{escape(update_note)}</div>
+                <div class="chip-row">{''.join(header_chips)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        left, right = st.columns([1.2, 1.0], gap="large")
+
+        with left:
+            st.markdown(
+                f"""
+                <div class="guide-shell etf-tracker-panel-shell">
+                    <div class="section-header">{'持股異動追蹤' if lang_zh else 'Holdings change tracker'}</div>
+                    <div class="guide-copy">{escape((f"比對代號 {base_code} 最新持股快照與前次可用快照。" if lang_zh else f"Compares the latest holdings snapshot for {base_code} against the prior available snapshot."))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            previous_date = holdings_model.get("previous_date")
+            if holdings_payload.get("error") and not holdings_items:
+                st.info(
+                    "目前抓不到最新持股快照，稍後再試或確認 Yahoo Finance 是否已有基金持股資料。"
+                    if lang_zh
+                    else "The latest holdings snapshot is not currently available. Please try again later or verify that Yahoo Finance has fund holdings data for this ETF."
+                )
+            elif not previous_date:
+                top_frame = pd.DataFrame(holdings_model.get("current_top", []))
+                if top_frame.empty:
+                    st.info("目前尚無可顯示的持股快照。" if lang_zh else "No holdings snapshot is available yet.")
+                else:
+                    rows = [
+                        [
+                            f'<div class="etf-tracker-name">{escape(resolve_holding_display_name(row.get("name", "")))}</div>'
+                            f'<div class="etf-tracker-sub">{escape(str(row.get("name", "")).strip())}</div>' if resolve_holding_display_name(row.get("name", "")) != str(row.get("name", "")).strip() else f'<div class="etf-tracker-name">{escape(resolve_holding_display_name(row.get("name", "")))}</div>',
+                            f'<div class="etf-tracker-value">{float(row.get("weight", 0.0)):.2f}%</div>',
+                        ]
+                        for row in holdings_model.get("current_top", [])
+                    ]
+                    st.caption(
+                        "這是首次可用快照；從下一個交易日開始，系統會顯示新增、加碼、減碼與移除。"
+                        if lang_zh
+                        else "This is the first available snapshot. Starting with the next trading day, the dashboard will show adds, increases, decreases, and removals."
+                    )
+                    render_active_etf_tracker_table(
+                        ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+                        rows,
+                        "目前尚無可顯示的持股快照。" if lang_zh else "No holdings snapshot is available yet.",
+                    )
+            else:
+                add_rows = holdings_model.get("adds", [])
+                cut_rows = holdings_model.get("cuts", [])
+                add_df = pd.DataFrame(add_rows)
+                cut_df = pd.DataFrame(cut_rows)
+
+                cols = st.columns(2, gap="medium")
+                with cols[0]:
+                    st.markdown(f"**{'新增 / 加碼' if lang_zh else 'Adds / increases'}**")
+                    if add_df.empty:
+                        st.caption("沒有明顯新增或加碼。" if lang_zh else "No notable additions or increases.")
+                    else:
+                        rows = []
+                        for _, row in add_df.iterrows():
+                            resolved_name = resolve_holding_display_name(row.get("name", ""))
+                            original_name = str(row.get("name", "")).strip()
+                            name_cell = (
+                                f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+                                f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+                                if resolved_name != original_name
+                                else f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+                            )
+                            status_label = "新增" if lang_zh and row.get("status") == "new" else "加碼" if lang_zh else "New" if row.get("status") == "new" else "Increase"
+                            rows.append([
+                                name_cell,
+                                f'<span class="etf-tracker-status-pill etf-tracker-status-up">{status_label}</span>',
+                                f'<div class="etf-tracker-value">{float(row.get("current", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-value">{float(row.get("previous", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-delta-up">+{abs(float(row.get("delta", 0.0))):.2f}%</div>',
+                            ])
+                        render_active_etf_tracker_table(
+                            [
+                                "持股 / 公司" if lang_zh else "Holding / company",
+                                "狀態" if lang_zh else "Status",
+                                "目前 %" if lang_zh else "Current %",
+                                "前次 %" if lang_zh else "Previous %",
+                                "變化 %" if lang_zh else "Delta %",
+                            ],
+                            rows,
+                            "沒有明顯新增或加碼。" if lang_zh else "No notable additions or increases.",
+                        )
+                with cols[1]:
+                    st.markdown(f"**{'減碼 / 移除' if lang_zh else 'Cuts / removals'}**")
+                    if cut_df.empty:
+                        st.caption("沒有明顯減碼或移除。" if lang_zh else "No notable cuts or removals.")
+                    else:
+                        rows = []
+                        for _, row in cut_df.iterrows():
+                            resolved_name = resolve_holding_display_name(row.get("name", ""))
+                            original_name = str(row.get("name", "")).strip()
+                            name_cell = (
+                                f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+                                f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+                                if resolved_name != original_name
+                                else f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+                            )
+                            status_label = "移除" if lang_zh and row.get("status") == "removed" else "減碼" if lang_zh else "Removed" if row.get("status") == "removed" else "Decrease"
+                            rows.append([
+                                name_cell,
+                                f'<span class="etf-tracker-status-pill etf-tracker-status-down">{status_label}</span>',
+                                f'<div class="etf-tracker-value">{float(row.get("current", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-value">{float(row.get("previous", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-delta-down">-{abs(float(row.get("delta", 0.0))):.2f}%</div>',
+                            ])
+                        render_active_etf_tracker_table(
+                            [
+                                "持股 / 公司" if lang_zh else "Holding / company",
+                                "狀態" if lang_zh else "Status",
+                                "目前 %" if lang_zh else "Current %",
+                                "前次 %" if lang_zh else "Previous %",
+                                "變化 %" if lang_zh else "Delta %",
+                            ],
+                            rows,
+                            "沒有明顯減碼或移除。" if lang_zh else "No notable cuts or removals.",
+                        )
+
+                st.caption(
+                    (f"比較基準：{previous_date} 的前次快照。資料來源：{holdings_payload.get('source') or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL}。"
+                     if lang_zh else
+                     f"Comparison baseline: previous snapshot from {previous_date}. Source: {holdings_payload.get('source') or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL}.")
+                )
+
+        with right:
+            st.markdown(
+                f"""
+                <div class="guide-shell etf-tracker-panel-shell">
+                    <div class="section-header">{'ETF 法人資金流' if lang_zh else 'ETF institutional flow'}</div>
+                    <div class="guide-copy">{escape(('使用 TWSE 官方 ETF 三大法人日資料，觀察資金流進流出 ETF 本身。' if lang_zh else 'Uses official TWSE ETF daily institutional data to track money flowing into and out of the ETF itself.'))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if flow_payload.get("error") and not flow:
+                st.info(
+                    "目前抓不到這檔 ETF 的官方法人買賣資料，可能尚未更新或今日非交易日。"
+                    if lang_zh
+                    else "Official institutional ETF flow is not available right now. The report may not be updated yet or today may be a non-trading day."
+                )
+            else:
+                three_net = _safe_float(flow.get("three_net"))
+                foreign_net = _safe_float(flow.get("foreign_net"))
+                trust_net = _safe_float(flow.get("trust_net"))
+                dealer_net = _safe_float(flow.get("dealer_net"))
+                metric_cols = st.columns(2)
+                metric_cols[0].metric(
+                    "三大法人買賣超" if lang_zh else "3-inst. net",
+                    _format_signed_integer(three_net),
+                    _format_signed_integer(three_net, unit=(" 張" if lang_zh else " sh")),
+                )
+                metric_cols[1].metric(
+                    "資料日期" if lang_zh else "Flow date",
+                    flow_payload.get("date") or "—",
+                    flow_payload.get("source", ""),
+                )
+                flow_rows = [
+                    [
+                        _active_etf_plain_cell("外資" if lang_zh else "Foreign", class_name="etf-tracker-text"),
+                        _active_etf_plain_cell(_format_signed_integer(foreign_net), class_name="etf-tracker-delta-up" if foreign_net > 0 else "etf-tracker-delta-down" if foreign_net < 0 else "etf-tracker-delta-flat"),
+                    ],
+                    [
+                        _active_etf_plain_cell("投信" if lang_zh else "Investment trust", class_name="etf-tracker-text"),
+                        _active_etf_plain_cell(_format_signed_integer(trust_net), class_name="etf-tracker-delta-up" if trust_net > 0 else "etf-tracker-delta-down" if trust_net < 0 else "etf-tracker-delta-flat"),
+                    ],
+                    [
+                        _active_etf_plain_cell("自營商" if lang_zh else "Dealer", class_name="etf-tracker-text"),
+                        _active_etf_plain_cell(_format_signed_integer(dealer_net), class_name="etf-tracker-delta-up" if dealer_net > 0 else "etf-tracker-delta-down" if dealer_net < 0 else "etf-tracker-delta-flat"),
+                    ],
+                ]
+                render_active_etf_tracker_table(
+                    ["法人別" if lang_zh else "Institution", "買賣超" if lang_zh else "Net shares"],
+                    flow_rows,
+                    "目前無法人買賣資料。" if lang_zh else "Institutional flow is unavailable right now.",
+                )
+                st.caption(
+                    "這裡追蹤的是 ETF 受益權本身的法人買賣，不是基金經理人當日成分股交易明細。"
+                    if lang_zh
+                    else "This panel tracks institutional trading in the ETF units themselves, not the portfolio manager's exact stock trades for the day."
+                )
+
+
+def _active_etf_holdings_map(items: list[dict], max_items: int = 20) -> dict[str, float]:
+    mapped: dict[str, float] = {}
+    for item in _normalize_holdings_records(items or [], max_items=max_items):
+        name = str(item.get("name", "")).strip()
+        weight = _safe_float(item.get("weight"))
+        if not name or pd.isna(weight):
+            continue
+        mapped[name] = float(weight)
+    return mapped
+
+
+def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> None:
+    lang_zh = get_language() == "zh_TW"
+    inject_active_etf_tracker_css()
+
+    left_payload = fetch_active_etf_holdings_snapshot(left_ticker, max_items=20)
+    right_payload = fetch_active_etf_holdings_snapshot(right_ticker, max_items=20)
+
+    left_items = left_payload.get("items", []) or []
+    right_items = right_payload.get("items", []) or []
+
+    if not left_items and not right_items:
+        st.info(
+            "目前抓不到這兩檔主動式 ETF 的持股快照，請稍後再試。"
+            if lang_zh
+            else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
+        )
+        return
+
+    now_tw = datetime.now(TW_TZ)
+    timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+    update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
+
+    chips = [
+        _tracker_status_chip(
+            ("雙 ETF 持股對比" if lang_zh else "Dual ETF holdings comparison"),
+            "info",
+        ),
+        _tracker_status_chip(
+            (f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"),
+            "neutral",
+        ),
+        _tracker_status_chip(
+            ("收盤後 16:00+" if lang_zh else "After close 16:00+"),
+            "up",
+        ),
+    ]
+
+    st.markdown(
+        f"""
+        <div class="guide-shell etf-tracker-shell">
+            <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
+            <div class="guide-title">{escape(display_ticker_label(left_ticker))} × {escape(display_ticker_label(right_ticker))}</div>
+            <div class="guide-copy">{escape(update_note)} {'可直接對比兩檔主動式 ETF 的共同持股、權重差與各自獨有持股。' if lang_zh else 'Directly compare overlapping holdings, weight gaps, and unique positions between the two active ETFs.'}</div>
+            <div class="chip-row">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left_map = _active_etf_holdings_map(left_items, max_items=20)
+    right_map = _active_etf_holdings_map(right_items, max_items=20)
+
+    overlap_rows = []
+    for name in sorted(set(left_map) & set(right_map), key=lambda key: abs(left_map[key] - right_map[key]), reverse=True):
+        left_weight = left_map[name]
+        right_weight = right_map[name]
+        delta = left_weight - right_weight
+        resolved_name = resolve_holding_display_name(name)
+        original_name = str(name).strip()
+        name_cell = (
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+            if resolved_name != original_name else
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+        )
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
+        delta_value = f"{delta:+.2f}%"
+        overlap_rows.append([
+            name_cell,
+            f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+            f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+            f'<div class="{delta_class}">{delta_value}</div>',
+        ])
+
+    left_only_rows = []
+    for name in sorted(set(left_map) - set(right_map), key=lambda key: left_map[key], reverse=True)[:10]:
+        resolved_name = resolve_holding_display_name(name)
+        original_name = str(name).strip()
+        name_cell = (
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+            if resolved_name != original_name else
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+        )
+        left_only_rows.append([
+            name_cell,
+            f'<div class="etf-tracker-value">{left_map[name]:.2f}%</div>',
+        ])
+
+    right_only_rows = []
+    for name in sorted(set(right_map) - set(left_map), key=lambda key: right_map[key], reverse=True)[:10]:
+        resolved_name = resolve_holding_display_name(name)
+        original_name = str(name).strip()
+        name_cell = (
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+            if resolved_name != original_name else
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+        )
+        right_only_rows.append([
+            name_cell,
+            f'<div class="etf-tracker-value">{right_map[name]:.2f}%</div>',
+        ])
+
+    summary_cols = st.columns(3)
+    summary_cols[0].metric(
+        ("共同持股數" if lang_zh else "Overlap count"),
+        f"{len(set(left_map) & set(right_map))}",
+        f"{display_ticker_label(left_ticker)} / {display_ticker_label(right_ticker)}",
+    )
+    summary_cols[1].metric(
+        (f"{display_ticker_label(left_ticker)} 獨有" if lang_zh else f"{display_ticker_label(left_ticker)} unique"),
+        f"{len(set(left_map) - set(right_map))}",
+    )
+    summary_cols[2].metric(
+        (f"{display_ticker_label(right_ticker)} 獨有" if lang_zh else f"{display_ticker_label(right_ticker)} unique"),
+        f"{len(set(right_map) - set(left_map))}",
+    )
+
+    st.markdown(
+        f"**{'共同持股直接對比' if lang_zh else 'Overlapping holdings side-by-side'}**"
+    )
+    render_active_etf_tracker_table(
+        [
+            "持股 / 公司" if lang_zh else "Holding / company",
+            display_ticker_label(left_ticker),
+            display_ticker_label(right_ticker),
+            "權重差" if lang_zh else "Weight gap",
+        ],
+        overlap_rows[:20],
+        "目前尚無共同持股可供比較。" if lang_zh else "No overlapping holdings are currently available for comparison.",
+    )
+
+    unique_cols = st.columns(2, gap="large")
+    with unique_cols[0]:
+        st.markdown(f"**{escape(display_ticker_label(left_ticker))} {'獨有持股' if lang_zh else 'unique holdings'}**")
+        render_active_etf_tracker_table(
+            [
+                "持股 / 公司" if lang_zh else "Holding / company",
+                "權重 %" if lang_zh else "Weight %",
+            ],
+            left_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+    with unique_cols[1]:
+        st.markdown(f"**{escape(display_ticker_label(right_ticker))} {'獨有持股' if lang_zh else 'unique holdings'}**")
+        render_active_etf_tracker_table(
+            [
+                "持股 / 公司" if lang_zh else "Holding / company",
+                "權重 %" if lang_zh else "Weight %",
+            ],
+            right_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+
+
+
+
+def render_active_etf_lab_dashboard(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+) -> None:
+    active_etf_tickers = [ticker for ticker in dedupe_keep_order(tickers) if is_taiwan_active_etf(ticker)]
+    lang_zh = get_language() == "zh_TW"
+
+    if not active_etf_tickers:
+        st.info(
+            "目前選取清單中沒有台股主動式 ETF。請先在左側加入像 00982A、00981A 這類代號，再切到主動式 ETF Dashboard。"
+            if lang_zh
+            else "No Taiwan active ETFs are currently selected. Add symbols such as 00982A or 00981A from the left sidebar, then switch to the Active ETF Dashboard."
+        )
+        return
+
+    inject_active_etf_tracker_css()
+
+    bundles = [
+        collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
+        for ticker in active_etf_tickers
+    ]
+    bundles = [bundle for bundle in bundles if bundle is not None]
+    bundle_map = {bundle["ticker"]: bundle for bundle in bundles}
+
+    now_tw = datetime.now(TW_TZ)
+    timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+    chips = [
+        _tracker_status_chip(t("active_etf_dashboard_kicker"), "info"),
+        _tracker_status_chip((f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
+        _tracker_status_chip(("收盤後 16:00+" if lang_zh else "After close 16:00+"), "up"),
+    ]
+    st.markdown(
+        f"""
+        <div class="guide-shell etf-tracker-shell">
+            <div class="section-header">{t("active_etf_dashboard_kicker")}</div>
+            <div class="guide-title">{t("active_etf_dashboard_title")}</div>
+            <div class="guide-copy">{t("active_etf_dashboard_copy")}</div>
+            <div class="chip-row">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("主動式 ETF 檔數" if lang_zh else "Active ETFs selected", len(active_etf_tickers))
+    summary_cols[1].metric(
+        "可做雙 ETF 比較" if lang_zh else "Pair compare ready",
+        "是" if len(active_etf_tickers) >= 2 and lang_zh else ("Yes" if len(active_etf_tickers) >= 2 else ("否" if lang_zh else "No")),
+    )
+    summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
+
+    if bundles:
+        render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
+
+    if len(active_etf_tickers) >= 2:
+        pair_left_key = "active_etf_lab_pair_left"
+        pair_right_key = "active_etf_lab_pair_right"
+
+        if st.session_state.get(pair_left_key) not in active_etf_tickers:
+            st.session_state[pair_left_key] = active_etf_tickers[0]
+        if (
+            st.session_state.get(pair_right_key) not in active_etf_tickers
+            or st.session_state.get(pair_right_key) == st.session_state[pair_left_key]
+        ):
+            st.session_state[pair_right_key] = active_etf_tickers[1] if len(active_etf_tickers) > 1 else active_etf_tickers[0]
+
+        left_col, right_col = st.columns(2)
+        left_etf = left_col.selectbox(
+            "比較 ETF A" if lang_zh else "Compare ETF A",
+            options=active_etf_tickers,
+            format_func=display_ticker_label,
+            key=pair_left_key,
+        )
+        right_options = [ticker for ticker in active_etf_tickers if ticker != left_etf] or active_etf_tickers
+        if st.session_state.get(pair_right_key) not in right_options:
+            st.session_state[pair_right_key] = right_options[0]
+        right_etf = right_col.selectbox(
+            "比較 ETF B" if lang_zh else "Compare ETF B",
+            options=right_options,
+            format_func=display_ticker_label,
+            key=pair_right_key,
+        )
+        render_active_etf_pair_comparison(left_etf, right_etf)
+
+    tabs = st.tabs([display_ticker_label(ticker) for ticker in active_etf_tickers])
+    for tab, ticker in zip(tabs, active_etf_tickers):
+        with tab:
+            bundle = bundle_map.get(ticker)
+            if bundle is None:
+                st.warning(
+                    "目前抓不到這檔主動式 ETF 的完整研究資料。"
+                    if lang_zh
+                    else f"Research data is currently unavailable for {display_ticker_label(ticker)}."
+                )
+                continue
+            render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(active_etf_tickers))
+
+
+
+def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str], str, list[str], str, str]:
+    render_html_block(f'<div class="side-group-label">{t("watchlist_universe")}</div>')
+    current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    selected_market_scope = st.selectbox(
+        t("market_scope"),
+        options=list(MARKET_SCOPE_OPTIONS.keys()),
+        index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_market_scope) if current_market_scope in MARKET_SCOPE_OPTIONS else 0,
+        format_func=market_scope_label,
+    )
+    st.session_state["dashboard_market_scope"] = selected_market_scope
+    st.caption(t("market_scope_note"))
+
+
+    scope_group_options = market_scope_group_options(selected_market_scope)
+    is_zh = selected_lang == "繁體中文"
+    selector_title = "專業選股器" if is_zh else "Professional Selector"
+    selector_copy = (
+        "用搜尋、產業、可見清單三段式管理，先加入，再整理已選股票。"
+        if is_zh
+        else "Use a cleaner add-manage flow: search, sector actions, then maintain the selected watchlist."
+    )
+    sector_action_label = "依產業加入" if is_zh else "Add by sector"
+    selected_groups_label = "目前產業" if is_zh else "Active groups"
+    add_group_label = "加入此產業" if is_zh else "Add group"
+    apply_group_label = "套用此產業全部加入" if is_zh else "Add entire group"
+    select_all_groups_label = "全部產業" if is_zh else "Select all groups"
+    clear_groups_label = "清空產業" if is_zh else "Clear groups"
+    custom_add_label = "加入自訂代號" if is_zh else "Add custom symbols"
+    available_tickers_label = "可加入股票" if is_zh else "Available symbols"
+    add_visible_label = "加入勾選股票" if is_zh else "Add highlighted"
+    select_all_visible_label = "全選目前可見" if is_zh else "Add all visible"
+    selected_watchlist_label = "已選股票管理" if is_zh else "Selected watchlist"
+    remove_selected_label = "移除勾選" if is_zh else "Remove highlighted"
+    clear_selected_label = "清空已選" if is_zh else "Clear selected"
+    selected_count_label = "已選 {count} 檔" if is_zh else "{count} selected"
+    search_add_label = "加入搜尋結果" if is_zh else "Add search results"
+
+    previous_scope = st.session_state.get("dashboard_market_scope_previous")
+    stored_groups = [
+        group for group in st.session_state.get("dashboard_selected_groups", [])
+        if group in scope_group_options
+    ]
+    if previous_scope != selected_market_scope and not stored_groups:
+        stored_groups = [
+            group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]
+            if group in scope_group_options
+        ]
+    elif not stored_groups:
+        stored_groups = [
+            group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]
+            if group in scope_group_options
+        ]
+    selected_groups = dedupe_keep_order(stored_groups)
+    st.session_state["dashboard_selected_groups"] = selected_groups
+
+    stored_ticker_picks = filter_tickers_for_market_scope(
+        st.session_state.get("dashboard_selected_tickers", []),
+        selected_market_scope,
+    )
+    default_ticker_pool = [
+        ticker for ticker in default_tickers_for_market_scope(selected_market_scope)
+        if ticker
+    ]
+    tickers_initialized = bool(st.session_state.get("dashboard_selected_tickers_initialized", False))
+    has_explicit_ticker_state = "dashboard_selected_tickers" in st.session_state
+
+    if not tickers_initialized and not has_explicit_ticker_state:
+        stored_ticker_picks = default_ticker_pool
+    elif previous_scope != selected_market_scope and not stored_ticker_picks and not tickers_initialized:
+        stored_ticker_picks = default_ticker_pool
+
+    selected_ticker_picks = dedupe_keep_order(stored_ticker_picks)
+    st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
+    st.session_state["dashboard_market_scope_previous"] = selected_market_scope
+
+    render_html_block(
+        f"""
+        <div class="side-group-label">{selector_title}</div>
+        <div class="side-copy" style="margin-top:6px; margin-bottom:10px;">{selector_copy}</div>
+        """
+    )
+
+    group_action_widget_key = "dashboard_group_action_picker"
+    if group_action_widget_key not in st.session_state or st.session_state[group_action_widget_key] not in scope_group_options:
+        st.session_state[group_action_widget_key] = scope_group_options[0] if scope_group_options else ""
+    group_focus = st.selectbox(
+        sector_action_label,
+        options=scope_group_options,
+        format_func=tr_group,
+        key=group_action_widget_key,
+    )
+    group_action_cols = st.columns(2)
+    if group_action_cols[0].button(add_group_label, use_container_width=True):
+        st.session_state["dashboard_selected_groups"] = dedupe_keep_order(selected_groups + [group_focus])
+        st.rerun()
+    if group_action_cols[1].button(apply_group_label, use_container_width=True):
+        st.session_state["dashboard_selected_groups"] = dedupe_keep_order(selected_groups + [group_focus])
+        st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+            selected_ticker_picks,
+            WATCHLIST_PRESETS.get(group_focus, []),
+            selected_market_scope,
+        )
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+        st.rerun()
+
+    group_scope_cols = st.columns(2)
+    if group_scope_cols[0].button(select_all_groups_label, use_container_width=True):
+        st.session_state["dashboard_selected_groups"] = scope_group_options.copy()
+        st.rerun()
+    if group_scope_cols[1].button(clear_groups_label, use_container_width=True):
+        st.session_state["dashboard_selected_groups"] = []
+        st.rerun()
+
+    selected_groups = [
+        group for group in st.session_state.get("dashboard_selected_groups", [])
+        if group in scope_group_options
+    ]
+    st.session_state["dashboard_selected_groups"] = selected_groups
+    if selected_groups:
+        st.caption(
+            f"{selected_groups_label}: " + " · ".join(tr_group(group) for group in selected_groups)
+        )
+    else:
+        st.caption(
+            f"{selected_groups_label}: " + ("未限制，顯示目前市場所有預設群組" if is_zh else "Not limited. Showing all preset groups in this market scope.")
+        )
+
+    custom_symbol_widget_key = "dashboard_custom_symbols_widget"
+    if custom_symbol_widget_key not in st.session_state:
+        st.session_state[custom_symbol_widget_key] = st.session_state.get("dashboard_custom_symbols", "")
+    custom_ticker_text = st.text_input(
+        t("custom_symbols"),
+        placeholder=t("custom_symbols_placeholder"),
+        key=custom_symbol_widget_key,
+    )
+    st.session_state["dashboard_custom_symbols"] = custom_ticker_text
+
+    custom_tickers = [
+        normalize_dashboard_ticker(ticker)
+        for ticker in custom_ticker_text.replace("\n", ",").split(",")
+        if ticker.strip()
+    ]
+    custom_tickers = filter_tickers_for_market_scope(custom_tickers, selected_market_scope)
+    if st.button(custom_add_label, use_container_width=True) and custom_tickers:
+        st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+            selected_ticker_picks,
+            custom_tickers,
+            selected_market_scope,
+        )
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+        st.rerun()
+
+    symbol_search_widget_key = "dashboard_symbol_search_widget"
+    if symbol_search_widget_key not in st.session_state:
+        st.session_state[symbol_search_widget_key] = st.session_state.get("dashboard_symbol_search", "")
+    symbol_search_query = st.text_input(
+        t("symbol_search"),
+        placeholder=t("symbol_search_placeholder"),
+        key=symbol_search_widget_key,
+    )
+    st.session_state["dashboard_symbol_search"] = symbol_search_query
+
+    symbol_search_matches: list[str] = []
+    search_results: list[str] = []
+    search_matches_widget_key = "dashboard_symbol_search_matches_widget"
+    if symbol_search_query.strip():
+        search_results = sort_ticker_options(
+            build_symbol_search_results(symbol_search_query, selected_market_scope, max_results=12)
+        )
+        st.caption(t("search_results_help"))
+        if search_results:
+            if search_matches_widget_key not in st.session_state:
+                st.session_state[search_matches_widget_key] = []
+            valid_search_matches = [
+                normalize_dashboard_ticker(value)
+                for value in st.session_state.get(search_matches_widget_key, [])
+                if normalize_dashboard_ticker(value) in set(search_results)
+            ]
+            st.session_state[search_matches_widget_key] = valid_search_matches
+            symbol_search_matches = st.multiselect(
+                t("search_results"),
+                options=search_results,
+                format_func=display_ticker_label,
+                help=t("search_results_help"),
+                key=search_matches_widget_key,
+            )
+            symbol_search_matches = [
+                normalize_dashboard_ticker(value)
+                for value in symbol_search_matches
+                if normalize_dashboard_ticker(value) in set(search_results)
+            ]
+            st.session_state["dashboard_symbol_search_matches"] = symbol_search_matches
+            if st.button(search_add_label, use_container_width=True):
+                st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+                    selected_ticker_picks,
+                    symbol_search_matches,
+                    selected_market_scope,
+                )
+                st.session_state["dashboard_selected_tickers_initialized"] = True
+                st.rerun()
+        else:
+            st.session_state["dashboard_symbol_search_matches"] = []
+            st.caption(t("search_results_empty"))
+    else:
+        st.session_state["dashboard_symbol_search_matches"] = []
+
+    available_universe = set()
+    source_groups = selected_groups or scope_group_options
+    for group in source_groups:
+        available_universe.update(WATCHLIST_PRESETS.get(group, []))
+    available_universe.update(
+        ticker for ticker in DEFAULT_TICKERS
+        if selected_market_scope != "Taiwan only" or is_taiwan_ticker(ticker)
+    )
+    for ticker in custom_tickers + st.session_state.get("dashboard_symbol_search_matches", []) + selected_ticker_picks:
+        if not ticker:
+            continue
+        if selected_market_scope == "Taiwan only" and not is_taiwan_ticker(ticker):
+            continue
+        if selected_market_scope == "U.S. only" and is_taiwan_ticker(ticker):
+            continue
+        available_universe.add(ticker)
+    available_universe = sort_ticker_options(available_universe)
+    selected_ticker_set = {normalize_dashboard_ticker(value) for value in selected_ticker_picks}
+    available_universe = [
+        ticker for ticker in available_universe
+        if normalize_dashboard_ticker(ticker) not in selected_ticker_set
+    ]
+
+    candidate_widget_key = "dashboard_candidate_tickers_widget"
+    if candidate_widget_key not in st.session_state:
+        st.session_state[candidate_widget_key] = []
+    st.session_state[candidate_widget_key] = [
+        normalize_dashboard_ticker(value)
+        for value in st.session_state.get(candidate_widget_key, [])
+        if normalize_dashboard_ticker(value) in set(available_universe)
+    ]
+    candidate_tickers = st.multiselect(
+        available_tickers_label,
+        options=available_universe,
+        placeholder=t("pick_watchlist_symbols"),
+        format_func=display_ticker_label,
+        key=candidate_widget_key,
+    )
+
+    candidate_action_cols = st.columns(2)
+    if candidate_action_cols[0].button(add_visible_label, use_container_width=True):
+        st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+            selected_ticker_picks,
+            candidate_tickers,
+            selected_market_scope,
+        )
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+        st.rerun()
+    if candidate_action_cols[1].button(select_all_visible_label, use_container_width=True):
+        st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
+            selected_ticker_picks,
+            available_universe,
+            selected_market_scope,
+        )
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+        st.rerun()
+
+    selected_ticker_picks = filter_tickers_for_market_scope(
+        st.session_state.get("dashboard_selected_tickers", []),
+        selected_market_scope,
+    )
+    st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
+
+    render_html_block(
+        f'<div class="side-group-label">{selected_watchlist_label}</div>'
+    )
+    st.caption(selected_count_label.format(count=len(selected_ticker_picks)))
+
+    remove_widget_key = "dashboard_selected_remove_widget"
+    if remove_widget_key not in st.session_state:
+        st.session_state[remove_widget_key] = []
+    st.session_state[remove_widget_key] = [
+        normalize_dashboard_ticker(value)
+        for value in st.session_state.get(remove_widget_key, [])
+        if normalize_dashboard_ticker(value) in set(selected_ticker_picks)
+    ]
+    remove_candidates = st.multiselect(
+        selected_watchlist_label,
+        options=selected_ticker_picks,
+        format_func=display_ticker_label,
+        placeholder=t("pick_watchlist_symbols"),
+        key=remove_widget_key,
+    )
+
+    selected_action_cols = st.columns(2)
+    if selected_action_cols[0].button(remove_selected_label, use_container_width=True):
+        removal_set = {normalize_dashboard_ticker(value) for value in remove_candidates}
+        st.session_state["dashboard_selected_tickers"] = [
+            ticker for ticker in selected_ticker_picks
+            if normalize_dashboard_ticker(ticker) not in removal_set
+        ]
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+        st.rerun()
+    if selected_action_cols[1].button(clear_selected_label, use_container_width=True):
+        st.session_state["dashboard_selected_tickers"] = []
+        st.session_state["dashboard_selected_tickers_initialized"] = True
+        st.rerun()
+
+    selected_ticker_picks = filter_tickers_for_market_scope(
+        st.session_state.get("dashboard_selected_tickers", []),
+        selected_market_scope,
+    )
+    st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
+    st.session_state["dashboard_selected_tickers_initialized"] = True
+
+    if selected_ticker_picks:
+        preview_items = "".join(
+            f'<span class="chip chip-info" style="margin-right:6px; margin-bottom:6px;">{escape(display_ticker_label(ticker))}</span>'
+            for ticker in selected_ticker_picks[:10]
+        )
+        if len(selected_ticker_picks) > 10:
+            preview_items += (
+                f'<span class="chip" style="margin-right:6px; margin-bottom:6px;">+{len(selected_ticker_picks) - 10}</span>'
+            )
+        render_html_block(f'<div class="chip-row" style="margin-top:8px;">{preview_items}</div>')
+    else:
+        st.caption("目前尚未加入股票，請先從上方加入。" if is_zh else "No symbols added yet. Add symbols from the sections above.")
+
+    tickers = dedupe_keep_order(selected_ticker_picks)
+    st.session_state["dashboard_final_tickers"] = tickers
+    st.caption(t("watchlist_caption"))
+
+    return tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query
+
+
+
+def build_active_etf_quick_picks(search_results: list[str] | None = None) -> list[str]:
+    quick_picks = filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS)
+    if search_results:
+        quick_picks = dedupe_keep_order(quick_picks + filter_active_etf_tickers(search_results[:4]))
+    return quick_picks[:6]
+
+
+def render_active_etf_news_scoreboard(bundles: list[dict], lens_meta: dict | None = None) -> None:
+    if not bundles:
+        return
+
+    inject_active_etf_tracker_css()
+
+    scored_bundles = sorted(
+        bundles,
+        key=lambda bundle: (
+            float(bundle["analysis"].get("news_pulse", {}).get("score", 0.0)),
+            float(compute_lens_winner_fields(bundle, lens_meta).get("lens_score", 0)),
+        ),
+        reverse=True,
+    )
+    leader = scored_bundles[0]
+    signal_leader = max(
+        bundles,
+        key=lambda bundle: float(compute_lens_winner_fields(bundle, lens_meta).get("lens_score", 0)),
+    )
+
+    st.markdown(
+        f"""
+        <div class="guide-shell">
+            <div class="section-header">{t("active_etf_news_scoreboard")}</div>
+            <div class="guide-title">{t("active_etf_news_scoreboard")}</div>
+            <div class="guide-copy">{t("active_etf_news_scoreboard_copy")}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    leader_pulse = leader["analysis"].get("news_pulse", {})
+    signal_leader_fields = compute_lens_winner_fields(signal_leader, lens_meta)
+    metric_cols = st.columns(3)
+    metric_cols[0].metric(
+        t("active_etf_news_leader"),
+        display_ticker_label(leader["ticker"]),
+        f'{float(leader_pulse.get("score", 0.0)):+.2f}',
+    )
+    metric_cols[1].metric(
+        t("active_etf_signal_leader"),
+        display_ticker_label(signal_leader["ticker"]),
+        f'{float(signal_leader_fields.get("lens_score", 0)):+.0f}',
+    )
+    metric_cols[2].metric(
+        t("active_etf_news_mix"),
+        tr_news_label(str(leader_pulse.get("label", "News tilt: mixed"))),
+        tr_term(leader["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")),
+    )
+    st.caption(t("active_etf_news_focus_note", ticker=display_ticker_label(leader["ticker"])))
+
+    bullish_label = t("bullish_count", count=0).replace("0", "").strip()
+    neutral_label = t("neutral_count", count=0).replace("0", "").strip()
+    bearish_label = t("bearish_count", count=0).replace("0", "").strip()
+
+    rows = []
+    for bundle in scored_bundles:
+        analysis = bundle["analysis"]
+        pulse = analysis.get("news_pulse", {})
+        catalyst = analysis.get("catalyst_engine", {})
+        story_title = ((bundle.get("news_items") or [{}])[0].get("title") if bundle.get("news_items") else "") or tr_term("No strong lead story")
+        story_source = ((bundle.get("news_items") or [{}])[0].get("publisher") if bundle.get("news_items") else "") or ""
+        signal_value = str(analysis.get("signal", "HOLD"))
+        signal_tone = "up" if signal_value == "BUY" else "down" if signal_value == "SELL" else "neutral"
+        rows.append(
+            [
+                _active_etf_story_cell(display_ticker_label(bundle["ticker"]), signal_value),
+                _tracker_status_chip(tr_signal(signal_value), signal_tone),
+                _active_etf_score_cell(float(pulse.get("score", 0.0))),
+                _active_etf_plain_cell(tr_news_label(str(pulse.get("label", "News tilt: mixed"))), class_name="etf-tracker-text"),
+                _active_etf_plain_cell(int(pulse.get("up", 0))),
+                _active_etf_plain_cell(int(pulse.get("neutral", 0))),
+                _active_etf_plain_cell(int(pulse.get("down", 0))),
+                _active_etf_plain_cell(tr_term(catalyst.get("dominant", "Macro")), class_name="etf-tracker-text"),
+                _active_etf_story_cell(story_title, story_source),
+            ]
+        )
+
+    render_active_etf_tracker_table(
+        [
+            "ETF",
+            t("signal"),
+            t("active_etf_news_score"),
+            t("active_etf_news_mix"),
+            bullish_label,
+            neutral_label,
+            bearish_label,
+            t("dominant_catalyst"),
+            t("active_etf_lead_story"),
+        ],
+        rows,
+        "目前沒有可顯示的主動式 ETF 新聞比分資料。"
+        if get_language() == "zh_TW"
+        else "No active ETF news scoreboard data is available right now.",
+    )
+
+
+def render_active_etf_sidebar_selector(selected_lang: str) -> tuple[list[str], str, list[str], str, str]:
+    is_zh = selected_lang == "繁體中文"
+    selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    selected_groups = [
+        group
+        for group in st.session_state.get("dashboard_selected_groups", [])
+        if group in market_scope_group_options(selected_market_scope)
+    ]
+
+    render_html_block(f'<div class="side-group-label">{t("active_etf_universe")}</div>')
+    st.caption(t("active_etf_watchlist_caption"))
+
+    render_html_block(
+        f"""
+        <div class="side-group-label">{t("active_etf_selector_title")}</div>
+        <div class="side-copy" style="margin-top:6px; margin-bottom:10px;">{t("active_etf_selector_copy")}</div>
+        """
+    )
+
+    stored_active_etfs = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+    st.session_state["dashboard_active_etf_tickers"] = stored_active_etfs
+
+    quick_pick_symbols = build_active_etf_quick_picks()
+    if quick_pick_symbols:
+        render_html_block(f'<div class="side-group-label">{t("active_etf_quick_picks")}</div>')
+        st.caption(t("active_etf_quick_picks_copy"))
+        quick_cols = st.columns(min(3, len(quick_pick_symbols)))
+        for idx, ticker in enumerate(quick_pick_symbols):
+            with quick_cols[idx % len(quick_cols)]:
+                if st.button(
+                    display_ticker_label(ticker),
+                    key=f"active_etf_quick_pick_{ticker}",
+                    use_container_width=True,
+                ):
+                    st.session_state["dashboard_active_etf_tickers"] = dedupe_keep_order(stored_active_etfs + [ticker])
+                    st.session_state["dashboard_active_etf_tickers_initialized"] = True
+                    st.rerun()
+
+    custom_widget_key = "dashboard_active_etf_custom_symbols_widget"
+    if custom_widget_key not in st.session_state:
+        st.session_state[custom_widget_key] = st.session_state.get("dashboard_active_etf_custom_symbols", "")
+    custom_ticker_text = st.text_input(
+        t("custom_symbols"),
+        placeholder=t("active_etf_custom_symbols_placeholder"),
+        key=custom_widget_key,
+    )
+    st.session_state["dashboard_active_etf_custom_symbols"] = custom_ticker_text
+    custom_tickers = filter_active_etf_tickers(
+        [value for value in custom_ticker_text.replace("\n", ",").split(",") if str(value).strip()]
+    )
+    if st.button("加入主動式 ETF" if is_zh else "Add active ETFs", use_container_width=True) and custom_tickers:
+        st.session_state["dashboard_active_etf_tickers"] = dedupe_keep_order(stored_active_etfs + custom_tickers)
+        st.session_state["dashboard_active_etf_tickers_initialized"] = True
+        st.rerun()
+
+    search_widget_key = "dashboard_active_etf_search_widget"
+    if search_widget_key not in st.session_state:
+        st.session_state[search_widget_key] = st.session_state.get("dashboard_active_etf_symbol_search", "")
+    symbol_search_query = st.text_input(
+        t("symbol_search"),
+        placeholder=t("active_etf_symbol_search_placeholder"),
+        key=search_widget_key,
+    )
+    st.session_state["dashboard_active_etf_symbol_search"] = symbol_search_query
+
+    search_matches_widget_key = "dashboard_active_etf_search_matches_widget"
+    search_results: list[str] = []
+    search_matches: list[str] = []
+    if symbol_search_query.strip():
+        search_results = build_active_etf_search_results(symbol_search_query, max_results=12)
+        st.caption(t("active_etf_search_results_help"))
+        if search_results:
+            valid_search_matches = [
+                normalize_dashboard_ticker(value)
+                for value in st.session_state.get(search_matches_widget_key, [])
+                if normalize_dashboard_ticker(value) in set(search_results)
+            ]
+            st.session_state[search_matches_widget_key] = valid_search_matches
+            search_matches = st.multiselect(
+                t("search_results"),
+                options=search_results,
+                format_func=display_ticker_label,
+                help=t("active_etf_search_results_help"),
+                key=search_matches_widget_key,
+            )
+        else:
+            st.session_state[search_matches_widget_key] = []
+            st.caption(t("active_etf_search_results_empty"))
+    else:
+        st.session_state[search_matches_widget_key] = []
+
+    available_universe = sort_ticker_options(set(search_results) | set(custom_tickers))
+    selected_active_etfs = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+    selected_active_set = {normalize_dashboard_ticker(value) for value in selected_active_etfs}
+    available_universe = [ticker for ticker in available_universe if normalize_dashboard_ticker(ticker) not in selected_active_set]
+
+    candidate_widget_key = "dashboard_active_etf_candidate_widget"
+    valid_candidates = [
+        normalize_dashboard_ticker(value)
+        for value in st.session_state.get(candidate_widget_key, [])
+        if normalize_dashboard_ticker(value) in set(available_universe)
+    ]
+    st.session_state[candidate_widget_key] = valid_candidates
+    candidate_tickers = st.multiselect(
+        t("active_etf_available"),
+        options=available_universe,
+        format_func=display_ticker_label,
+        placeholder=t("pick_watchlist_symbols"),
+        key=candidate_widget_key,
+    )
+    candidate_action_cols = st.columns(2)
+    if candidate_action_cols[0].button(t("active_etf_add_selected"), use_container_width=True):
+        st.session_state["dashboard_active_etf_tickers"] = dedupe_keep_order(
+            selected_active_etfs + filter_active_etf_tickers(candidate_tickers or search_matches)
+        )
+        st.session_state["dashboard_active_etf_tickers_initialized"] = True
+        st.rerun()
+    if candidate_action_cols[1].button(t("active_etf_add_all"), use_container_width=True):
+        st.session_state["dashboard_active_etf_tickers"] = dedupe_keep_order(
+            selected_active_etfs + filter_active_etf_tickers(available_universe)
+        )
+        st.session_state["dashboard_active_etf_tickers_initialized"] = True
+        st.rerun()
+
+    selected_active_etfs = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+    st.session_state["dashboard_active_etf_tickers"] = selected_active_etfs
+
+    render_html_block(f'<div class="side-group-label">{t("active_etf_selected")}</div>')
+    st.caption(t("active_etf_selected_count", count=len(selected_active_etfs)))
+
+    remove_widget_key = "dashboard_active_etf_remove_widget"
+    valid_removals = [
+        normalize_dashboard_ticker(value)
+        for value in st.session_state.get(remove_widget_key, [])
+        if normalize_dashboard_ticker(value) in set(selected_active_etfs)
+    ]
+    st.session_state[remove_widget_key] = valid_removals
+    remove_candidates = st.multiselect(
+        t("active_etf_selected"),
+        options=selected_active_etfs,
+        format_func=display_ticker_label,
+        placeholder=t("pick_watchlist_symbols"),
+        key=remove_widget_key,
+    )
+    selected_action_cols = st.columns(2)
+    if selected_action_cols[0].button(t("active_etf_remove_selected"), use_container_width=True):
+        removal_set = {normalize_dashboard_ticker(value) for value in remove_candidates}
+        st.session_state["dashboard_active_etf_tickers"] = [
+            ticker for ticker in selected_active_etfs
+            if normalize_dashboard_ticker(ticker) not in removal_set
+        ]
+        st.session_state["dashboard_active_etf_tickers_initialized"] = True
+        st.rerun()
+    if selected_action_cols[1].button(t("active_etf_clear_selected"), use_container_width=True):
+        st.session_state["dashboard_active_etf_tickers"] = []
+        st.session_state["dashboard_active_etf_tickers_initialized"] = True
+        st.rerun()
+
+    tickers = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+    st.session_state["dashboard_active_etf_tickers"] = tickers
+    if tickers:
+        preview_items = "".join(
+            f'<span class="chip chip-info" style="margin-right:6px; margin-bottom:6px;">{escape(display_ticker_label(ticker))}</span>'
+            for ticker in tickers[:10]
+        )
+        if len(tickers) > 10:
+            preview_items += f'<span class="chip" style="margin-right:6px; margin-bottom:6px;">+{len(tickers) - 10}</span>'
+        render_html_block(f'<div class="chip-row" style="margin-top:8px;">{preview_items}</div>')
+    else:
+        st.caption(t("active_etf_empty_state"))
+
+    st.session_state["dashboard_final_tickers"] = tickers
+    st.caption(t("active_etf_watchlist_caption"))
+    return tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query
 
 
 # ---------------------------
@@ -10647,6 +13225,15 @@ def inject_localization_overrides():
                 font-size: 22px;
             }
         }
+        
+        .etf-tracker-shell, .etf-tracker-panel-shell {
+            background: linear-gradient(180deg, var(--paper) 0%, #fbf8f1 100%);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-md);
+        }
+        .etf-tracker-panel-shell { padding-bottom: 8px; }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -10866,6 +13453,11 @@ def inject_device_layout_overrides(device_mode: str) -> None:
     st.markdown(css, unsafe_allow_html=True)
 
 def generate_dashboard():
+    init_auth_db()
+    with st.sidebar:
+        render_auth_sidebar()
+        st.markdown("---")
+
     load_dashboard_preferences()
     inject_css()
     inject_premium_overrides()
@@ -10879,6 +13471,18 @@ def generate_dashboard():
             index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
         )
         st.session_state["dashboard_language"] = selected_lang
+
+        current_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
+        if current_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
+            current_dashboard_mode = "General Market"
+        selected_dashboard_mode = st.selectbox(
+            t("dashboard_mode"),
+            options=DASHBOARD_MODE_OPTIONS,
+            index=DASHBOARD_MODE_OPTIONS.index(current_dashboard_mode),
+            format_func=dashboard_mode_label,
+        )
+        st.session_state["dashboard_mode"] = selected_dashboard_mode
+        st.caption(t("dashboard_mode_note"))
 
         current_device_control = st.session_state.get("dashboard_device_control_mode", "Auto detect")
         if current_device_control not in DEVICE_CONTROL_OPTIONS:
@@ -10930,343 +13534,24 @@ def generate_dashboard():
         st.caption(t("news_display_note"))
         st.caption(t("saved_preferences_note"))
 
+        side_title_key = "active_etf_vision_deck" if selected_dashboard_mode == "Active ETF Lab" else "vision_deck"
+        side_copy_key = "active_etf_vision_deck_copy" if selected_dashboard_mode == "Active ETF Lab" else "vision_deck_copy"
         st.markdown(
             f"""
             <div class="side-hero">
                 <div class="side-eyebrow">{t('control_center')}</div>
-                <div class="side-title">{t('vision_deck')}</div>
-                <div class="side-copy">{t('vision_deck_copy')}</div>
+                <div class="side-title">{t(side_title_key)}</div>
+                <div class="side-copy">{t(side_copy_key)}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        render_html_block(f'<div class="side-group-label">{t("watchlist_universe")}</div>')
-        current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
-        selected_market_scope = st.selectbox(
-            t("market_scope"),
-            options=list(MARKET_SCOPE_OPTIONS.keys()),
-            index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_market_scope) if current_market_scope in MARKET_SCOPE_OPTIONS else 0,
-            format_func=market_scope_label,
-        )
-        st.session_state["dashboard_market_scope"] = selected_market_scope
-        st.caption(t("market_scope_note"))
-
-
-        scope_group_options = market_scope_group_options(selected_market_scope)
-        is_zh = selected_lang == "繁體中文"
-        selector_title = "專業選股器" if is_zh else "Professional Selector"
-        selector_copy = (
-            "用搜尋、產業、可見清單三段式管理，先加入，再整理已選股票。"
-            if is_zh
-            else "Use a cleaner add-manage flow: search, sector actions, then maintain the selected watchlist."
-        )
-        sector_action_label = "依產業加入" if is_zh else "Add by sector"
-        selected_groups_label = "目前產業" if is_zh else "Active groups"
-        add_group_label = "加入此產業" if is_zh else "Add group"
-        apply_group_label = "套用此產業全部加入" if is_zh else "Add entire group"
-        select_all_groups_label = "全部產業" if is_zh else "Select all groups"
-        clear_groups_label = "清空產業" if is_zh else "Clear groups"
-        custom_add_label = "加入自訂代號" if is_zh else "Add custom symbols"
-        available_tickers_label = "可加入股票" if is_zh else "Available symbols"
-        add_visible_label = "加入勾選股票" if is_zh else "Add highlighted"
-        select_all_visible_label = "全選目前可見" if is_zh else "Add all visible"
-        selected_watchlist_label = "已選股票管理" if is_zh else "Selected watchlist"
-        remove_selected_label = "移除勾選" if is_zh else "Remove highlighted"
-        clear_selected_label = "清空已選" if is_zh else "Clear selected"
-        selected_count_label = "已選 {count} 檔" if is_zh else "{count} selected"
-        search_add_label = "加入搜尋結果" if is_zh else "Add search results"
-
-        previous_scope = st.session_state.get("dashboard_market_scope_previous")
-        stored_groups = [
-            group for group in st.session_state.get("dashboard_selected_groups", [])
-            if group in scope_group_options
-        ]
-        if previous_scope != selected_market_scope and not stored_groups:
-            stored_groups = [
-                group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]
-                if group in scope_group_options
-            ]
-        elif not stored_groups:
-            stored_groups = [
-                group for group in MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]
-                if group in scope_group_options
-            ]
-        selected_groups = dedupe_keep_order(stored_groups)
-        st.session_state["dashboard_selected_groups"] = selected_groups
-
-        stored_ticker_picks = filter_tickers_for_market_scope(
-            st.session_state.get("dashboard_selected_tickers", []),
-            selected_market_scope,
-        )
-        default_ticker_pool = [
-            ticker for ticker in default_tickers_for_market_scope(selected_market_scope)
-            if ticker
-        ]
-        tickers_initialized = bool(st.session_state.get("dashboard_selected_tickers_initialized", False))
-        has_explicit_ticker_state = "dashboard_selected_tickers" in st.session_state
-
-        if not tickers_initialized and not has_explicit_ticker_state:
-            stored_ticker_picks = default_ticker_pool
-        elif previous_scope != selected_market_scope and not stored_ticker_picks and not tickers_initialized:
-            stored_ticker_picks = default_ticker_pool
-
-        selected_ticker_picks = dedupe_keep_order(stored_ticker_picks)
-        st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
-        st.session_state["dashboard_market_scope_previous"] = selected_market_scope
-
-        render_html_block(
-            f"""
-            <div class="side-group-label">{selector_title}</div>
-            <div class="side-copy" style="margin-top:6px; margin-bottom:10px;">{selector_copy}</div>
-            """
-        )
-
-        group_action_widget_key = "dashboard_group_action_picker"
-        if group_action_widget_key not in st.session_state or st.session_state[group_action_widget_key] not in scope_group_options:
-            st.session_state[group_action_widget_key] = scope_group_options[0] if scope_group_options else ""
-        group_focus = st.selectbox(
-            sector_action_label,
-            options=scope_group_options,
-            format_func=tr_group,
-            key=group_action_widget_key,
-        )
-        group_action_cols = st.columns(2)
-        if group_action_cols[0].button(add_group_label, use_container_width=True):
-            st.session_state["dashboard_selected_groups"] = dedupe_keep_order(selected_groups + [group_focus])
-            st.rerun()
-        if group_action_cols[1].button(apply_group_label, use_container_width=True):
-            st.session_state["dashboard_selected_groups"] = dedupe_keep_order(selected_groups + [group_focus])
-            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
-                selected_ticker_picks,
-                WATCHLIST_PRESETS.get(group_focus, []),
-                selected_market_scope,
-            )
-            st.session_state["dashboard_selected_tickers_initialized"] = True
-            st.rerun()
-
-        group_scope_cols = st.columns(2)
-        if group_scope_cols[0].button(select_all_groups_label, use_container_width=True):
-            st.session_state["dashboard_selected_groups"] = scope_group_options.copy()
-            st.rerun()
-        if group_scope_cols[1].button(clear_groups_label, use_container_width=True):
-            st.session_state["dashboard_selected_groups"] = []
-            st.rerun()
-
-        selected_groups = [
-            group for group in st.session_state.get("dashboard_selected_groups", [])
-            if group in scope_group_options
-        ]
-        st.session_state["dashboard_selected_groups"] = selected_groups
-        if selected_groups:
-            st.caption(
-                f"{selected_groups_label}: " + " · ".join(tr_group(group) for group in selected_groups)
-            )
+        if selected_dashboard_mode == "Active ETF Lab":
+            tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query = render_active_etf_sidebar_selector(selected_lang)
         else:
-            st.caption(
-                f"{selected_groups_label}: " + ("未限制，顯示目前市場所有預設群組" if is_zh else "Not limited. Showing all preset groups in this market scope.")
-            )
+            tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query = render_general_market_sidebar_selector(selected_lang)
 
-        custom_symbol_widget_key = "dashboard_custom_symbols_widget"
-        if custom_symbol_widget_key not in st.session_state:
-            st.session_state[custom_symbol_widget_key] = st.session_state.get("dashboard_custom_symbols", "")
-        custom_ticker_text = st.text_input(
-            t("custom_symbols"),
-            placeholder=t("custom_symbols_placeholder"),
-            key=custom_symbol_widget_key,
-        )
-        st.session_state["dashboard_custom_symbols"] = custom_ticker_text
-
-        custom_tickers = [
-            normalize_dashboard_ticker(ticker)
-            for ticker in custom_ticker_text.replace("\n", ",").split(",")
-            if ticker.strip()
-        ]
-        custom_tickers = filter_tickers_for_market_scope(custom_tickers, selected_market_scope)
-        if st.button(custom_add_label, use_container_width=True) and custom_tickers:
-            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
-                selected_ticker_picks,
-                custom_tickers,
-                selected_market_scope,
-            )
-            st.session_state["dashboard_selected_tickers_initialized"] = True
-            st.rerun()
-
-        symbol_search_widget_key = "dashboard_symbol_search_widget"
-        if symbol_search_widget_key not in st.session_state:
-            st.session_state[symbol_search_widget_key] = st.session_state.get("dashboard_symbol_search", "")
-        symbol_search_query = st.text_input(
-            t("symbol_search"),
-            placeholder=t("symbol_search_placeholder"),
-            key=symbol_search_widget_key,
-        )
-        st.session_state["dashboard_symbol_search"] = symbol_search_query
-
-        symbol_search_matches: list[str] = []
-        search_results: list[str] = []
-        search_matches_widget_key = "dashboard_symbol_search_matches_widget"
-        if symbol_search_query.strip():
-            search_results = sort_ticker_options(
-                build_symbol_search_results(symbol_search_query, selected_market_scope, max_results=12)
-            )
-            st.caption(t("search_results_help"))
-            if search_results:
-                if search_matches_widget_key not in st.session_state:
-                    st.session_state[search_matches_widget_key] = []
-                valid_search_matches = [
-                    normalize_dashboard_ticker(value)
-                    for value in st.session_state.get(search_matches_widget_key, [])
-                    if normalize_dashboard_ticker(value) in set(search_results)
-                ]
-                st.session_state[search_matches_widget_key] = valid_search_matches
-                symbol_search_matches = st.multiselect(
-                    t("search_results"),
-                    options=search_results,
-                    format_func=display_ticker_label,
-                    help=t("search_results_help"),
-                    key=search_matches_widget_key,
-                )
-                symbol_search_matches = [
-                    normalize_dashboard_ticker(value)
-                    for value in symbol_search_matches
-                    if normalize_dashboard_ticker(value) in set(search_results)
-                ]
-                st.session_state["dashboard_symbol_search_matches"] = symbol_search_matches
-                if st.button(search_add_label, use_container_width=True):
-                    st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
-                        selected_ticker_picks,
-                        symbol_search_matches,
-                        selected_market_scope,
-                    )
-                    st.session_state["dashboard_selected_tickers_initialized"] = True
-                    st.rerun()
-            else:
-                st.session_state["dashboard_symbol_search_matches"] = []
-                st.caption(t("search_results_empty"))
-        else:
-            st.session_state["dashboard_symbol_search_matches"] = []
-
-        available_universe = set()
-        source_groups = selected_groups or scope_group_options
-        for group in source_groups:
-            available_universe.update(WATCHLIST_PRESETS.get(group, []))
-        available_universe.update(
-            ticker for ticker in DEFAULT_TICKERS
-            if selected_market_scope != "Taiwan only" or is_taiwan_ticker(ticker)
-        )
-        for ticker in custom_tickers + st.session_state.get("dashboard_symbol_search_matches", []) + selected_ticker_picks:
-            if not ticker:
-                continue
-            if selected_market_scope == "Taiwan only" and not is_taiwan_ticker(ticker):
-                continue
-            if selected_market_scope == "U.S. only" and is_taiwan_ticker(ticker):
-                continue
-            available_universe.add(ticker)
-        available_universe = sort_ticker_options(available_universe)
-        selected_ticker_set = {normalize_dashboard_ticker(value) for value in selected_ticker_picks}
-        available_universe = [
-            ticker for ticker in available_universe
-            if normalize_dashboard_ticker(ticker) not in selected_ticker_set
-        ]
-
-        candidate_widget_key = "dashboard_candidate_tickers_widget"
-        if candidate_widget_key not in st.session_state:
-            st.session_state[candidate_widget_key] = []
-        st.session_state[candidate_widget_key] = [
-            normalize_dashboard_ticker(value)
-            for value in st.session_state.get(candidate_widget_key, [])
-            if normalize_dashboard_ticker(value) in set(available_universe)
-        ]
-        candidate_tickers = st.multiselect(
-            available_tickers_label,
-            options=available_universe,
-            placeholder=t("pick_watchlist_symbols"),
-            format_func=display_ticker_label,
-            key=candidate_widget_key,
-        )
-
-        candidate_action_cols = st.columns(2)
-        if candidate_action_cols[0].button(add_visible_label, use_container_width=True):
-            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
-                selected_ticker_picks,
-                candidate_tickers,
-                selected_market_scope,
-            )
-            st.session_state["dashboard_selected_tickers_initialized"] = True
-            st.rerun()
-        if candidate_action_cols[1].button(select_all_visible_label, use_container_width=True):
-            st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
-                selected_ticker_picks,
-                available_universe,
-                selected_market_scope,
-            )
-            st.session_state["dashboard_selected_tickers_initialized"] = True
-            st.rerun()
-
-        selected_ticker_picks = filter_tickers_for_market_scope(
-            st.session_state.get("dashboard_selected_tickers", []),
-            selected_market_scope,
-        )
-        st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
-
-        render_html_block(
-            f'<div class="side-group-label">{selected_watchlist_label}</div>'
-        )
-        st.caption(selected_count_label.format(count=len(selected_ticker_picks)))
-
-        remove_widget_key = "dashboard_selected_remove_widget"
-        if remove_widget_key not in st.session_state:
-            st.session_state[remove_widget_key] = []
-        st.session_state[remove_widget_key] = [
-            normalize_dashboard_ticker(value)
-            for value in st.session_state.get(remove_widget_key, [])
-            if normalize_dashboard_ticker(value) in set(selected_ticker_picks)
-        ]
-        remove_candidates = st.multiselect(
-            selected_watchlist_label,
-            options=selected_ticker_picks,
-            format_func=display_ticker_label,
-            placeholder=t("pick_watchlist_symbols"),
-            key=remove_widget_key,
-        )
-
-        selected_action_cols = st.columns(2)
-        if selected_action_cols[0].button(remove_selected_label, use_container_width=True):
-            removal_set = {normalize_dashboard_ticker(value) for value in remove_candidates}
-            st.session_state["dashboard_selected_tickers"] = [
-                ticker for ticker in selected_ticker_picks
-                if normalize_dashboard_ticker(ticker) not in removal_set
-            ]
-            st.session_state["dashboard_selected_tickers_initialized"] = True
-            st.rerun()
-        if selected_action_cols[1].button(clear_selected_label, use_container_width=True):
-            st.session_state["dashboard_selected_tickers"] = []
-            st.session_state["dashboard_selected_tickers_initialized"] = True
-            st.rerun()
-
-        selected_ticker_picks = filter_tickers_for_market_scope(
-            st.session_state.get("dashboard_selected_tickers", []),
-            selected_market_scope,
-        )
-        st.session_state["dashboard_selected_tickers"] = selected_ticker_picks
-        st.session_state["dashboard_selected_tickers_initialized"] = True
-
-        if selected_ticker_picks:
-            preview_items = "".join(
-                f'<span class="chip chip-info" style="margin-right:6px; margin-bottom:6px;">{escape(display_ticker_label(ticker))}</span>'
-                for ticker in selected_ticker_picks[:10]
-            )
-            if len(selected_ticker_picks) > 10:
-                preview_items += (
-                    f'<span class="chip" style="margin-right:6px; margin-bottom:6px;">+{len(selected_ticker_picks) - 10}</span>'
-                )
-            render_html_block(f'<div class="chip-row" style="margin-top:8px;">{preview_items}</div>')
-        else:
-            st.caption("目前尚未加入股票，請先從上方加入。" if is_zh else "No symbols added yet. Add symbols from the sections above.")
-
-        tickers = dedupe_keep_order(selected_ticker_picks)
-        st.session_state["dashboard_final_tickers"] = tickers
-        st.caption(t("watchlist_caption"))
         render_html_block(f'<div class="side-group-label">{t("trend_lens")}</div>')
 
         stored_lens_name = st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
@@ -11322,6 +13607,7 @@ def generate_dashboard():
 
         save_dashboard_preferences(
             {
+                "mode": selected_dashboard_mode,
                 "lang": selected_lang,
                 "devicectl": selected_device_control,
                 "device": selected_device_mode,
@@ -11329,13 +13615,21 @@ def generate_dashboard():
                 "scope": selected_market_scope,
                 "groups": _csv_encode(selected_groups),
                 "picks": _csv_encode(
-                    selected_ticker_picks,
+                    st.session_state.get("dashboard_selected_tickers", []),
                     empty_sentinel=EMPTY_SELECTION_SENTINEL
                     if st.session_state.get("dashboard_selected_tickers_initialized", False)
                     else None,
                 ),
-                "custom": custom_ticker_text.strip(),
-                "search": symbol_search_query.strip(),
+                "custom": str(st.session_state.get("dashboard_custom_symbols", "")).strip(),
+                "search": str(st.session_state.get("dashboard_symbol_search", "")).strip(),
+                "etfpicks": _csv_encode(
+                    filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", [])),
+                    empty_sentinel=EMPTY_SELECTION_SENTINEL
+                    if st.session_state.get("dashboard_active_etf_tickers_initialized", False)
+                    else None,
+                ),
+                "etfcustom": str(st.session_state.get("dashboard_active_etf_custom_symbols", "")).strip(),
+                "etfsearch": str(st.session_state.get("dashboard_active_etf_symbol_search", "")).strip(),
                 "lens": lens_name,
                 "manual": "1" if manual_override else "0",
                 "period": manual_period,
@@ -11354,37 +13648,50 @@ def generate_dashboard():
         f'<div class="top-intro">{t("top_intro")}</div>'
     )
 
-    if not tickers:
-        st.warning(t("please_select_ticker"))
+    dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
+    dashboard_tickers = (
+        [ticker for ticker in tickers if is_taiwan_active_etf(ticker)]
+        if dashboard_mode == "Active ETF Lab"
+        else tickers
+    )
+
+    if not dashboard_tickers:
+        if dashboard_mode == "Active ETF Lab":
+            st.warning(t("active_etf_no_dashboard_data"))
+        else:
+            st.warning(t("please_select_ticker"))
         return
 
     with st.spinner(t("loading_data")):
-        daily_data = fetch_daily_data(tickers, period, interval)
-        intraday_data = fetch_intraday_data(tickers)
+        daily_data = fetch_daily_data(dashboard_tickers, period, interval)
+        intraday_data = fetch_intraday_data(dashboard_tickers)
         global_reference_data = fetch_global_reference_data(period, interval)
 
     if daily_data is None or daily_data.empty:
         st.error(t("no_market_data"))
         return
 
-    global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta)
-    render_global_market_indicator(global_indicator)
-    render_section_guide()
-    render_active_trend_lens(lens_meta)
+    if dashboard_mode == "Active ETF Lab":
+        render_active_etf_lab_dashboard(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
+    else:
+        global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta)
+        render_global_market_indicator(global_indicator)
+        render_section_guide()
+        render_active_trend_lens(lens_meta)
 
-    render_stock_explorer_nav(tickers)
-    render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
-    render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
-    render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+        render_stock_explorer_nav(dashboard_tickers)
+        render_global_scenario_planning_stack(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
+        render_precomparison_target_and_brief_groups(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
+        render_comparison_section(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
 
-    tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
-    for tab, ticker in zip(tabs, tickers):
-        with tab:
-            render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(tickers))
+        tabs = st.tabs([display_ticker_label(ticker) for ticker in dashboard_tickers])
+        for tab, ticker in zip(tabs, dashboard_tickers):
+            with tab:
+                render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(dashboard_tickers))
 
-    render_html_block(
-        f'<div class="footer-note">{t("footer_note")}</div>'
-    )
+        render_html_block(
+            f'<div class="footer-note">{t("footer_note")}</div>'
+        )
 
 
 if __name__ == "__main__":
