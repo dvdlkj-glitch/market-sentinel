@@ -11066,6 +11066,689 @@ def render_precomparison_target_and_brief_groups(
                 render_html_block('<div class="group-stack-divider"></div>')
 
 
+
+
+def _tw_rows_from_payload(payload: dict) -> list[dict]:
+    data = payload.get("data") or []
+    fields = payload.get("fields") or []
+    if not data or not fields:
+        return []
+    try:
+        frame = pd.DataFrame(data, columns=fields[: len(data[0])])
+    except Exception:
+        return []
+    return frame.to_dict("records")
+
+
+def _extract_security_code(value: object) -> str:
+    raw = str(value or "").upper().strip()
+    match = re.search(r"(\d{4,6}[A-Z]?)", raw)
+    return match.group(1) if match else ""
+
+
+def _extract_row_code(row: dict) -> str:
+    return _extract_security_code(
+        _pick_first_matching_value(
+            row,
+            ("證券代號", "股票代號", "公司代號", "代號", "Code", "SecuritiesCompanyCode", "CompanyCode"),
+        )
+    )
+
+
+def _match_row_by_security_code(rows: list[dict], code: str) -> dict:
+    code = str(code or "").upper().strip()
+    candidates = [row for row in rows if _extract_row_code(row) == code]
+    if not candidates:
+        return {}
+    candidates.sort(key=_row_sortable_timestamp, reverse=True)
+    return candidates[0]
+
+
+def _row_sortable_timestamp(row: dict) -> pd.Timestamp:
+    candidates = []
+    for key, value in row.items():
+        key_text = str(key or "")
+        if not any(token in key_text for token in ("日期", "年月", "年季", "Date", "date", "Month", "month")):
+            continue
+        parsed = _parse_any_date_like(value)
+        if pd.notna(parsed):
+            candidates.append(parsed)
+    if candidates:
+        return max(candidates)
+    return pd.Timestamp("1970-01-01")
+
+
+def _parse_any_date_like(value: object) -> pd.Timestamp:
+    raw = str(value or "").strip()
+    if not raw:
+        return pd.NaT
+    raw = raw.replace(".", "/").replace("年", "/").replace("月", "/").replace("日", "")
+    raw = re.sub(r"\s+", "", raw)
+    if re.fullmatch(r"\d{7,8}", raw):
+        if len(raw) == 7:
+            try:
+                year = int(raw[:3]) + 1911
+                month = int(raw[3:5])
+                day = int(raw[5:7])
+                return pd.Timestamp(year=year, month=month, day=day)
+            except Exception:
+                return pd.NaT
+        try:
+            return pd.to_datetime(raw, errors="coerce")
+        except Exception:
+            return pd.NaT
+    parts = re.split(r"[/\-]", raw)
+    if len(parts) >= 2 and parts[0].isdigit():
+        try:
+            year = int(parts[0])
+            if year < 1911:
+                year += 1911
+            month = int(parts[1])
+            day = int(parts[2]) if len(parts) >= 3 and str(parts[2]).isdigit() else 1
+            return pd.Timestamp(year=year, month=month, day=day)
+        except Exception:
+            return pd.NaT
+    try:
+        return pd.to_datetime(raw, errors="coerce")
+    except Exception:
+        return pd.NaT
+
+
+def _find_value_by_keywords(row: dict, *keyword_groups: tuple[str, ...]) -> str:
+    for keywords in keyword_groups:
+        value = _pick_first_matching_value(row, tuple(keywords))
+        if value:
+            return value
+    return ""
+
+
+def _safe_percent_text(value: object) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    return f"{numeric:.2f}%"
+
+
+def _safe_number_text(value: object, digits: int = 2) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    return f"{numeric:,.{digits}f}"
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_twse_valuation_snapshot(code: str) -> dict:
+    code = _extract_security_code(code)
+    if not code:
+        return {}
+
+    errors: list[str] = []
+    for offset in range(10):
+        trade_date = pd.Timestamp.now(TW_TZ).normalize() - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?response=json&date={date_str}&selectType=ALL"
+        try:
+            payload = _twse_request_json(url)
+            rows = _tw_rows_from_payload(payload)
+            row = _match_row_by_security_code(rows, code)
+            if not row:
+                continue
+            return {
+                "source": "TWSE BWIBBU",
+                "date": trade_date.date().isoformat(),
+                "pe": _find_value_by_keywords(
+                    row,
+                    ("本益比", "PE", "P/E"),
+                ),
+                "yield": _find_value_by_keywords(
+                    row,
+                    ("殖利率", "股利殖利率", "DividendYield", "Yield"),
+                ),
+                "pb": _find_value_by_keywords(
+                    row,
+                    ("股價淨值比", "P/B", "PB"),
+                ),
+            }
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+    return {"source": "TWSE BWIBBU", "error": errors[-1] if errors else "No valuation snapshot found."}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_twse_stock_institutional_flow(code: str) -> dict:
+    code = _extract_security_code(code)
+    if not code:
+        return {}
+
+    errors: list[str] = []
+    for offset in range(10):
+        trade_date = pd.Timestamp.now(TW_TZ).normalize() - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={date_str}&selectType=ALLBUT0999"
+        try:
+            payload = _twse_request_json(url)
+            rows = _tw_rows_from_payload(payload)
+            row = _match_row_by_security_code(rows, code)
+            if not row:
+                continue
+            return {
+                "source": "TWSE T86",
+                "date": trade_date.date().isoformat(),
+                "foreign_net": _find_value_by_keywords(
+                    row,
+                    ("外陸資買賣超股數(不含外資自營商)",),
+                    ("外資及陸資買賣超股數",),
+                    ("外資買賣超股數",),
+                ),
+                "trust_net": _find_value_by_keywords(
+                    row,
+                    ("投信買賣超股數",),
+                ),
+                "dealer_net": _find_value_by_keywords(
+                    row,
+                    ("自營商買賣超股數",),
+                    ("自營商(自行買賣)買賣超股數",),
+                ),
+            }
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+    return {"source": "TWSE T86", "error": errors[-1] if errors else "No institutional flow found."}
+
+
+def _extract_tpex_field(row: dict, keywords: tuple[str, ...]) -> str:
+    for key, value in row.items():
+        key_text = str(key or "")
+        if any(token in key_text for token in keywords):
+            value_text = str(value or "").strip()
+            if value_text:
+                return value_text
+    return ""
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_tpex_snapshot_bundle(code: str) -> dict:
+    code = _extract_security_code(code)
+    if not code:
+        return {}
+
+    endpoints = {
+        "quotes": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+        "valuation": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+        "flow": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_trading",
+    }
+
+    result: dict[str, dict] = {}
+    for key, url in endpoints.items():
+        try:
+            payload = _fetch_json_url(url, timeout=20)
+        except Exception as exc:
+            result[key] = {"source": url, "error": str(exc)}
+            continue
+        rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+        row = _match_row_by_security_code(rows, code)
+        if not row:
+            result[key] = {"source": url, "error": "No matching code."}
+            continue
+        result[key] = {"source": url, "row": row}
+
+    valuation_row = result.get("valuation", {}).get("row", {}) or {}
+    flow_row = result.get("flow", {}).get("row", {}) or {}
+    quote_row = result.get("quotes", {}).get("row", {}) or {}
+
+    return {
+        "source": "TPEx OpenAPI",
+        "date": _find_value_by_keywords(
+            valuation_row or quote_row or flow_row,
+            ("日期", "Date"),
+        ),
+        "pe": _find_value_by_keywords(valuation_row, ("本益比", "PE")),
+        "yield": _find_value_by_keywords(valuation_row, ("殖利率", "Yield")),
+        "pb": _find_value_by_keywords(valuation_row, ("股價淨值比", "P/B", "PB")),
+        "foreign_net": _find_value_by_keywords(flow_row, ("外資及陸資買賣超", "外資買賣超")),
+        "trust_net": _find_value_by_keywords(flow_row, ("投信買賣超",)),
+        "dealer_net": _find_value_by_keywords(flow_row, ("自營商買賣超",)),
+        "close": _find_value_by_keywords(quote_row, ("收盤", "Close")),
+    }
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_monthly_revenue_snapshot(ticker: str) -> dict:
+    code = ticker_base_code(ticker)
+    if not code or is_taiwan_active_etf(ticker):
+        return {}
+
+    is_otc = str(ticker or "").upper().endswith(".TWO")
+    url = (
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
+        if is_otc
+        else "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
+    )
+
+    try:
+        payload = _fetch_json_url(url, timeout=25)
+    except Exception as exc:
+        return {"source": url, "error": str(exc)}
+
+    rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+    candidates = [row for row in rows if _extract_row_code(row) == code]
+    if not candidates:
+        return {"source": url, "error": "No revenue row matched."}
+
+    candidates.sort(key=_row_sortable_timestamp, reverse=True)
+    row = candidates[0]
+
+    return {
+        "source": url,
+        "period": _find_value_by_keywords(row, ("資料年月", "年月", "年/月", "Month")),
+        "revenue": _find_value_by_keywords(
+            row,
+            ("當月營收", "本月營收", "營業收入-當月營收", "CurrentMonthRevenue"),
+        ),
+        "mom": _find_value_by_keywords(
+            row,
+            ("上月比較增減", "較上月增減", "MoM"),
+        ),
+        "yoy": _find_value_by_keywords(
+            row,
+            ("去年同月增減", "去年同月增減(%)", "YoY"),
+        ),
+        "acc_yoy": _find_value_by_keywords(
+            row,
+            ("前期比較增減", "累計營收增減", "AccumulatedYoY"),
+        ),
+    }
+
+
+def _flatten_leaf_dicts(value: object) -> list[dict]:
+    if isinstance(value, dict):
+        if value and all(not isinstance(v, (dict, list)) for v in value.values()):
+            return [value]
+        rows: list[dict] = []
+        for child in value.values():
+            rows.extend(_flatten_leaf_dicts(child))
+        return rows
+    if isinstance(value, list):
+        rows: list[dict] = []
+        for child in value:
+            rows.extend(_flatten_leaf_dicts(child))
+        return rows
+    return []
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_cbc_macro_snapshot() -> dict:
+    result: dict[str, dict] = {}
+
+    for key, file_name in {
+        "fx": "BP01D01",
+        "policy_rate": "EG28D01",
+    }.items():
+        url = f"https://cpx.cbc.gov.tw/API/DataAPI/Get?FileName={file_name}"
+        try:
+            payload = _fetch_json_url(url, timeout=25)
+        except Exception as exc:
+            result[key] = {"source": url, "error": str(exc)}
+            continue
+
+        rows = _flatten_leaf_dicts(payload)
+        rows.sort(key=_row_sortable_timestamp, reverse=True)
+        if key == "fx":
+            selected = {}
+            for row in rows:
+                joined = " ".join([str(k) for k in row.keys()] + [str(v) for v in row.values()])
+                if "新台幣" in joined or "TWD" in joined.upper():
+                    selected = row
+                    break
+            if not selected and rows:
+                selected = rows[0]
+            result[key] = {
+                "source": url,
+                "date": _find_value_by_keywords(selected, ("日期", "Date", "年月日")),
+                "value": _find_value_by_keywords(
+                    selected,
+                    ("數值", "Value", "匯率", "rate", "資料值"),
+                ),
+                "label": _find_value_by_keywords(
+                    selected,
+                    ("幣別", "項目", "名稱", "Label"),
+                ) or "USD/TWD",
+            }
+        else:
+            selected = {}
+            for row in rows:
+                joined = " ".join([str(k) for k in row.keys()] + [str(v) for v in row.values()])
+                if "重貼現率" in joined or "政策利率" in joined or "基準利率" in joined:
+                    selected = row
+                    break
+            if not selected and rows:
+                selected = rows[0]
+            result[key] = {
+                "source": url,
+                "date": _find_value_by_keywords(selected, ("日期", "Date", "年月日")),
+                "value": _find_value_by_keywords(selected, ("數值", "Value", "利率", "rate", "資料值")),
+                "label": _find_value_by_keywords(selected, ("項目", "名稱", "Label")) or "Policy rate",
+            }
+
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_taifex_put_call_snapshot() -> dict:
+    url = "https://www.taifex.com.tw/cht/3/pcRatio"
+    try:
+        tables = pd.read_html(url)
+    except Exception as exc:
+        return {"source": url, "error": str(exc)}
+
+    for table in tables:
+        columns = [str(col) for col in table.columns]
+        joined_cols = " ".join(columns).lower()
+        if not any(token in joined_cols for token in ("put", "call", "ratio", "賣權", "買權", "比率")):
+            continue
+        cleaned = table.copy()
+        cleaned.columns = [str(col).strip() for col in cleaned.columns]
+        cleaned = cleaned.dropna(how="all")
+        if cleaned.empty:
+            continue
+        row = cleaned.iloc[-1].to_dict()
+        ratio_value = ""
+        for key, value in row.items():
+            key_text = str(key).lower()
+            if any(token in key_text for token in ("ratio", "比率")):
+                ratio_value = str(value)
+                break
+        if not ratio_value:
+            for value in row.values():
+                numeric = _safe_float(value)
+                if not pd.isna(numeric) and 0 < numeric < 10:
+                    ratio_value = str(value)
+                    break
+        return {
+            "source": url,
+            "date": _find_value_by_keywords(row, ("日期", "Date")),
+            "ratio": ratio_value,
+            "put_volume": _find_value_by_keywords(row, ("賣權成交量", "Put")),
+            "call_volume": _find_value_by_keywords(row, ("買權成交量", "Call")),
+        }
+    return {"source": url, "error": "No usable put/call table found."}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
+    ticker = str(ticker or "").upper().strip()
+    if not is_taiwan_ticker(ticker):
+        return {}
+
+    code = ticker_base_code(ticker)
+    payload = {
+        "ticker": ticker,
+        "code": code,
+        "is_active_etf": is_taiwan_active_etf(ticker),
+        "valuation": {},
+        "flow": {},
+        "revenue": {},
+        "macro": fetch_cbc_macro_snapshot(),
+        "derivatives": fetch_taifex_put_call_snapshot(),
+    }
+
+    if ticker.endswith(".TWO"):
+        tpex = fetch_tpex_snapshot_bundle(code)
+        payload["valuation"] = {
+            "source": tpex.get("source", "TPEx OpenAPI"),
+            "date": tpex.get("date", ""),
+            "pe": tpex.get("pe", ""),
+            "yield": tpex.get("yield", ""),
+            "pb": tpex.get("pb", ""),
+        }
+        payload["flow"] = {
+            "source": tpex.get("source", "TPEx OpenAPI"),
+            "date": tpex.get("date", ""),
+            "foreign_net": tpex.get("foreign_net", ""),
+            "trust_net": tpex.get("trust_net", ""),
+            "dealer_net": tpex.get("dealer_net", ""),
+        }
+    elif is_taiwan_active_etf(ticker):
+        flow_payload = fetch_twse_etf_institutional_flow(ticker)
+        record = flow_payload.get("record", {}) or {}
+        payload["flow"] = {
+            "source": flow_payload.get("source", "TWSE T86 ETF"),
+            "date": flow_payload.get("date", ""),
+            "foreign_net": record.get("foreign_net", ""),
+            "trust_net": record.get("investment_trust_net", ""),
+            "dealer_net": record.get("dealer_net", ""),
+        }
+    else:
+        payload["valuation"] = fetch_twse_valuation_snapshot(code)
+        payload["flow"] = fetch_twse_stock_institutional_flow(code)
+
+    payload["revenue"] = fetch_monthly_revenue_snapshot(ticker)
+    return payload
+
+
+def _official_card_html(label: str, value: str, sub: str = "") -> str:
+    sub_html = f'<div class="benchmark-sub">{escape(sub)}</div>' if sub else ""
+    return (
+        '<div class="benchmark-box">'
+        f'<div class="benchmark-label">{escape(label)}</div>'
+        f'<div class="benchmark-value">{escape(value)}</div>'
+        f'{sub_html}'
+        '</div>'
+    )
+
+
+def render_taiwan_market_macro_strip(force_show: bool = False) -> None:
+    selected = st.session_state.get("dashboard_selected_tickers", []) or []
+    selected += st.session_state.get("dashboard_active_etf_tickers", []) or []
+    has_tw = force_show or any(is_taiwan_ticker(ticker) for ticker in selected)
+    if not has_tw:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    macro = fetch_cbc_macro_snapshot()
+    derivatives = fetch_taifex_put_call_snapshot()
+
+    cards: list[str] = []
+
+    fx = macro.get("fx", {}) or {}
+    fx_value = _safe_number_text(fx.get("value"), digits=4)
+    if fx_value == "—":
+        fx_value = str(fx.get("value") or "—")
+    cards.append(
+        _official_card_html(
+            "CBC FX" if not lang_zh else "央行匯率",
+            fx_value,
+            f"{fx.get('label', 'USD/TWD')} · {fx.get('date', '')}".strip(" ·"),
+        )
+    )
+
+    rate = macro.get("policy_rate", {}) or {}
+    rate_value = _safe_percent_text(rate.get("value"))
+    if rate_value == "—":
+        rate_value = str(rate.get("value") or "—")
+    cards.append(
+        _official_card_html(
+            "CBC Rate" if not lang_zh else "央行利率",
+            rate_value,
+            f"{rate.get('label', 'Policy rate')} · {rate.get('date', '')}".strip(" ·"),
+        )
+    )
+
+    pcr = derivatives or {}
+    pcr_value = _safe_number_text(pcr.get("ratio"), digits=2)
+    if pcr_value == "—":
+        pcr_value = str(pcr.get("ratio") or "—")
+    cards.append(
+        _official_card_html(
+            "TAIFEX PCR" if not lang_zh else "期交所 PCR",
+            pcr_value,
+            f"{pcr.get('date', '')}".strip(),
+        )
+    )
+
+    render_html_block(
+        f"""
+        <div class="global-indicator-shell global-indicator-shell-compact" style="margin-top:14px;">
+            <div class="global-indicator-header">
+                <div>
+                    <div class="section-header" style="margin:0; color:#f5ead8;">{'Taiwan macro overlay' if not lang_zh else '台股總經覆蓋'}</div>
+                    <div class="global-indicator-title">{'CBC + TAIFEX official layer' if not lang_zh else '央行 + 期交所官方層'}</div>
+                    <div class="global-indicator-copy">{'Adds official Taiwan macro and derivatives context on top of the cross-market dashboard.' if not lang_zh else '把台灣官方總經與衍生性商品脈絡補到原本 Dashboard 之上。'}</div>
+                </div>
+            </div>
+            <div class="benchmark-grid">
+                {''.join(cards)}
+            </div>
+        </div>
+        """
+    )
+
+
+def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) -> None:
+    if not is_taiwan_ticker(ticker):
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    panel_label = (
+        f"{display_ticker_label(ticker)} 台股官方資料層"
+        if lang_zh
+        else f"{display_ticker_label(ticker)} Taiwan official data layer"
+    )
+    helper = (
+        "把證交所／櫃買、MOPS、央行與期交所能直接補進來的官方資料放在同一層。"
+        if lang_zh
+        else "Brings TWSE/TPEx, MOPS, CBC, and TAIFEX official data into one layer."
+    )
+
+    is_open = render_dashboard_section_panel(
+        panel_label,
+        "tw-official",
+        item_count=selected_count,
+        helper_base=helper,
+        expanded=False,
+        panel_key=f"tw-official::{ticker}",
+    )
+    if not is_open:
+        return
+
+    snapshot = fetch_taiwan_official_dashboard_snapshot(ticker)
+    valuation = snapshot.get("valuation", {}) or {}
+    flow = snapshot.get("flow", {}) or {}
+    revenue = snapshot.get("revenue", {}) or {}
+    macro = snapshot.get("macro", {}) or {}
+    derivatives = snapshot.get("derivatives", {}) or {}
+
+    cards = []
+
+    pe_value = _safe_number_text(valuation.get("pe"), digits=2)
+    yield_value = _safe_percent_text(valuation.get("yield"))
+    pb_value = _safe_number_text(valuation.get("pb"), digits=2)
+
+    if any(value != "—" for value in (pe_value, yield_value, pb_value)):
+        cards.extend(
+            [
+                _official_card_html("PE", pe_value, f"{valuation.get('source', '')} · {valuation.get('date', '')}".strip(" ·")),
+                _official_card_html("Yield", yield_value, "TWSE/TPEx official"),
+                _official_card_html("PB", pb_value, "TWSE/TPEx official"),
+            ]
+        )
+
+    foreign_net = _safe_number_text(flow.get("foreign_net"), digits=0)
+    trust_net = _safe_number_text(flow.get("trust_net"), digits=0)
+    dealer_net = _safe_number_text(flow.get("dealer_net"), digits=0)
+
+    cards.extend(
+        [
+            _official_card_html("Foreign", foreign_net, f"{flow.get('source', '')} · {flow.get('date', '')}".strip(" ·")),
+            _official_card_html("Trust", trust_net, "3-inst net"),
+            _official_card_html("Dealer", dealer_net, "3-inst net"),
+        ]
+    )
+
+    revenue_value = _safe_number_text(revenue.get("revenue"), digits=0)
+    yoy_value = _safe_percent_text(revenue.get("yoy"))
+    mom_value = _safe_percent_text(revenue.get("mom"))
+
+    if revenue_value != "—" or yoy_value != "—" or mom_value != "—":
+        cards.extend(
+            [
+                _official_card_html("Monthly revenue" if not lang_zh else "月營收", revenue_value, str(revenue.get("period", ""))),
+                _official_card_html("Revenue YoY", yoy_value, "MOPS / OpenAPI"),
+                _official_card_html("Revenue MoM", mom_value, "MOPS / OpenAPI"),
+            ]
+        )
+
+    fx = macro.get("fx", {}) or {}
+    rate = macro.get("policy_rate", {}) or {}
+    pcr = derivatives or {}
+
+    fx_value = _safe_number_text(fx.get("value"), digits=4)
+    if fx_value == "—":
+        fx_value = str(fx.get("value") or "—")
+    rate_value = _safe_percent_text(rate.get("value"))
+    if rate_value == "—":
+        rate_value = str(rate.get("value") or "—")
+    pcr_value = _safe_number_text(pcr.get("ratio"), digits=2)
+    if pcr_value == "—":
+        pcr_value = str(pcr.get("ratio") or "—")
+
+    cards.extend(
+        [
+            _official_card_html("CBC FX", fx_value, f"{fx.get('label', 'USD/TWD')} · {fx.get('date', '')}".strip(" ·")),
+            _official_card_html("CBC Rate", rate_value, f"{rate.get('label', 'Policy rate')} · {rate.get('date', '')}".strip(" ·")),
+            _official_card_html("TAIFEX PCR", pcr_value, f"{pcr.get('date', '')}".strip()),
+        ]
+    )
+
+    render_html_block(
+        f"""
+        <div class="guide-shell" style="margin-top:12px;">
+            <div class="section-header">{'Taiwan official data layer' if not lang_zh else '台股官方資料層'}</div>
+            <div class="guide-title">{escape(display_ticker_label(ticker))}</div>
+            <div class="guide-copy">{'Official TWSE/TPEx valuation, institutional flow, monthly revenue, CBC macro, and TAIFEX sentiment in one place.' if not lang_zh else '把證交所／櫃買估值、三大法人、月營收、央行總經與期交所情緒整合在同一區。'}</div>
+            <div class="benchmark-grid">
+                {''.join(cards)}
+            </div>
+        </div>
+        """
+    )
+
+    rows = [
+        [
+            _active_etf_plain_cell("TWSE / TPEx"),
+            _active_etf_story_cell("3-inst flow" if not lang_zh else "三大法人買賣超", str(flow.get("source", ""))),
+            _active_etf_plain_cell(
+                f"外資 {foreign_net} / 投信 {trust_net} / 自營商 {dealer_net}"
+                if lang_zh
+                else f"Foreign {foreign_net} / Trust {trust_net} / Dealer {dealer_net}"
+            ),
+        ],
+        [
+            _active_etf_plain_cell("MOPS / OpenAPI"),
+            _active_etf_story_cell("Monthly revenue" if not lang_zh else "月營收", str(revenue.get("period", ""))),
+            _active_etf_plain_cell(
+                f"營收 {revenue_value} / YoY {yoy_value} / MoM {mom_value}"
+                if lang_zh
+                else f"Revenue {revenue_value} / YoY {yoy_value} / MoM {mom_value}"
+            ),
+        ],
+        [
+            _active_etf_plain_cell("CBC + TAIFEX"),
+            _active_etf_story_cell("Macro / derivatives" if not lang_zh else "總經 / 衍生品", str(rate.get("date") or fx.get("date") or pcr.get("date") or "")),
+            _active_etf_plain_cell(
+                f"FX {fx_value} / Rate {rate_value} / PCR {pcr_value}"
+            ),
+        ],
+    ]
+    render_active_etf_tracker_table(
+        ["來源" if lang_zh else "Source", "資料項" if lang_zh else "Dataset", "重點" if lang_zh else "Highlights"],
+        rows,
+        "目前尚無官方補強資料。" if lang_zh else "No official supplemental data is available.",
+    )
+
+
+
 def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selected_count: int = 1):
     ticker = str(bundle.get("ticker", "")).upper()
     if not ticker:
@@ -11086,6 +11769,7 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
         render_taiwan_benchmark_layer(ticker, benchmark)
+        render_taiwan_official_data_section(ticker, selected_count=selected_count)
 
     if is_taiwan_active_etf(ticker):
         render_active_etf_tracker_section(ticker, selected_count=selected_count)
@@ -11303,6 +11987,143 @@ def _is_numericish_holding_token(value) -> bool:
         return False
 
 
+def _contains_cjk_text(value: str) -> bool:
+    return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", str(value or "")))
+
+
+def _fetch_json_url(url: str, timeout: int = 12):
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,text/plain,*/*",
+        },
+        method="GET",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+    return json.loads(raw)
+
+
+def _pick_first_matching_value(row: dict, keywords: tuple[str, ...], *, require_cjk: bool = False) -> str:
+    for key, value in row.items():
+        key_text = str(key or "")
+        value_text = str(value or "").strip()
+        if not value_text:
+            continue
+        if not any(token in key_text for token in keywords):
+            continue
+        if require_cjk and not _contains_cjk_text(value_text):
+            continue
+        return value_text
+    return ""
+
+
+@st.cache_data(ttl=604800, show_spinner=False)
+def fetch_taiwan_company_name_map() -> dict[str, str]:
+    sources = [
+        (".TW", "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"),
+        (".TWO", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"),
+    ]
+    mapping: dict[str, str] = {}
+
+    for suffix, url in sources:
+        try:
+            payload = _fetch_json_url(url, timeout=15)
+        except Exception:
+            continue
+
+        rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            code = _pick_first_matching_value(
+                row,
+                ("公司代號", "證券代號", "股票代號", "代號", "SecuritiesCompanyCode", "CompanyCode"),
+            )
+            code_match = re.search(r"\b(\d{4,6})\b", code)
+            if not code_match:
+                continue
+            numeric_code = code_match.group(1)
+
+            zh_name = _pick_first_matching_value(
+                row,
+                ("公司簡稱", "公司名稱", "證券名稱", "股票名稱", "名稱", "CompanyName", "SecurityName"),
+                require_cjk=True,
+            )
+            if not zh_name:
+                continue
+
+            mapping[f"{numeric_code}{suffix}"] = zh_name
+
+    for ticker, meta in TAIWAN_TICKER_METADATA.items():
+        zh_name = str(meta.get("zh", "")).strip()
+        if zh_name:
+            mapping[str(ticker).upper()] = zh_name
+
+    return mapping
+
+
+@st.cache_data(ttl=604800, show_spinner=False)
+def lookup_taiwan_holding_symbol(query: str) -> dict:
+    raw_query = str(query or "").strip()
+    if not raw_query:
+        return {}
+
+    query_token = _normalize_holding_alias_text(raw_query)
+    candidates = fetch_remote_symbol_search(raw_query, max_results=10)
+    best: dict = {}
+    best_score = -1
+
+    for item in candidates:
+        symbol = normalize_dashboard_ticker(item.get("symbol", ""))
+        if not symbol or not is_taiwan_ticker(symbol):
+            continue
+
+        label_name = str(item.get("name", "")).strip()
+        label_token = _normalize_holding_alias_text(label_name)
+        symbol_token = _normalize_holding_alias_text(symbol)
+        score = 0
+
+        if symbol in TAIWAN_TICKER_METADATA:
+            score += 30
+        if symbol.endswith(".TW") or symbol.endswith(".TWO"):
+            score += 18
+        if _contains_cjk_text(label_name):
+            score += 10
+        if label_token == query_token:
+            score += 24
+        elif query_token and label_token and (query_token in label_token or label_token in query_token):
+            score += 12
+        if query_token and symbol_token and (query_token in symbol_token or symbol_token in query_token):
+            score += 8
+
+        exchange_text = str(item.get("exchange", "")).upper()
+        if any(token in exchange_text for token in ("TAI", "TWO", "TPEx".upper(), "TWSE")):
+            score += 4
+
+        if score > best_score:
+            best = {"symbol": symbol, "name": label_name, "exchange": exchange_text}
+            best_score = score
+
+    return best if best_score >= 18 else {}
+
+
+def build_holding_name_cell(name: str) -> str:
+    resolved_name = resolve_holding_display_name(name)
+    original_name = str(name or "").strip()
+    lang_zh = get_language() == "zh_TW"
+    if not original_name:
+        return f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+    if resolved_name != original_name and not lang_zh:
+        return (
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+        )
+    return f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+
+
 def resolve_holding_display_name(name: str) -> str:
     raw_name = str(name or "").strip()
     if not raw_name:
@@ -11331,6 +12152,17 @@ def resolve_holding_display_name(name: str) -> str:
     for alias, ticker in TAIWAN_HOLDING_ALIAS_MAP.items():
         if alias and (alias in alias_key or alias_key in alias):
             return display_ticker_label(ticker)
+
+    if get_language() == "zh_TW" and not _contains_cjk_text(raw_name):
+        matched = lookup_taiwan_holding_symbol(raw_name)
+        symbol = str(matched.get("symbol", "")).upper().strip()
+        if symbol and is_taiwan_ticker(symbol):
+            zh_name = fetch_taiwan_company_name_map().get(symbol, "").strip()
+            fallback_name = str(matched.get("name", "")).strip()
+            final_name = zh_name or (fallback_name if _contains_cjk_text(fallback_name) else "")
+            if final_name:
+                register_runtime_symbol_metadata(symbol, name=final_name, market="Taiwan")
+                return f"{ticker_base_code(symbol)} {final_name}"
 
     return raw_name
 
@@ -11843,8 +12675,7 @@ def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> N
                 else:
                     rows = [
                         [
-                            f'<div class="etf-tracker-name">{escape(resolve_holding_display_name(row.get("name", "")))}</div>'
-                            f'<div class="etf-tracker-sub">{escape(str(row.get("name", "")).strip())}</div>' if resolve_holding_display_name(row.get("name", "")) != str(row.get("name", "")).strip() else f'<div class="etf-tracker-name">{escape(resolve_holding_display_name(row.get("name", "")))}</div>',
+                            build_holding_name_cell(row.get("name", "")),
                             f'<div class="etf-tracker-value">{float(row.get("weight", 0.0)):.2f}%</div>',
                         ]
                         for row in holdings_model.get("current_top", [])
@@ -11873,14 +12704,7 @@ def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> N
                     else:
                         rows = []
                         for _, row in add_df.iterrows():
-                            resolved_name = resolve_holding_display_name(row.get("name", ""))
-                            original_name = str(row.get("name", "")).strip()
-                            name_cell = (
-                                f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-                                f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
-                                if resolved_name != original_name
-                                else f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-                            )
+                            name_cell = build_holding_name_cell(row.get("name", ""))
                             status_label = "新增" if lang_zh and row.get("status") == "new" else "加碼" if lang_zh else "New" if row.get("status") == "new" else "Increase"
                             rows.append([
                                 name_cell,
@@ -11907,14 +12731,7 @@ def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> N
                     else:
                         rows = []
                         for _, row in cut_df.iterrows():
-                            resolved_name = resolve_holding_display_name(row.get("name", ""))
-                            original_name = str(row.get("name", "")).strip()
-                            name_cell = (
-                                f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-                                f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
-                                if resolved_name != original_name
-                                else f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-                            )
+                            name_cell = build_holding_name_cell(row.get("name", ""))
                             status_label = "移除" if lang_zh and row.get("status") == "removed" else "減碼" if lang_zh else "Removed" if row.get("status") == "removed" else "Decrease"
                             rows.append([
                                 name_cell,
@@ -12067,14 +12884,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         left_weight = left_map[name]
         right_weight = right_map[name]
         delta = left_weight - right_weight
-        resolved_name = resolve_holding_display_name(name)
-        original_name = str(name).strip()
-        name_cell = (
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
-            if resolved_name != original_name else
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-        )
+        name_cell = build_holding_name_cell(name)
         delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
         delta_value = f"{delta:+.2f}%"
         overlap_rows.append([
@@ -12086,14 +12896,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
 
     left_only_rows = []
     for name in sorted(set(left_map) - set(right_map), key=lambda key: left_map[key], reverse=True)[:10]:
-        resolved_name = resolve_holding_display_name(name)
-        original_name = str(name).strip()
-        name_cell = (
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
-            if resolved_name != original_name else
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-        )
+        name_cell = build_holding_name_cell(name)
         left_only_rows.append([
             name_cell,
             f'<div class="etf-tracker-value">{left_map[name]:.2f}%</div>',
@@ -12101,14 +12904,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
 
     right_only_rows = []
     for name in sorted(set(right_map) - set(left_map), key=lambda key: right_map[key], reverse=True)[:10]:
-        resolved_name = resolve_holding_display_name(name)
-        original_name = str(name).strip()
-        name_cell = (
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
-            if resolved_name != original_name else
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-        )
+        name_cell = build_holding_name_cell(name)
         right_only_rows.append([
             name_cell,
             f'<div class="etf-tracker-value">{right_map[name]:.2f}%</div>',
@@ -12212,6 +13008,8 @@ def render_active_etf_lab_dashboard(
         """,
         unsafe_allow_html=True,
     )
+
+    render_taiwan_market_macro_strip(force_show=True)
 
     summary_cols = st.columns(3)
     summary_cols[0].metric("主動式 ETF 檔數" if lang_zh else "Active ETFs selected", len(active_etf_tickers))
@@ -13786,6 +14584,8 @@ def generate_dashboard():
     else:
         global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
         render_global_market_indicator(global_indicator)
+        if any(is_taiwan_ticker(ticker) for ticker in dashboard_tickers):
+            render_taiwan_market_macro_strip(force_show=True)
         render_section_guide()
         render_active_trend_lens(lens_meta)
 
