@@ -272,6 +272,13 @@ GLOBAL_REFERENCE_INDICES = [
     {"ticker": "^TWII", "label_key": "global_market_taiex"},
 ]
 
+
+GLOBAL_REFERENCE_QUOTE_TTL_SECONDS = 60
+
+
+def is_index_symbol(ticker: str) -> bool:
+    return str(ticker or "").upper().startswith("^")
+
 LANGUAGE_OPTIONS = {
     "English": "English",
     "繁體中文": "繁體中文",
@@ -2899,6 +2906,47 @@ def fetch_global_reference_data(period: str, interval: str):
     return fetch_daily_data([item["ticker"] for item in GLOBAL_REFERENCE_INDICES], period, interval)
 
 
+@st.cache_data(ttl=GLOBAL_REFERENCE_QUOTE_TTL_SECONDS)
+def fetch_live_reference_quotes(tickers: tuple[str, ...]) -> dict[str, dict]:
+    snapshots: dict[str, dict] = {}
+    for ticker in tickers:
+        snapshot = {"price": pd.NA, "as_of": None}
+        try:
+            tk = yf.Ticker(ticker)
+        except Exception:
+            snapshots[ticker] = snapshot
+            continue
+
+        try:
+            fast_info = getattr(tk, "fast_info", {}) or {}
+            if hasattr(fast_info, "get"):
+                snapshot["price"] = coerce_float(
+                    fast_info.get("lastPrice") or fast_info.get("regularMarketPrice") or fast_info.get("previousClose")
+                )
+                snapshot["as_of"] = (
+                    fast_info.get("lastPriceTime")
+                    or fast_info.get("regularMarketTime")
+                    or fast_info.get("lastTradeDate")
+                )
+        except Exception:
+            pass
+
+        try:
+            history = tk.history(period="2d", interval="1m", auto_adjust=False, prepost=False)
+            if history is not None and not history.empty:
+                close_field = "Close" if "Close" in history.columns else ("Adj Close" if "Adj Close" in history.columns else None)
+                if close_field:
+                    recent_close = pd.to_numeric(history[close_field], errors="coerce").dropna()
+                    if not recent_close.empty:
+                        snapshot["price"] = coerce_float(recent_close.iloc[-1]) if pd.isna(snapshot["price"]) else snapshot["price"]
+                snapshot["as_of"] = history.index[-1]
+        except Exception:
+            pass
+
+        snapshots[ticker] = snapshot
+    return snapshots
+
+
 def global_market_trend_state(window_return: float, recent_return: float) -> str:
     if pd.isna(window_return) or pd.isna(recent_return):
         return t("global_market_pullback")
@@ -2909,18 +2957,36 @@ def global_market_trend_state(window_return: float, recent_return: float) -> str
     return t("global_market_pullback")
 
 
-def build_global_market_indicator(reference_data: pd.DataFrame | None, lens_meta: dict | None = None) -> dict:
+def build_global_market_indicator(
+    reference_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+    live_quotes: dict[str, dict] | None = None,
+) -> dict:
     period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
     interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
 
     cards = []
     up = down = 0
+    live_quotes = live_quotes or {}
+
     for item in GLOBAL_REFERENCE_INDICES:
         ticker = item["ticker"]
         series, _ = get_price_series(reference_data, ticker)
-        window_return = compute_window_return_pct(series)
-        recent_return = compute_recent_return_pct(series, 20)
-        last_price = series.iloc[-1] if series is not None and not series.empty else float("nan")
+        quote_snapshot = live_quotes.get(ticker, {}) if isinstance(live_quotes, dict) else {}
+        live_price = coerce_float(quote_snapshot.get("price"))
+        live_series = merge_live_price_into_series(series, live_price, quote_snapshot.get("as_of"))
+        base_series = live_series if live_series is not None and not live_series.empty else series
+
+        window_return = compute_window_return_pct(base_series)
+        recent_return = compute_recent_return_pct(base_series, 20)
+
+        if not pd.isna(live_price):
+            last_price = live_price
+        elif series is not None and not series.empty:
+            last_price = series.iloc[-1]
+        else:
+            last_price = float("nan")
+
         state = global_market_trend_state(window_return, recent_return)
         if state == t("global_market_uptrend"):
             up += 1
@@ -6789,11 +6855,54 @@ def get_series(data: pd.DataFrame | None, field: str, ticker: str):
 
 
 def get_price_series(data: pd.DataFrame | None, ticker: str):
-    for field in PRICE_FIELDS_PRIORITY:
+    fields = ["Close", "Adj Close"] if is_index_symbol(ticker) else PRICE_FIELDS_PRIORITY
+    for field in fields:
         s = get_series(data, field, ticker)
         if s is not None and not s.empty:
             return ensure_datetime_index(s), field
     return None, None
+
+
+def _normalize_quote_timestamp(ts):
+    if ts is None or pd.isna(ts):
+        return None
+    try:
+        stamp = pd.Timestamp(ts)
+    except Exception:
+        return None
+    if stamp.tzinfo is not None:
+        try:
+            stamp = stamp.tz_convert(None)
+        except Exception:
+            stamp = stamp.tz_localize(None)
+    return stamp
+
+
+def merge_live_price_into_series(series: pd.Series | None, live_price, as_of=None):
+    live_price = coerce_float(live_price)
+    if series is None or series.empty or pd.isna(live_price):
+        return series
+
+    merged = ensure_datetime_index(series).copy()
+    as_of_ts = _normalize_quote_timestamp(as_of) or pd.Timestamp.utcnow().tz_localize(None)
+
+    try:
+        last_ts = pd.Timestamp(merged.index[-1])
+        if last_ts.tzinfo is not None:
+            last_ts = last_ts.tz_convert(None)
+    except Exception:
+        last_ts = None
+
+    if last_ts is not None and last_ts.normalize() == as_of_ts.normalize():
+        merged.iloc[-1] = float(live_price)
+        return merged
+
+    if last_ts is not None and as_of_ts <= last_ts:
+        merged.iloc[-1] = float(live_price)
+        return merged
+
+    merged.loc[as_of_ts] = float(live_price)
+    return merged.sort_index()
 
 
 def ensure_datetime_index(series: pd.Series | None):
@@ -13666,6 +13775,7 @@ def generate_dashboard():
         daily_data = fetch_daily_data(dashboard_tickers, period, interval)
         intraday_data = fetch_intraday_data(dashboard_tickers)
         global_reference_data = fetch_global_reference_data(period, interval)
+        global_reference_quotes = fetch_live_reference_quotes(tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES))
 
     if daily_data is None or daily_data.empty:
         st.error(t("no_market_data"))
@@ -13674,7 +13784,7 @@ def generate_dashboard():
     if dashboard_mode == "Active ETF Lab":
         render_active_etf_lab_dashboard(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
     else:
-        global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta)
+        global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
         render_global_market_indicator(global_indicator)
         render_section_guide()
         render_active_trend_lens(lens_meta)
