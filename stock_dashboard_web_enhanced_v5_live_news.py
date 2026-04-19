@@ -264,6 +264,111 @@ def standard_layout_section_label(section_key: str) -> str:
     return t(section_key)
 
 
+def inject_standard_step_navigator_css(state_key: str) -> None:
+    selector_key = f"{state_key}__selector"
+    render_html_block(
+        f"""
+        <style>
+        .st-key-{selector_key} {{
+            margin: 0.1rem 0 0.55rem 0;
+        }}
+        .st-key-{selector_key} [role="radiogroup"] {{
+            display: grid !important;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.65rem;
+            width: 100%;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] {{
+            margin: 0 !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] > div:first-child {{
+            display: none !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] > div:last-child {{
+            width: 100%;
+            min-height: 3.25rem;
+            border-radius: 16px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 40%, transparent);
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 96%, white 4%) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 99%, black 1%) 100%);
+            box-shadow: 0 10px 24px rgba(3, 10, 20, 0.14);
+            color: var(--ink, #e8f3ff) !important;
+            padding: 0.88rem 1rem;
+            font-size: 0.96rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"]:hover > div:last-child {{
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 72%, transparent);
+            box-shadow: 0 14px 28px rgba(56, 189, 248, 0.16);
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] > div:last-child {{
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 24%, var(--card, rgba(8,16,28,0.92))) 0%, color-mix(in srgb, var(--brand, #818cf8) 18%, var(--card, rgba(8,16,28,0.92))) 100%);
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 90%, transparent);
+            box-shadow:
+                0 0 0 1px color-mix(in srgb, var(--brand-2, #38bdf8) 30%, transparent),
+                0 16px 32px rgba(56, 189, 248, 0.22);
+            color: var(--ink, #e8f3ff) !important;
+        }}
+        .standard-step-progress-shell {{
+            margin: 0.1rem 0 0.9rem 0;
+            padding: 0.9rem 1rem 1rem 1rem;
+            border-radius: 18px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent);
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 92%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 98%, transparent) 100%);
+            box-shadow: 0 14px 28px rgba(3, 10, 20, 0.10);
+        }}
+        .standard-step-progress-head {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.8rem;
+            margin-bottom: 0.55rem;
+        }}
+        .standard-step-progress-label {{
+            color: var(--ink, #e8f3ff);
+            font-size: 0.94rem;
+            font-weight: 700;
+            line-height: 1.35;
+        }}
+        .standard-step-progress-badge {{
+            flex-shrink: 0;
+            padding: 0.26rem 0.58rem;
+            border-radius: 999px;
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 84%, var(--ink, #e8f3ff));
+            background: color-mix(in srgb, var(--brand-2, #38bdf8) 12%, transparent);
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent);
+        }}
+        .standard-step-progress-track {{
+            width: 100%;
+            height: 10px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: color-mix(in srgb, var(--line, rgba(148,163,184,0.28)) 68%, transparent);
+        }}
+        .standard-step-progress-fill {{
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--brand-2, #38bdf8) 0%, var(--brand, #818cf8) 100%);
+            box-shadow: 0 0 22px rgba(56, 189, 248, 0.32);
+        }}
+        </style>
+        """
+    )
+
+
 def render_standard_step_navigator(
     option_keys: list[str],
     state_key: str,
@@ -271,43 +376,72 @@ def render_standard_step_navigator(
 ) -> str:
     if not option_keys:
         return ""
+
     current_value = st.session_state.get(state_key, option_keys[0])
     if current_value not in option_keys:
         current_value = option_keys[0]
-        st.session_state[state_key] = current_value
+    st.session_state[state_key] = current_value
 
+    inject_standard_step_navigator_css(state_key)
+
+    selector_key = f"{state_key}__selector"
     selected_value = st.radio(
         t(widget_label_key),
         options=option_keys,
         index=option_keys.index(current_value),
         format_func=standard_layout_section_label,
         horizontal=True,
-        key=f"{state_key}__selector",
+        key=selector_key,
         label_visibility="collapsed",
     )
     st.session_state[state_key] = selected_value
 
     selected_index = option_keys.index(selected_value)
-    progress_col, button_col = st.columns([1.4, 1.0])
-    with progress_col:
-        st.caption(
-            t(
-                "layout_step_progress",
-                current=selected_index + 1,
-                total=len(option_keys),
-                current_label=standard_layout_section_label(selected_value),
-            )
-        )
-    with button_col:
-        next_disabled = selected_index >= len(option_keys) - 1
-        next_label = (
-            t("layout_next_step_done")
-            if next_disabled
-            else t(
-                "layout_next_step_to",
-                target=standard_layout_section_label(option_keys[selected_index + 1]),
-            )
-        )
+    total_steps = len(option_keys)
+    progress_ratio = (selected_index + 1) / total_steps if total_steps else 0.0
+    progress_percent = int(round(progress_ratio * 100))
+
+    render_html_block(
+        f"""
+        <div class="standard-step-progress-shell">
+            <div class="standard-step-progress-head">
+                <div class="standard-step-progress-label">
+                    {escape(t("layout_step_progress", current=selected_index + 1, total=total_steps, current_label=standard_layout_section_label(selected_value)))}
+                </div>
+                <div class="standard-step-progress-badge">{progress_percent}%</div>
+            </div>
+            <div class="standard-step-progress-track">
+                <div class="standard-step-progress-fill" style="width: {progress_percent}%;"></div>
+            </div>
+        </div>
+        """
+    )
+
+    back_disabled = selected_index <= 0
+    next_disabled = selected_index >= total_steps - 1
+
+    back_label = (
+        t("layout_back_step_start")
+        if back_disabled
+        else t("layout_back_step_to", target=standard_layout_section_label(option_keys[selected_index - 1]))
+    )
+    next_label = (
+        t("layout_next_step_done")
+        if next_disabled
+        else t("layout_next_step_to", target=standard_layout_section_label(option_keys[selected_index + 1]))
+    )
+
+    back_col, next_col = st.columns(2)
+    with back_col:
+        if st.button(
+            back_label,
+            key=f"{state_key}__back_step",
+            use_container_width=True,
+            disabled=back_disabled,
+        ):
+            st.session_state[state_key] = option_keys[selected_index - 1]
+            st.rerun()
+    with next_col:
         if st.button(
             next_label,
             key=f"{state_key}__next_step",
@@ -1916,6 +2050,8 @@ TRANSLATIONS["English"].update({
     "layout_step_progress": "Step {current} of {total}: {current_label}",
     "layout_next_step_to": "Next step: {target}",
     "layout_next_step_done": "Final step reached",
+    "layout_back_step_to": "Back: {target}",
+    "layout_back_step_start": "At the first step",
     "layout_standard_market_brief_tab": "1. Market Brief",
     "layout_standard_compare_plan_tab": "2. Compare & Plan",
     "layout_standard_single_workspace_tab": "3. Single Workspace",
@@ -1941,6 +2077,8 @@ TRANSLATIONS["繁體中文"].update({
     "layout_step_progress": "第 {current} / {total} 步：{current_label}",
     "layout_next_step_to": "前往下一步：{target}",
     "layout_next_step_done": "已到最後一步",
+    "layout_back_step_to": "返回上一步：{target}",
+    "layout_back_step_start": "目前已在第一步",
     "layout_standard_market_brief_tab": "1. 市場摘要",
     "layout_standard_compare_plan_tab": "2. 比較與規劃",
     "layout_standard_single_workspace_tab": "3. 單檔工作台",
