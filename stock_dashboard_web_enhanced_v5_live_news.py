@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import io
 import json
+import ssl
 from pathlib import Path
 import re
 import sqlite3
@@ -20,6 +22,16 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+
+try:
+    import certifi
+except Exception:
+    certifi = None
+
+try:
+    import truststore
+except Exception:
+    truststore = None
 
 # ---------------------------
 # Configuration
@@ -39,6 +51,467 @@ def dashboard_mode_label(value: str) -> str:
         "Active ETF Lab": t("dashboard_mode_active_etf"),
     }
     return labels.get(str(value), str(value))
+
+
+def theme_mode_label(value: str) -> str:
+    labels = {
+        "Dark Horizon": t("theme_dark"),
+        "Light Horizon": t("theme_light"),
+    }
+    return labels.get(str(value), str(value))
+
+
+
+DASHBOARD_LAYOUT_OPTIONS = ["Standard", "Advanced", "Expert"]
+
+
+def dashboard_layout_label(value: str) -> str:
+    labels = {
+        "Standard": t("layout_mode_standard"),
+        "Advanced": t("layout_mode_advanced"),
+        "Expert": t("layout_mode_expert"),
+    }
+    return labels.get(str(value), str(value))
+
+
+def dashboard_layout_kicker() -> str:
+    return "使用模式" if get_lang() == "繁體中文" else "Workspace mode"
+
+
+def dashboard_layout_note() -> str:
+    return (
+        "這是漸進式探索版型：Standard 先引導閱讀流程，Advanced 用工作區分組，Expert 保留高密度研究視圖。"
+        if get_lang() == "繁體中文"
+        else "This uses progressive disclosure: Standard guides the journey, Advanced groups the workspace, and Expert keeps a denser research view."
+    )
+
+
+def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, object]:
+    lang_zh = get_lang() == "繁體中文"
+    is_active_etf = dashboard_mode == "Active ETF Lab"
+    if lang_zh:
+        profiles = {
+            "Standard": {
+                "title": "標準使用者導覽",
+                "copy": "用三步驟流程帶你先看市場摘要，再做比較，最後只打開一個重點標的工作台，最適合第一次使用或想快速判斷的人。",
+                "steps": ["先看摘要", "再做比較", "最後深挖單一標的"],
+            },
+            "Advanced": {
+                "title": "進階使用者工作區",
+                "copy": "把 Overview、Planning、Compare、Workspace 分開，降低資訊擁擠，同時保留完整研究深度。",
+                "steps": ["Overview", "Planning", "Compare", "Workspace"],
+            },
+            "Expert": {
+                "title": "專家研究檯",
+                "copy": "保留高密度資訊，但重新整理成上方總覽、下方個股研究的雙層動線，適合已熟悉整個系統的人。",
+                "steps": ["總覽", "規劃", "比較", "研究分頁"],
+            },
+        }
+    else:
+        profiles = {
+            "Standard": {
+                "title": "Standard guided layout",
+                "copy": "A three-step flow that starts with the market brief, moves into comparison, then opens one focused workspace. Best for first-time or quick-read users.",
+                "steps": ["Start with the brief", "Compare next", "Deep dive one workspace"],
+            },
+            "Advanced": {
+                "title": "Advanced workspace layout",
+                "copy": "Separates Overview, Planning, Compare, and Workspace into clearer stations so the dashboard stays powerful without feeling crowded.",
+                "steps": ["Overview", "Planning", "Compare", "Workspace"],
+            },
+            "Expert": {
+                "title": "Expert research desk",
+                "copy": "Keeps the dense research surface, but reorganizes it into a top-level flow and a dedicated workspace layer for faster navigation.",
+                "steps": ["Overview", "Planning", "Compare", "Ticker desks"],
+            },
+        }
+    payload = profiles.get(layout_mode, profiles["Advanced"]).copy()
+    if is_active_etf:
+        if lang_zh:
+            payload["copy"] += " 你現在看到的是主動式 ETF 專屬版本，會優先把比分板、雙 ETF 比較與單檔研究分開。"
+        else:
+            payload["copy"] += " This Active ETF version prioritizes the scoreboard, pair comparison, and single-ETF workspaces separately."
+    return payload
+
+
+def render_dashboard_layout_intro(layout_mode: str, dashboard_mode: str, tickers: list[str]) -> None:
+    profile = dashboard_layout_intro(layout_mode, dashboard_mode)
+    chips = "".join(
+        f'<span class="explorer-nav-chip">{escape(str(step))}</span>'
+        for step in profile.get("steps", [])
+    )
+    subject = (
+        ("主動式 ETF" if get_lang() == "繁體中文" else "Active ETFs")
+        if dashboard_mode == "Active ETF Lab"
+        else ("已選標的" if get_lang() == "繁體中文" else "Selected tickers")
+    )
+    count_label = f"{len(tickers)} {subject}"
+    render_html_block(
+        f'''
+        <div class="guide-shell layout-profile-shell">
+            <div class="section-header">{dashboard_layout_kicker()}</div>
+            <div class="guide-title">{escape(str(profile.get("title", dashboard_layout_label(layout_mode))))}</div>
+            <div class="guide-copy">{escape(str(profile.get("copy", "")))}</div>
+            <div class="chip-row">
+                <span class="explorer-nav-chip">{escape(dashboard_layout_label(layout_mode))}</span>
+                <span class="explorer-nav-chip">{escape(count_label)}</span>
+                {chips}
+            </div>
+        </div>
+        '''
+    )
+
+
+def inject_layout_profile_overrides() -> None:
+    st.markdown(
+        '''
+        <style>
+        .layout-profile-shell {
+            margin-top: 12px;
+            margin-bottom: 18px;
+        }
+        .layout-flow-grid {
+            display: grid;
+            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            margin: 10px 0 8px 0;
+        }
+        .layout-flow-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 18px;
+            padding: 14px;
+        }
+        .layout-flow-step {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 900;
+            margin-bottom: 8px;
+        }
+        .layout-flow-title {
+            font-size: 15px;
+            font-weight: 900;
+            line-height: 1.2;
+            margin-bottom: 6px;
+        }
+        .layout-flow-copy {
+            font-size: 12.5px;
+            line-height: 1.58;
+        }
+        .layout-tip {
+            margin-top: 8px;
+            font-size: 12.5px;
+            line-height: 1.6;
+        }
+        </style>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def render_layout_flow_cards(layout_mode: str, dashboard_mode: str) -> None:
+    lang_zh = get_lang() == "繁體中文"
+    if dashboard_mode == "Active ETF Lab":
+        steps = (
+            [
+                ("01", "ETF 摘要" if lang_zh else "ETF Brief", "先看主動式 ETF 的比分板、台灣總經與更新狀態。" if lang_zh else "Start with the ETF scoreboard, Taiwan macro context, and refresh state."),
+                ("02", "雙 ETF 比較" if lang_zh else "Pair Compare", "用兩檔 ETF 的持股、新聞與結構比較快速縮小範圍。" if lang_zh else "Use pair comparison to narrow the field across holdings, news, and structure."),
+                ("03", "單檔工作台" if lang_zh else "ETF Workspace", "最後進入單一 ETF 的完整研究頁。" if lang_zh else "Finish in one ETF workspace for the full research view."),
+            ]
+            if layout_mode == "Standard"
+            else [
+                ("01", "Brief", "比分板與更新狀態集中在同一站。" if lang_zh else "Scoreboard and refresh state stay together."),
+                ("02", "Compare", "雙 ETF 比較獨立成一站。" if lang_zh else "Pair comparison gets its own station."),
+                ("03", "Workspace", "每檔 ETF 保留完整工作台。" if lang_zh else "Each ETF keeps its full workspace."),
+            ]
+        )
+    else:
+        steps = (
+            [
+                ("01", "市場摘要" if lang_zh else "Market Brief", "先掌握全球指標、台股總經與趨勢鏡頭。" if lang_zh else "Start with the global indicator, Taiwan macro, and the active trend lens."),
+                ("02", "比較與規劃" if lang_zh else "Compare & Plan", "再看 scenario、target、brief 與 comparison。" if lang_zh else "Move into scenario, target tracking, briefs, and comparison."),
+                ("03", "單檔研究" if lang_zh else "Single Workspace", "最後只展開一個最重要的標的工作台。" if lang_zh else "Then open the single most important ticker workspace."),
+            ]
+            if layout_mode == "Standard"
+            else [
+                ("01", "Overview", "先看市場、趨勢鏡頭與導航。" if lang_zh else "Start with the market layer, lens, and navigation."),
+                ("02", "Planning", "把 scenario 與 target / brief 集中在同一層。" if lang_zh else "Keep scenario and target / brief in one planning layer."),
+                ("03", "Workspace", "最後進入研究分頁。" if lang_zh else "Finish in the research tabs."),
+            ]
+        )
+
+    cards = []
+    for step, title, copy in steps:
+        cards.append(
+            f'''
+            <div class="guide-card layout-flow-card">
+                <div class="layout-flow-step">{escape(step)}</div>
+                <div class="layout-flow-title">{escape(title)}</div>
+                <div class="layout-flow-copy">{escape(copy)}</div>
+            </div>
+            '''
+        )
+    render_html_block(f'<div class="layout-flow-grid">{"".join(cards)}</div>')
+
+
+
+def standard_layout_section_label(section_key: str) -> str:
+    return t(section_key)
+
+
+def render_standard_step_navigator(
+    option_keys: list[str],
+    state_key: str,
+    widget_label_key: str = "layout_step_navigation",
+) -> str:
+    if not option_keys:
+        return ""
+    current_value = st.session_state.get(state_key, option_keys[0])
+    if current_value not in option_keys:
+        current_value = option_keys[0]
+        st.session_state[state_key] = current_value
+
+    selected_value = st.radio(
+        t(widget_label_key),
+        options=option_keys,
+        index=option_keys.index(current_value),
+        format_func=standard_layout_section_label,
+        horizontal=True,
+        key=f"{state_key}__selector",
+        label_visibility="collapsed",
+    )
+    st.session_state[state_key] = selected_value
+
+    selected_index = option_keys.index(selected_value)
+    progress_col, button_col = st.columns([1.4, 1.0])
+    with progress_col:
+        st.caption(
+            t(
+                "layout_step_progress",
+                current=selected_index + 1,
+                total=len(option_keys),
+                current_label=standard_layout_section_label(selected_value),
+            )
+        )
+    with button_col:
+        next_disabled = selected_index >= len(option_keys) - 1
+        next_label = (
+            t("layout_next_step_done")
+            if next_disabled
+            else t(
+                "layout_next_step_to",
+                target=standard_layout_section_label(option_keys[selected_index + 1]),
+            )
+        )
+        if st.button(
+            next_label,
+            key=f"{state_key}__next_step",
+            use_container_width=True,
+            disabled=next_disabled,
+        ):
+            st.session_state[state_key] = option_keys[selected_index + 1]
+            st.rerun()
+
+    return selected_value
+
+
+def render_standard_workspace_picker(
+    daily_data: pd.DataFrame,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+) -> None:
+    lang_zh = get_lang() == "繁體中文"
+    if not tickers:
+        return
+    default_ticker = st.session_state.get("dashboard_standard_focus_ticker", tickers[0])
+    if default_ticker not in tickers:
+        default_ticker = tickers[0]
+    selected_ticker = st.selectbox(
+        "選擇一個工作台" if lang_zh else "Choose one workspace",
+        options=tickers,
+        index=tickers.index(default_ticker),
+        format_func=display_ticker_label,
+        key="dashboard_standard_focus_ticker",
+    )
+    st.caption(
+        "標準模式一次只打開一個工作台，閱讀壓力會小很多。"
+        if lang_zh
+        else "Standard mode opens one workspace at a time to keep the reading flow simpler."
+    )
+    render_ticker_page(daily_data, intraday_data, selected_ticker, lens_meta=lens_meta, selected_count=len(tickers))
+
+
+def render_ticker_workspace_tabs(
+    daily_data: pd.DataFrame,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+) -> None:
+    if not tickers:
+        return
+    tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
+    for tab, ticker in zip(tabs, tickers):
+        with tab:
+            render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(tickers))
+
+
+def render_general_market_dashboard_layout(
+    daily_data: pd.DataFrame,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+    layout_mode: str = "Advanced",
+) -> None:
+    global_reference_data = fetch_global_reference_data(lens_meta["period"], lens_meta["interval"])
+    global_reference_quotes = fetch_live_reference_quotes(tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES))
+    global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
+
+    render_dashboard_layout_intro(layout_mode, "General Market", tickers)
+    render_layout_flow_cards(layout_mode, "General Market")
+
+    show_taiwan_macro = any(is_taiwan_ticker(ticker) for ticker in tickers)
+
+    if layout_mode == "Standard":
+        standard_sections = [
+            "layout_standard_market_brief_tab",
+            "layout_standard_compare_plan_tab",
+            "layout_standard_single_workspace_tab",
+        ]
+        current_section = render_standard_step_navigator(
+            standard_sections,
+            state_key="dashboard_standard_general_section",
+        )
+        if current_section == "layout_standard_market_brief_tab":
+            render_global_market_indicator(global_indicator)
+            if show_taiwan_macro:
+                render_taiwan_market_macro_strip(force_show=True)
+            render_section_guide()
+            render_active_trend_lens(lens_meta)
+            render_stock_explorer_nav(tickers)
+        elif current_section == "layout_standard_compare_plan_tab":
+            render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+            render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+            render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+        else:
+            render_standard_workspace_picker(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+    elif layout_mode == "Advanced":
+        overview_tab, planning_tab, compare_tab, workspace_tab = st.tabs(
+            [
+                t("layout_overview_tab"),
+                t("layout_planning_tab"),
+                t("layout_compare_tab"),
+                t("layout_workspace_tab"),
+            ]
+        )
+        with overview_tab:
+            render_global_market_indicator(global_indicator)
+            if show_taiwan_macro:
+                render_taiwan_market_macro_strip(force_show=True)
+            render_section_guide()
+            render_active_trend_lens(lens_meta)
+            render_stock_explorer_nav(tickers)
+        with planning_tab:
+            render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+            render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+        with compare_tab:
+            render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+        with workspace_tab:
+            render_ticker_workspace_tabs(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+    else:
+        render_global_market_indicator(global_indicator)
+        if show_taiwan_macro:
+            render_taiwan_market_macro_strip(force_show=True)
+        overview_tab, compare_tab, workspace_tab = st.tabs(
+            [
+                t("layout_research_flow_tab"),
+                t("layout_comparison_desk_tab"),
+                t("layout_ticker_desks_tab"),
+            ]
+        )
+        with overview_tab:
+            render_section_guide()
+            render_active_trend_lens(lens_meta)
+            render_stock_explorer_nav(tickers)
+            render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+            render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+        with compare_tab:
+            render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+        with workspace_tab:
+            render_ticker_workspace_tabs(daily_data, intraday_data, tickers, lens_meta=lens_meta)
+
+    render_html_block(f'<div class="footer-note">{t("footer_note")}</div>')
+
+
+def render_active_etf_pair_picker(active_etf_tickers: list[str]) -> tuple[str | None, str | None]:
+    lang_zh = get_language() == "zh_TW"
+    if len(active_etf_tickers) < 2:
+        st.info("至少需要兩檔主動式 ETF 才能進行雙 ETF 比較。" if lang_zh else "Select at least two active ETFs to enable pair comparison.")
+        return None, None
+
+    pair_left_key = "active_etf_lab_pair_left"
+    pair_right_key = "active_etf_lab_pair_right"
+
+    if st.session_state.get(pair_left_key) not in active_etf_tickers:
+        st.session_state[pair_left_key] = active_etf_tickers[0]
+    if (
+        st.session_state.get(pair_right_key) not in active_etf_tickers
+        or st.session_state.get(pair_right_key) == st.session_state[pair_left_key]
+    ):
+        st.session_state[pair_right_key] = active_etf_tickers[1] if len(active_etf_tickers) > 1 else active_etf_tickers[0]
+
+    left_col, right_col = st.columns(2)
+    left_etf = left_col.selectbox(
+        "比較 ETF A" if lang_zh else "Compare ETF A",
+        options=active_etf_tickers,
+        format_func=display_ticker_label,
+        key=pair_left_key,
+    )
+    right_options = [ticker for ticker in active_etf_tickers if ticker != left_etf] or active_etf_tickers
+    if st.session_state.get(pair_right_key) not in right_options:
+        st.session_state[pair_right_key] = right_options[0]
+    right_etf = right_col.selectbox(
+        "比較 ETF B" if lang_zh else "Compare ETF B",
+        options=right_options,
+        format_func=display_ticker_label,
+        key=pair_right_key,
+    )
+    return left_etf, right_etf
+
+
+def render_single_bundle_workspace_picker(bundles: list[dict], lens_meta: dict | None = None) -> None:
+    if not bundles:
+        return
+    tickers = [bundle["ticker"] for bundle in bundles]
+    lang_zh = get_language() == "zh_TW"
+    default_ticker = st.session_state.get("dashboard_standard_focus_etf", tickers[0])
+    if default_ticker not in tickers:
+        default_ticker = tickers[0]
+    selected_ticker = st.selectbox(
+        "選擇一檔 ETF 工作台" if lang_zh else "Choose one ETF workspace",
+        options=tickers,
+        index=tickers.index(default_ticker),
+        format_func=display_ticker_label,
+        key="dashboard_standard_focus_etf",
+    )
+    render_ticker_bundle_page(next(bundle for bundle in bundles if bundle["ticker"] == selected_ticker), lens_meta=lens_meta, selected_count=len(tickers))
+
+
+def render_bundle_workspace_tabs(bundles: list[dict], lens_meta: dict | None = None) -> None:
+    if not bundles:
+        return
+    tickers = [bundle["ticker"] for bundle in bundles]
+    tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
+    for tab, ticker in zip(tabs, tickers):
+        with tab:
+            bundle = next((row for row in bundles if row["ticker"] == ticker), None)
+            if bundle is not None:
+                render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(tickers))
 
 
 def _safe_secret(name: str, default: str = "") -> str:
@@ -300,6 +773,12 @@ DEVICE_MODE_OPTIONS = {
 LEGACY_DEVICE_MODE_ALIASES = {
     "Smartphone Fold": "Smartphone Fold Portrait",
 }
+
+THEME_MODE_OPTIONS = {
+    "Dark Horizon": "Dark Horizon",
+    "Light Horizon": "Light Horizon",
+}
+
 
 NEWS_DISPLAY_OPTIONS = {
     "Original source": "Original source",
@@ -648,6 +1127,10 @@ TRANSLATIONS["English"].update({
     "device_smartphone_fold_portrait": "Smartphone Fold Portrait",
     "device_smartphone_fold_landscape": "Smartphone Fold Landscape",
     "device_smartphone": "Smartphone",
+    "theme_mode": "Theme mode",
+    "theme_mode_note": "Switch between a dark Horizon workspace and a lighter Horizon variant. The choice is saved with your dashboard preferences.",
+    "theme_dark": "Dark Horizon",
+    "theme_light": "Light Horizon"
 })
 
 TRANSLATIONS["繁體中文"].update({
@@ -663,6 +1146,10 @@ TRANSLATIONS["繁體中文"].update({
     "device_smartphone_fold_portrait": "Smart Phone Fold Portrait",
     "device_smartphone_fold_landscape": "Smart Phone Fold Landscape",
     "device_smartphone": "Smart Phone",
+    "theme_mode": "主題模式",
+    "theme_mode_note": "可在深色 Horizon 與較明亮的 Horizon 版本之間切換；設定會和 Dashboard 偏好一起儲存。",
+    "theme_dark": "深色 Horizon",
+    "theme_light": "淺色 Horizon"
 })
 TERM_TRANSLATIONS = {
     "繁體中文": {
@@ -1420,6 +1907,57 @@ def t(key: str, **kwargs) -> str:
     value = TRANSLATIONS.get(lang, {}).get(key, TRANSLATIONS["English"].get(key, key))
     return value.format(**kwargs) if kwargs else value
 
+
+TRANSLATIONS["English"].update({
+    "layout_mode_standard": "Standard user",
+    "layout_mode_advanced": "Advanced user",
+    "layout_mode_expert": "Expert user",
+    "layout_step_navigation": "Step navigation",
+    "layout_step_progress": "Step {current} of {total}: {current_label}",
+    "layout_next_step_to": "Next step: {target}",
+    "layout_next_step_done": "Final step reached",
+    "layout_standard_market_brief_tab": "1. Market Brief",
+    "layout_standard_compare_plan_tab": "2. Compare & Plan",
+    "layout_standard_single_workspace_tab": "3. Single Workspace",
+    "layout_standard_etf_brief_tab": "1. ETF Brief",
+    "layout_standard_pair_compare_tab": "2. Pair Compare",
+    "layout_standard_etf_workspace_tab": "3. Single Workspace",
+    "layout_overview_tab": "Overview",
+    "layout_planning_tab": "Planning",
+    "layout_compare_tab": "Compare",
+    "layout_workspace_tab": "Workspace",
+    "layout_brief_tab": "Brief",
+    "layout_research_flow_tab": "Research Flow",
+    "layout_comparison_desk_tab": "Comparison Desk",
+    "layout_ticker_desks_tab": "Ticker Desks",
+    "layout_etf_workspaces_tab": "ETF Workspaces",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "layout_mode_standard": "標準使用者",
+    "layout_mode_advanced": "進階使用者",
+    "layout_mode_expert": "專家模式",
+    "layout_step_navigation": "步驟導覽",
+    "layout_step_progress": "第 {current} / {total} 步：{current_label}",
+    "layout_next_step_to": "前往下一步：{target}",
+    "layout_next_step_done": "已到最後一步",
+    "layout_standard_market_brief_tab": "1. 市場摘要",
+    "layout_standard_compare_plan_tab": "2. 比較與規劃",
+    "layout_standard_single_workspace_tab": "3. 單檔工作台",
+    "layout_standard_etf_brief_tab": "1. ETF 摘要",
+    "layout_standard_pair_compare_tab": "2. 雙 ETF 比較",
+    "layout_standard_etf_workspace_tab": "3. 單檔工作台",
+    "layout_overview_tab": "總覽",
+    "layout_planning_tab": "規劃",
+    "layout_compare_tab": "比較",
+    "layout_workspace_tab": "工作台",
+    "layout_brief_tab": "摘要",
+    "layout_research_flow_tab": "研究流程",
+    "layout_comparison_desk_tab": "比較工作檯",
+    "layout_ticker_desks_tab": "個股工作檯",
+    "layout_etf_workspaces_tab": "ETF 工作台",
+})
+
 def tr_term(value):
     if value is None:
         return value
@@ -1758,8 +2296,7 @@ def parse_google_news_rss(query: str, max_items: int = 10) -> list[dict]:
     )
     req = Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urlopen(req, timeout=8) as response:
-            xml_bytes = response.read()
+        xml_bytes, _ = _read_request_bytes(req, timeout=8)
     except Exception:
         return []
 
@@ -1979,8 +2516,8 @@ def fetch_remote_symbol_search(query: str, max_results: int = 12) -> list[dict]:
         },
     )
     try:
-        with urlopen(request, timeout=6) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        raw_bytes, _ = _read_request_bytes(request, timeout=6)
+        payload = json.loads(raw_bytes.decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError):
         return []
     except Exception:
@@ -2406,14 +2943,14 @@ def _supabase_request(
         method=method.upper(),
     )
     try:
-        with urlopen(request, timeout=20) as response:
-            raw = response.read().decode("utf-8")
-            if not raw:
-                return response.status, {}
-            try:
-                return response.status, json.loads(raw)
-            except Exception:
-                return response.status, raw
+        raw_bytes, status_code = _read_request_bytes(request, timeout=20)
+        raw = raw_bytes.decode("utf-8")
+        if not raw:
+            return status_code, {}
+        try:
+            return status_code, json.loads(raw)
+        except Exception:
+            return status_code, raw
     except HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         try:
@@ -2761,6 +3298,14 @@ def load_dashboard_preferences() -> None:
 
     device_mode = normalize_device_mode(_query_param_first("device") or _profile_value("device") or st.session_state.get("dashboard_device_mode", "Desktop"))
 
+    theme_mode = _query_param_first("theme") or _profile_value("theme") or st.session_state.get("dashboard_theme_mode", "Dark Horizon")
+    if theme_mode not in THEME_MODE_OPTIONS:
+        theme_mode = "Dark Horizon"
+
+    layout_mode = _query_param_first("layout") or _profile_value("layout") or st.session_state.get("dashboard_layout_mode", "Advanced")
+    if layout_mode not in DASHBOARD_LAYOUT_OPTIONS:
+        layout_mode = "Advanced"
+
     market_scope = _query_param_first("scope") or _profile_value("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
     if market_scope not in MARKET_SCOPE_OPTIONS:
         market_scope = "Mixed (U.S. + Taiwan)"
@@ -2803,6 +3348,8 @@ def load_dashboard_preferences() -> None:
     st.session_state["dashboard_news_mode"] = news_mode
     st.session_state["dashboard_device_control_mode"] = device_control_mode
     st.session_state["dashboard_device_mode"] = device_mode
+    st.session_state["dashboard_theme_mode"] = theme_mode
+    st.session_state["dashboard_layout_mode"] = layout_mode
     st.session_state["dashboard_detected_device_mode"] = detect_device_mode_from_user_agent()
     st.session_state["dashboard_market_scope"] = market_scope
     st.session_state["dashboard_selected_groups"] = groups
@@ -7623,7 +8170,7 @@ def render_active_trend_lens(lens_meta: dict):
 def render_explore_hero():
     st.markdown(
         f"""
-        <div class="editorial-hero">
+        <div class="editorial-hero hero-neon-bar">
             <div class="hero-kicker">{t('command_layer')}</div>
             <div class="hero-title">{t('hero_title')}</div>
             <div class="hero-copy">{t('hero_copy')}</div>
@@ -11086,6 +11633,42 @@ def _extract_security_code(value: object) -> str:
     return match.group(1) if match else ""
 
 
+
+def _pick_first_matching_value(row: dict, keywords: tuple[str, ...]) -> str:
+    if not isinstance(row, dict) or not row:
+        return ""
+    normalized_keywords = [str(keyword or "").strip().lower() for keyword in keywords if str(keyword or "").strip()]
+    if not normalized_keywords:
+        return ""
+
+    def _value_to_text(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float) and pd.isna(value):
+            return ""
+        text = str(value).strip()
+        if text.lower() in {"nan", "none", "null"}:
+            return ""
+        return text
+
+    for key, value in row.items():
+        key_text = str(key or "").strip().lower()
+        if key_text and any(keyword in key_text for keyword in normalized_keywords):
+            text_value = _value_to_text(value)
+            if text_value:
+                return text_value
+
+    for key, value in row.items():
+        key_text = str(key or "").strip().lower()
+        compact_key = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", key_text)
+        if compact_key and any(re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", keyword) in compact_key for keyword in normalized_keywords):
+            text_value = _value_to_text(value)
+            if text_value:
+                return text_value
+
+    return ""
+
+
 def _extract_row_code(row: dict) -> str:
     return _extract_security_code(
         _pick_first_matching_value(
@@ -11363,18 +11946,129 @@ def fetch_monthly_revenue_snapshot(ticker: str) -> dict:
 
 def _flatten_leaf_dicts(value: object) -> list[dict]:
     if isinstance(value, dict):
+        direct_rows: list[dict] = []
+        nested_rows: list[dict] = []
+        for key, child in value.items():
+            if isinstance(child, dict):
+                rows = _flatten_leaf_dicts(child)
+                if not rows and child:
+                    rows = [child]
+                nested_rows.extend(rows)
+            elif isinstance(child, list):
+                if child and all(not isinstance(item, (dict, list)) for item in child):
+                    direct_rows.append({str(key): ", ".join(str(item) for item in child if str(item).strip())})
+                else:
+                    nested_rows.extend(_flatten_leaf_dicts(child))
+        if direct_rows:
+            return direct_rows + nested_rows
         if value and all(not isinstance(v, (dict, list)) for v in value.values()):
             return [value]
-        rows: list[dict] = []
-        for child in value.values():
-            rows.extend(_flatten_leaf_dicts(child))
-        return rows
+        return nested_rows
     if isinstance(value, list):
         rows: list[dict] = []
         for child in value:
             rows.extend(_flatten_leaf_dicts(child))
         return rows
     return []
+
+
+def _iter_cbc_dataset_rows(payload: object) -> list[dict]:
+    rows = _flatten_leaf_dicts(payload)
+    normalized: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        flattened = {str(key): value for key, value in row.items() if not isinstance(value, (dict, list))}
+        if flattened:
+            normalized.append(flattened)
+    return normalized
+
+
+def _extract_best_numeric_value(row: dict, *keyword_groups: tuple[str, ...]) -> str:
+    if not isinstance(row, dict) or not row:
+        return ""
+
+    normalized_groups = [
+        [str(keyword or "").strip().lower() for keyword in group if str(keyword or "").strip()]
+        for group in keyword_groups
+    ]
+
+    def _compact(text: object) -> str:
+        return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(text or "").lower())
+
+    def _key_matches(key_text: str, keywords: list[str]) -> bool:
+        compact_key = _compact(key_text)
+        return any(
+            keyword in key_text
+            or (_compact(keyword) and _compact(keyword) in compact_key)
+            for keyword in keywords
+        )
+
+    def _numeric_text(value: object) -> str:
+        numeric = _safe_float(value)
+        if pd.isna(numeric):
+            return ""
+        raw = str(value or "").strip()
+        match = re.search(r"[-+]?(?:\d+\.\d+|\d+)", raw.replace(",", ""))
+        if match:
+            return match.group(0)
+        return str(float(numeric))
+
+    for keywords in normalized_groups:
+        for key, value in row.items():
+            key_text = str(key or "").strip().lower()
+            if not key_text or not _key_matches(key_text, keywords):
+                continue
+            text_value = _numeric_text(value)
+            if text_value:
+                return text_value
+
+    excluded_tokens = {
+        "日期", "年月", "年季", "date", "month", "day", "year", "代號", "code",
+        "幣別", "名稱", "name", "label", "項目", "item", "序號", "index",
+    }
+
+    numeric_candidates: list[tuple[int, str]] = []
+    for key, value in row.items():
+        key_text = str(key or "").strip().lower()
+        if any(token in key_text for token in excluded_tokens):
+            continue
+        text_value = _numeric_text(value)
+        if not text_value:
+            continue
+        priority = 1 if any(token in key_text for token in ("value", "數值", "資料值", "rate", "匯率", "利率")) else 2
+        numeric_candidates.append((priority, text_value))
+
+    if not numeric_candidates:
+        return ""
+
+    numeric_candidates.sort(key=lambda item: item[0])
+    return numeric_candidates[0][1]
+
+
+def _select_cbc_fx_row(rows: list[dict]) -> dict:
+    preferred = ("usd/twd", "usd per twd", "美金", "美元", "新台幣", "us dollar")
+    fallback: dict = {}
+    for row in rows:
+        joined = " ".join([str(k) for k in row.keys()] + [str(v) for v in row.values()]).lower()
+        if not fallback:
+            fallback = row
+        if any(token in joined for token in preferred):
+            return row
+    return fallback
+
+
+def _select_cbc_policy_rate_row(rows: list[dict]) -> dict:
+    preferred = ("重貼現率", "政策利率", "基準利率", "discount rate", "policy rate")
+    fallback: dict = {}
+    for row in rows:
+        joined = " ".join([str(k) for k in row.keys()] + [str(v) for v in row.values()]).lower()
+        if not fallback:
+            fallback = row
+        if any(token in joined for token in preferred):
+            return row
+    return fallback
+
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -11392,55 +12086,56 @@ def fetch_cbc_macro_snapshot() -> dict:
             result[key] = {"source": url, "error": str(exc)}
             continue
 
-        rows = _flatten_leaf_dicts(payload)
+        rows = _iter_cbc_dataset_rows(payload)
         rows.sort(key=_row_sortable_timestamp, reverse=True)
+        if not rows:
+            result[key] = {"source": url, "error": "CBC payload had no usable rows."}
+            continue
+
+        selected = _select_cbc_fx_row(rows) if key == "fx" else _select_cbc_policy_rate_row(rows)
+        value = _extract_best_numeric_value(
+            selected,
+            ("數值", "Value", "資料值", "數據", "rate", "匯率", "利率"),
+        )
+        label = _find_value_by_keywords(
+            selected,
+            ("幣別", "項目", "名稱", "Label", "資料項目", "項目別"),
+        )
+
         if key == "fx":
-            selected = {}
-            for row in rows:
-                joined = " ".join([str(k) for k in row.keys()] + [str(v) for v in row.values()])
-                if "新台幣" in joined or "TWD" in joined.upper():
-                    selected = row
-                    break
-            if not selected and rows:
-                selected = rows[0]
-            result[key] = {
-                "source": url,
-                "date": _find_value_by_keywords(selected, ("日期", "Date", "年月日")),
-                "value": _find_value_by_keywords(
-                    selected,
-                    ("數值", "Value", "匯率", "rate", "資料值"),
-                ),
-                "label": _find_value_by_keywords(
-                    selected,
-                    ("幣別", "項目", "名稱", "Label"),
-                ) or "USD/TWD",
-            }
+            label = label or "USD/TWD"
         else:
-            selected = {}
-            for row in rows:
-                joined = " ".join([str(k) for k in row.keys()] + [str(v) for v in row.values()])
-                if "重貼現率" in joined or "政策利率" in joined or "基準利率" in joined:
-                    selected = row
-                    break
-            if not selected and rows:
-                selected = rows[0]
-            result[key] = {
-                "source": url,
-                "date": _find_value_by_keywords(selected, ("日期", "Date", "年月日")),
-                "value": _find_value_by_keywords(selected, ("數值", "Value", "利率", "rate", "資料值")),
-                "label": _find_value_by_keywords(selected, ("項目", "名稱", "Label")) or "Policy rate",
-            }
+            label = label or "Policy rate"
+
+        result[key] = {
+            "source": url,
+            "date": _find_value_by_keywords(selected, ("日期", "Date", "年月日", "資料日期", "統計期")) or str(_row_sortable_timestamp(selected).date()),
+            "value": value,
+            "label": label,
+            "error": "" if value else f"CBC row matched but numeric value could not be parsed. keys={list(selected.keys())[:8]}",
+        }
 
     return result
+
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_taifex_put_call_snapshot() -> dict:
     url = "https://www.taifex.com.tw/cht/3/pcRatio"
     try:
-        tables = pd.read_html(url)
+        html = _fetch_text_url(url, timeout=25, accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
     except Exception as exc:
         return {"source": url, "error": str(exc)}
+
+    tables: list[pd.DataFrame] = []
+    parse_errors: list[str] = []
+    for html_source in (html, html.replace("<br>", "<br/>")):
+        try:
+            tables = pd.read_html(io.StringIO(html_source))
+            if tables:
+                break
+        except Exception as exc:
+            parse_errors.append(str(exc))
 
     for table in tables:
         columns = [str(col) for col in table.columns]
@@ -11452,27 +12147,46 @@ def fetch_taifex_put_call_snapshot() -> dict:
         cleaned = cleaned.dropna(how="all")
         if cleaned.empty:
             continue
-        row = cleaned.iloc[-1].to_dict()
-        ratio_value = ""
-        for key, value in row.items():
-            key_text = str(key).lower()
-            if any(token in key_text for token in ("ratio", "比率")):
-                ratio_value = str(value)
-                break
+        row = cleaned.iloc[0].to_dict()
+        ratio_value = _find_value_by_keywords(row, ("比率", "ratio"))
         if not ratio_value:
-            for value in row.values():
-                numeric = _safe_float(value)
-                if not pd.isna(numeric) and 0 < numeric < 10:
+            for key, value in row.items():
+                key_text = str(key).lower()
+                if "比率" in key_text or "ratio" in key_text:
                     ratio_value = str(value)
                     break
+        if not ratio_value:
+            numeric_values = []
+            for value in row.values():
+                numeric = _safe_float(value)
+                if not pd.isna(numeric) and 0 < numeric < 300:
+                    numeric_values.append(float(numeric))
+            if numeric_values:
+                ratio_value = str(numeric_values[-1])
+        if ratio_value:
+            return {
+                "source": url,
+                "date": _find_value_by_keywords(row, ("日期", "Date")),
+                "ratio": ratio_value,
+                "put_volume": _find_value_by_keywords(row, ("賣權成交量", "Put")),
+                "call_volume": _find_value_by_keywords(row, ("買權成交量", "Call")),
+                "error": "",
+            }
+
+    regex_match = re.search(r"(20\d{2}/\d{1,2}/\d{1,2})\s+([\d,]+)\s+([\d,]+)\s+([\d.]+)", html)
+    if regex_match:
         return {
             "source": url,
-            "date": _find_value_by_keywords(row, ("日期", "Date")),
-            "ratio": ratio_value,
-            "put_volume": _find_value_by_keywords(row, ("賣權成交量", "Put")),
-            "call_volume": _find_value_by_keywords(row, ("買權成交量", "Call")),
+            "date": regex_match.group(1),
+            "put_volume": regex_match.group(2),
+            "call_volume": regex_match.group(3),
+            "ratio": regex_match.group(4),
+            "error": "",
         }
-    return {"source": url, "error": "No usable put/call table found."}
+
+    error_text = parse_errors[-1] if parse_errors else "No usable put/call table found."
+    return {"source": url, "error": error_text}
+
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -11491,6 +12205,7 @@ def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
         "revenue": {},
         "macro": fetch_cbc_macro_snapshot(),
         "derivatives": fetch_taifex_put_call_snapshot(),
+        "errors": {},
     }
 
     if ticker.endswith(".TWO"):
@@ -11501,6 +12216,7 @@ def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
             "pe": tpex.get("pe", ""),
             "yield": tpex.get("yield", ""),
             "pb": tpex.get("pb", ""),
+            "error": tpex.get("error", ""),
         }
         payload["flow"] = {
             "source": tpex.get("source", "TPEx OpenAPI"),
@@ -11508,6 +12224,7 @@ def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
             "foreign_net": tpex.get("foreign_net", ""),
             "trust_net": tpex.get("trust_net", ""),
             "dealer_net": tpex.get("dealer_net", ""),
+            "error": tpex.get("error", ""),
         }
     elif is_taiwan_active_etf(ticker):
         flow_payload = fetch_twse_etf_institutional_flow(ticker)
@@ -11516,15 +12233,25 @@ def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
             "source": flow_payload.get("source", "TWSE T86 ETF"),
             "date": flow_payload.get("date", ""),
             "foreign_net": record.get("foreign_net", ""),
-            "trust_net": record.get("investment_trust_net", ""),
+            "trust_net": record.get("trust_net", ""),
             "dealer_net": record.get("dealer_net", ""),
+            "error": flow_payload.get("error", ""),
         }
     else:
         payload["valuation"] = fetch_twse_valuation_snapshot(code)
         payload["flow"] = fetch_twse_stock_institutional_flow(code)
 
     payload["revenue"] = fetch_monthly_revenue_snapshot(ticker)
+    payload["errors"] = {
+        "valuation": str(payload["valuation"].get("error", "")),
+        "flow": str(payload["flow"].get("error", "")),
+        "revenue": str(payload["revenue"].get("error", "")),
+        "cbc_fx": str((payload["macro"].get("fx", {}) or {}).get("error", "")),
+        "cbc_rate": str((payload["macro"].get("policy_rate", {}) or {}).get("error", "")),
+        "taifex_pcr": str((payload["derivatives"] or {}).get("error", "")),
+    }
     return payload
+
 
 
 def _official_card_html(label: str, value: str, sub: str = "") -> str:
@@ -11638,6 +12365,7 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     revenue = snapshot.get("revenue", {}) or {}
     macro = snapshot.get("macro", {}) or {}
     derivatives = snapshot.get("derivatives", {}) or {}
+    errors = {key: str(value).strip() for key, value in (snapshot.get("errors", {}) or {}).items() if str(value).strip()}
 
     cards = []
 
@@ -11736,9 +12464,7 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
         [
             _active_etf_plain_cell("CBC + TAIFEX"),
             _active_etf_story_cell("Macro / derivatives" if not lang_zh else "總經 / 衍生品", str(rate.get("date") or fx.get("date") or pcr.get("date") or "")),
-            _active_etf_plain_cell(
-                f"FX {fx_value} / Rate {rate_value} / PCR {pcr_value}"
-            ),
+            _active_etf_plain_cell(f"FX {fx_value} / Rate {rate_value} / PCR {pcr_value}"),
         ],
     ]
     render_active_etf_tracker_table(
@@ -11746,6 +12472,45 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
         rows,
         "目前尚無官方補強資料。" if lang_zh else "No official supplemental data is available.",
     )
+
+    visible_values = [
+        pe_value, yield_value, pb_value,
+        foreign_net, trust_net, dealer_net,
+        revenue_value, yoy_value, mom_value,
+        fx_value, rate_value, pcr_value,
+    ]
+    all_blank = all(str(value).strip() in {"", "—"} for value in visible_values)
+
+    if errors:
+        st.warning(
+            ("已偵測到部分官方資料來源抓取失敗，系統已保留可用資料，並列出診斷資訊如下。" if lang_zh else
+             "Some official sources failed to load. Available data is still shown below, with diagnostics listed here.")
+        )
+        diagnostics_rows = []
+        for key, message in errors.items():
+            diagnostics_rows.append([
+                _active_etf_plain_cell({
+                    "valuation": "估值" if lang_zh else "Valuation",
+                    "flow": "法人" if lang_zh else "Institutional flow",
+                    "revenue": "月營收" if lang_zh else "Monthly revenue",
+                    "cbc_fx": "央行匯率" if lang_zh else "CBC FX",
+                    "cbc_rate": "央行利率" if lang_zh else "CBC Rate",
+                    "taifex_pcr": "期交所 PCR" if lang_zh else "TAIFEX PCR",
+                }.get(key, key)),
+                _active_etf_plain_cell(message),
+            ])
+        render_active_etf_tracker_table(
+            ["來源" if lang_zh else "Source", "錯誤 / 診斷" if lang_zh else "Error / diagnostics"],
+            diagnostics_rows,
+            "沒有額外診斷資訊。" if lang_zh else "No diagnostics available.",
+        )
+
+    if all_blank:
+        st.info(
+            ("這表示資料來源抓取或欄位解析失敗，而不一定代表沒有昨日收盤資料。請先按一次 Refresh live data，若仍空白可查看上方 diagnostics。"
+             if lang_zh else
+             "This usually means a fetch or field-parsing failure, not necessarily that official post-close data is unavailable. Try Refresh live data once, then check the diagnostics above if it is still blank.")
+        )
 
 
 
@@ -11825,20 +12590,40 @@ def is_taiwan_active_etf(ticker: str) -> bool:
 
 def _safe_float(value, default: float = float("nan")) -> float:
     try:
-        if value is None or (isinstance(value, str) and not value.strip()):
+        if value is None:
             return default
         if isinstance(value, str):
-            cleaned = (
-                value.replace(",", "")
+            raw = value.strip()
+            if not raw:
+                return default
+
+            normalized = (
+                raw.replace(",", "")
                 .replace("%", "")
+                .replace("％", "")
                 .replace("＋", "")
                 .replace("+", "")
                 .replace("--", "")
+                .replace("−", "-")
+                .replace("－", "-")
                 .strip()
             )
-            if cleaned in {"", "-", "nan", "None"}:
+            if normalized.lower() in {"", "-", "nan", "none", "null", "n/a"}:
                 return default
-            return float(cleaned)
+
+            date_like = normalized.replace(".", "/")
+            if re.fullmatch(r"\d{2,4}[/-]\d{1,2}[/-]\d{1,2}", date_like):
+                return default
+            if re.fullmatch(r"\d{5,8}", normalized):
+                return default
+
+            try:
+                return float(normalized)
+            except Exception:
+                match = re.search(r"[-+]?(?:\d+\.\d+|\d+)", normalized)
+                if match:
+                    return float(match.group(0))
+                return default
         return float(value)
     except Exception:
         return default
@@ -11991,502 +12776,121 @@ def _contains_cjk_text(value: str) -> bool:
     return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", str(value or "")))
 
 
-def _fetch_json_url(url: str, timeout: int = 12):
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json,text/plain,*/*",
-        },
-        method="GET",
-    )
-    with urlopen(request, timeout=timeout) as response:
-        raw = response.read().decode("utf-8", errors="replace")
-    return json.loads(raw)
-
-
-def _pick_first_matching_value(row: dict, keywords: tuple[str, ...], *, require_cjk: bool = False) -> str:
-    for key, value in row.items():
-        key_text = str(key or "")
-        value_text = str(value or "").strip()
-        if not value_text:
-            continue
-        if not any(token in key_text for token in keywords):
-            continue
-        if require_cjk and not _contains_cjk_text(value_text):
-            continue
-        return value_text
-    return ""
-
-
-@st.cache_data(ttl=604800, show_spinner=False)
-def fetch_taiwan_company_name_map() -> dict[str, str]:
-    sources = [
-        (".TW", "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"),
-        (".TWO", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"),
-    ]
-    mapping: dict[str, str] = {}
-
-    for suffix, url in sources:
-        try:
-            payload = _fetch_json_url(url, timeout=15)
-        except Exception:
-            continue
-
-        rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-
-            code = _pick_first_matching_value(
-                row,
-                ("公司代號", "證券代號", "股票代號", "代號", "SecuritiesCompanyCode", "CompanyCode"),
-            )
-            code_match = re.search(r"\b(\d{4,6})\b", code)
-            if not code_match:
-                continue
-            numeric_code = code_match.group(1)
-
-            zh_name = _pick_first_matching_value(
-                row,
-                ("公司簡稱", "公司名稱", "證券名稱", "股票名稱", "名稱", "CompanyName", "SecurityName"),
-                require_cjk=True,
-            )
-            if not zh_name:
-                continue
-
-            mapping[f"{numeric_code}{suffix}"] = zh_name
-
-    for ticker, meta in TAIWAN_TICKER_METADATA.items():
-        zh_name = str(meta.get("zh", "")).strip()
-        if zh_name:
-            mapping[str(ticker).upper()] = zh_name
-
-    return mapping
-
-
-@st.cache_data(ttl=604800, show_spinner=False)
-def lookup_taiwan_holding_symbol(query: str) -> dict:
-    raw_query = str(query or "").strip()
-    if not raw_query:
-        return {}
-
-    query_token = _normalize_holding_alias_text(raw_query)
-    candidates = fetch_remote_symbol_search(raw_query, max_results=10)
-    best: dict = {}
-    best_score = -1
-
-    for item in candidates:
-        symbol = normalize_dashboard_ticker(item.get("symbol", ""))
-        if not symbol or not is_taiwan_ticker(symbol):
-            continue
-
-        label_name = str(item.get("name", "")).strip()
-        label_token = _normalize_holding_alias_text(label_name)
-        symbol_token = _normalize_holding_alias_text(symbol)
-        score = 0
-
-        if symbol in TAIWAN_TICKER_METADATA:
-            score += 30
-        if symbol.endswith(".TW") or symbol.endswith(".TWO"):
-            score += 18
-        if _contains_cjk_text(label_name):
-            score += 10
-        if label_token == query_token:
-            score += 24
-        elif query_token and label_token and (query_token in label_token or label_token in query_token):
-            score += 12
-        if query_token and symbol_token and (query_token in symbol_token or symbol_token in query_token):
-            score += 8
-
-        exchange_text = str(item.get("exchange", "")).upper()
-        if any(token in exchange_text for token in ("TAI", "TWO", "TPEx".upper(), "TWSE")):
-            score += 4
-
-        if score > best_score:
-            best = {"symbol": symbol, "name": label_name, "exchange": exchange_text}
-            best_score = score
-
-    return best if best_score >= 18 else {}
-
-
-def build_holding_name_cell(name: str) -> str:
-    resolved_name = resolve_holding_display_name(name)
-    original_name = str(name or "").strip()
-    lang_zh = get_language() == "zh_TW"
-    if not original_name:
-        return f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-    if resolved_name != original_name and not lang_zh:
-        return (
-            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
-        )
-    return f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
-
-
-def resolve_holding_display_name(name: str) -> str:
-    raw_name = str(name or "").strip()
-    if not raw_name:
-        return "N/A"
-
-    normalized = normalize_dashboard_ticker(raw_name)
-    if normalized and normalized != raw_name and (normalized in TAIWAN_TICKER_METADATA or is_taiwan_ticker(normalized)):
-        return display_ticker_label(normalized)
-
-    if raw_name.upper() in TAIWAN_TICKER_METADATA or is_taiwan_ticker(raw_name):
-        return display_ticker_label(raw_name)
-
-    base_code_match = re.search(r"\b(\d{4,6})(?:\.TW|\.TWO)?\b", raw_name.upper())
-    if base_code_match:
-        resolved = normalize_dashboard_ticker(base_code_match.group(1))
-        if resolved:
-            label = display_ticker_label(resolved)
-            if label:
-                return label
-
-    alias_key = _normalize_holding_alias_text(raw_name)
-    matched_ticker = TAIWAN_HOLDING_ALIAS_MAP.get(alias_key)
-    if matched_ticker:
-        return display_ticker_label(matched_ticker)
-
-    for alias, ticker in TAIWAN_HOLDING_ALIAS_MAP.items():
-        if alias and (alias in alias_key or alias_key in alias):
-            return display_ticker_label(ticker)
-
-    if get_language() == "zh_TW" and not _contains_cjk_text(raw_name):
-        matched = lookup_taiwan_holding_symbol(raw_name)
-        symbol = str(matched.get("symbol", "")).upper().strip()
-        if symbol and is_taiwan_ticker(symbol):
-            zh_name = fetch_taiwan_company_name_map().get(symbol, "").strip()
-            fallback_name = str(matched.get("name", "")).strip()
-            final_name = zh_name or (fallback_name if _contains_cjk_text(fallback_name) else "")
-            if final_name:
-                register_runtime_symbol_metadata(symbol, name=final_name, market="Taiwan")
-                return f"{ticker_base_code(symbol)} {final_name}"
-
-    return raw_name
-
-
-def inject_active_etf_tracker_css() -> None:
-    st.markdown(
-        """
-        <style>
-        .etf-tracker-table-wrap {
-            width: 100%;
-            overflow-x: auto;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 20px;
-            background: linear-gradient(180deg, rgba(17, 24, 39, 0.92) 0%, rgba(8, 14, 28, 0.98) 100%);
-            box-shadow: 0 18px 40px rgba(0,0,0,.20);
-        }
-        .etf-tracker-table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 560px;
-        }
-        .etf-tracker-table thead th {
-            text-align: left;
-            padding: 13px 14px;
-            font-size: 11px;
-            font-weight: 900;
-            letter-spacing: .08em;
-            text-transform: uppercase;
-            color: rgba(231, 216, 179, 0.90);
-            background: linear-gradient(180deg, rgba(33, 41, 66, 0.88) 0%, rgba(19, 27, 47, 0.96) 100%);
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-            white-space: nowrap;
-        }
-        .etf-tracker-table tbody td {
-            padding: 13px 14px;
-            font-size: 14px;
-            line-height: 1.45;
-            color: rgba(241, 245, 255, 0.92);
-            border-top: 1px solid rgba(255,255,255,0.06);
-            vertical-align: top;
-        }
-        .etf-tracker-table tbody tr:hover td {
-            background: rgba(255,255,255,0.02);
-        }
-        .etf-tracker-name {
-            font-weight: 800;
-            color: #ffffff;
-        }
-        .etf-tracker-sub {
-            margin-top: 4px;
-            font-size: 12px;
-            color: rgba(203, 213, 225, 0.76);
-        }
-        .etf-tracker-value {
-            font-weight: 800;
-            color: #ffffff;
-            white-space: nowrap;
-        }
-        .etf-tracker-delta-up { color: #7ce7ba; font-weight: 800; }
-        .etf-tracker-delta-down { color: #ffb3b3; font-weight: 800; }
-        .etf-tracker-delta-flat { color: rgba(226,232,240,.86); font-weight: 700; }
-        .etf-tracker-text {
-            color: rgba(241, 245, 255, 0.92);
-            line-height: 1.52;
-        }
-        .etf-tracker-muted {
-            margin-top: 4px;
-            font-size: 12px;
-            color: rgba(203, 213, 225, 0.76);
-            line-height: 1.45;
-        }
-        .etf-tracker-status-pill {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 6px 10px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 900;
-            letter-spacing: .05em;
-            text-transform: uppercase;
-            border: 1px solid rgba(255,255,255,.10);
-        }
-        .etf-tracker-status-up {
-            background: rgba(16,185,129,.14);
-            border-color: rgba(16,185,129,.26);
-            color: #9ef0c8;
-        }
-        .etf-tracker-status-down {
-            background: rgba(239,68,68,.14);
-            border-color: rgba(239,68,68,.26);
-            color: #ffc2c2;
-        }
-        .etf-tracker-status-flat {
-            background: rgba(148,163,184,.14);
-            border-color: rgba(148,163,184,.22);
-            color: #e2e8f0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_active_etf_tracker_table(headers: list[str], rows: list[list[str]], empty_text: str) -> None:
-    if not rows:
-        st.caption(empty_text)
-        return
-    thead = "".join(f"<th>{escape(header)}</th>" for header in headers)
-    body_rows = []
-    for row in rows:
-        body_rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>")
-    st.markdown(
-        f"""
-        <div class="etf-tracker-table-wrap">
-            <table class="etf-tracker-table">
-                <thead><tr>{thead}</tr></thead>
-                <tbody>{''.join(body_rows)}</tbody>
-            </table>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _active_etf_plain_cell(value: object, *, class_name: str = "etf-tracker-value") -> str:
-    return f'<div class="{class_name}">{escape(str(value))}</div>'
-
-
-def _active_etf_story_cell(title: str, subtitle: str = "") -> str:
-    title_html = f'<div class="etf-tracker-text">{escape(str(title or "—"))}</div>'
-    if subtitle:
-        title_html += f'<div class="etf-tracker-muted">{escape(str(subtitle))}</div>'
-    return title_html
-
-
-def _active_etf_score_cell(score: float) -> str:
-    if score > 0:
-        cls = "etf-tracker-delta-up"
-    elif score < 0:
-        cls = "etf-tracker-delta-down"
-    else:
-        cls = "etf-tracker-delta-flat"
-    return f'<div class="{cls}">{score:+.2f}</div>'
-
-
-def _extract_holdings_records_from_frame(frame: pd.DataFrame) -> list[dict]:
-    if not isinstance(frame, pd.DataFrame) or frame.empty:
-        return []
-    df = frame.copy()
-
-    if df.shape[0] == 1 and df.shape[1] > 1:
-        row = pd.to_numeric(df.iloc[0], errors="coerce").dropna()
-        records = [{"name": str(col), "weight": float(val)} for col, val in row.items() if not _is_numericish_holding_token(col)]
-        normalized = _normalize_holdings_records(records)
-        if normalized:
-            return normalized
-
-    if len(df.columns) == 1 and df.index.notna().all():
-        only_col = df.columns[0]
-        series = pd.to_numeric(df[only_col], errors="coerce")
-        index_values = [str(idx).strip() for idx in series.dropna().index]
-        numeric_index_ratio = (
-            sum(1 for value in index_values if _is_numericish_holding_token(value)) / max(len(index_values), 1)
-        )
-        if numeric_index_ratio < 0.6:
-            records = [{"name": str(idx), "weight": float(val)} for idx, val in series.dropna().items()]
-            return _normalize_holdings_records(records)
-        return []
-
-    if df.shape[1] >= 2:
-        first_col, second_col = df.columns[:2]
-        first_series = df[first_col].astype(str).str.strip()
-        second_series = pd.to_numeric(df[second_col], errors="coerce")
-        if second_series.notna().sum() >= max(3, int(len(df) * 0.5)) and first_series.map(_is_numericish_holding_token).mean() < 0.5:
-            records = []
-            for idx in df.index:
-                name = str(df.at[idx, first_col]).strip()
-                weight = pd.to_numeric(pd.Series([df.at[idx, second_col]]), errors="coerce").iloc[0]
-                if name and name.lower() not in {"nan", "none"} and pd.notna(weight):
-                    records.append({"name": name, "weight": float(weight)})
-            normalized = _normalize_holdings_records(records)
-            if normalized:
-                return normalized
-
-    name_col, weight_col = _pick_name_and_weight_columns(df)
-    records: list[dict] = []
-
-    if name_col is not None and weight_col is not None:
-        weights = pd.to_numeric(df[weight_col], errors="coerce")
-        for _, row in df.assign(__weight=weights).dropna(subset=["__weight"]).iterrows():
-            name = str(row[name_col]).strip()
-            if name and name.lower() not in {"nan", "none"} and not _is_numericish_holding_token(name):
-                records.append({"name": name, "weight": float(row["__weight"])})
-        normalized = _normalize_holdings_records(records)
-        if normalized:
-            return normalized
-
-    if df.index.notna().all():
-        for idx, row in df.iterrows():
-            if _is_numericish_holding_token(idx):
-                continue
-            numeric_values = pd.to_numeric(pd.Series(row), errors="coerce").dropna()
-            if not numeric_values.empty:
-                records.append({"name": str(idx), "weight": float(numeric_values.iloc[0])})
-    return _normalize_holdings_records(records)
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict:
-    ticker_upper = str(ticker).upper()
-    result = {"items": [], "source": "", "error": ""}
-    try:
-        tk = yf.Ticker(ticker_upper)
-        candidates = []
-
-        funds_data = getattr(tk, "funds_data", None)
-        if funds_data is not None:
-            for attr in ("top_holdings", "equity_holdings"):
-                try:
-                    candidate = getattr(funds_data, attr, None)
-                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
-                        candidates.append(candidate)
-                except Exception:
-                    pass
-
-        for attr in ("fund_top_holdings", "top_holdings"):
-            try:
-                candidate = getattr(tk, attr, None)
-                if isinstance(candidate, pd.DataFrame) and not candidate.empty:
-                    candidates.append(candidate)
-            except Exception:
-                pass
-
-        try:
-            info = getattr(tk, "get_info", None)
-            info_payload = info() if callable(info) else getattr(tk, "info", {})
-            if isinstance(info_payload, dict):
-                holdings = info_payload.get("holdings") or info_payload.get("topHoldings")
-                if isinstance(holdings, list) and holdings:
-                    result["items"] = _normalize_holdings_records(
-                        [{"name": row.get("holdingName") or row.get("symbol") or row.get("name"), "weight": row.get("holdingPercent") or row.get("weight")} for row in holdings],
-                        max_items=max_items,
-                    )
-                    if result["items"]:
-                        result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
-                        return result
-        except Exception:
-            pass
-
-        for frame in candidates:
-            items = _extract_holdings_records_from_frame(frame)
-            if items:
-                result["items"] = items[:max_items]
-                result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
-                return result
-
-        result["error"] = "No current holdings snapshot available."
-        return result
-    except Exception as exc:
-        result["error"] = f"Holdings snapshot unavailable: {exc}"
-        return result
-
-
-def build_active_etf_holdings_changes(ticker: str, current_items: list[dict]) -> dict:
-    current_clean = _normalize_holdings_records(current_items)
-    if current_clean:
-        _upsert_active_etf_snapshot(ticker, current_clean)
-    previous_items, previous_date, previous_source = _load_previous_active_etf_snapshot(ticker)
-
-    prev_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(previous_items, max_items=50)}
-    curr_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(current_clean, max_items=50)}
-
-    deltas = []
-    for name in sorted(set(prev_map) | set(curr_map)):
-        previous = prev_map.get(name, 0.0)
-        current = curr_map.get(name, 0.0)
-        delta = current - previous
-        status = "unchanged"
-        if previous == 0 and current > 0:
-            status = "new"
-        elif current == 0 and previous > 0:
-            status = "removed"
-        elif delta > 0:
-            status = "increase"
-        elif delta < 0:
-            status = "decrease"
-        deltas.append(
-            {
-                "name": name,
-                "previous": previous,
-                "current": current,
-                "delta": delta,
-                "status": status,
-            }
-        )
-
-    adds = [row for row in deltas if row["status"] in {"new", "increase"} and row["current"] > 0]
-    cuts = [row for row in deltas if row["status"] in {"removed", "decrease"} and row["previous"] > 0]
-    adds.sort(key=lambda row: (row["status"] != "new", row["delta"]), reverse=True)
-    cuts.sort(key=lambda row: (row["status"] != "removed", abs(row["delta"])), reverse=True)
-
+def _http_headers(accept: str = "application/json,text/plain,*/*") -> dict[str, str]:
     return {
-        "previous_date": previous_date,
-        "previous_source": previous_source,
-        "adds": adds[:8],
-        "cuts": cuts[:8],
-        "current_top": current_clean[:10],
-        "has_history": bool(previous_date),
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept": accept,
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Connection": "close",
     }
 
 
+def _build_ssl_contexts() -> list[ssl.SSLContext]:
+    contexts: list[ssl.SSLContext] = []
+
+    if truststore is not None:
+        try:
+            contexts.append(truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+        except Exception:
+            pass
+
+    if certifi is not None:
+        try:
+            contexts.append(ssl.create_default_context(cafile=certifi.where()))
+        except Exception:
+            pass
+
+    try:
+        contexts.append(ssl.create_default_context())
+    except Exception:
+        pass
+
+    deduped: list[ssl.SSLContext] = []
+    seen: set[int] = set()
+    for context in contexts:
+        marker = id(context)
+        if marker not in seen:
+            deduped.append(context)
+            seen.add(marker)
+    return deduped
+
+
+def _read_request_bytes(
+    request: Request,
+    timeout: int = 20,
+    *,
+    allow_insecure_fallback: bool = True,
+) -> tuple[bytes, int]:
+    last_error: Exception | None = None
+    contexts = _build_ssl_contexts()
+    if allow_insecure_fallback:
+        contexts.append(ssl._create_unverified_context())
+
+    for context in contexts:
+        try:
+            with urlopen(request, timeout=timeout, context=context) as response:
+                return response.read(), int(getattr(response, "status", 200) or 200)
+        except HTTPError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unable to open request.")
+
+
+def _open_url_bytes(url: str, timeout: int = 20, accept: str = "application/json,text/plain,*/*") -> bytes:
+    request = Request(url, headers=_http_headers(accept=accept), method="GET")
+    raw, _ = _read_request_bytes(request, timeout=timeout)
+    return raw
+
+
+def _decode_response_bytes(raw: bytes) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    for encoding in ("utf-8-sig", "utf-8", "utf-16", "utf-16-le", "utf-16-be", "cp950", "big5", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _parse_json_text(raw_text: str):
+    text_value = str(raw_text or "").strip()
+    if not text_value:
+        raise ValueError("Empty JSON payload.")
+    text_value = text_value.lstrip("\ufeff")
+    try:
+        return json.loads(text_value)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{.*\}|\[.*\])", text_value, re.S)
+        if match:
+            return json.loads(match.group(1))
+        raise
+
+
+def _fetch_text_url(url: str, timeout: int = 12, accept: str = "text/html,application/json,text/plain,*/*") -> str:
+    return _decode_response_bytes(_open_url_bytes(url, timeout=timeout, accept=accept))
+
+
+def _fetch_json_url(url: str, timeout: int = 12):
+    return _parse_json_text(_fetch_text_url(url, timeout=timeout, accept="application/json,text/plain,*/*"))
+
+
 def _twse_request_json(url: str) -> dict:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json,text/plain,*/*",
-        },
-        method="GET",
-    )
-    with urlopen(request, timeout=20) as response:
-        raw = response.read().decode("utf-8", errors="replace")
-    return json.loads(raw)
+    return _fetch_json_url(url, timeout=20)
+
 
 
 def _parse_twse_etf_flow_payload(payload: dict) -> pd.DataFrame:
@@ -12639,7 +13043,7 @@ def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> N
         ]
         st.markdown(
             f"""
-            <div class="guide-shell etf-tracker-shell">
+            <div class="guide-shell etf-tracker-shell active-etf-hero hero-neon-bar">
                 <div class="section-header">{'台股主動式 ETF 追蹤' if lang_zh else 'Taiwan active ETF tracker'}</div>
                 <div class="guide-title">{escape(display_ticker_label(ticker))} · {'收盤後雙面板' if lang_zh else 'post-close dual panel'}</div>
                 <div class="guide-copy">{escape(update_note)}</div>
@@ -12969,6 +13373,7 @@ def render_active_etf_lab_dashboard(
     intraday_data: pd.DataFrame | None,
     tickers: list[str],
     lens_meta: dict | None = None,
+    layout_mode: str = "Advanced",
 ) -> None:
     active_etf_tickers = [ticker for ticker in dedupe_keep_order(tickers) if is_taiwan_active_etf(ticker)]
     lang_zh = get_language() == "zh_TW"
@@ -13009,61 +13414,68 @@ def render_active_etf_lab_dashboard(
         unsafe_allow_html=True,
     )
 
-    render_taiwan_market_macro_strip(force_show=True)
+    render_dashboard_layout_intro(layout_mode, "Active ETF Lab", active_etf_tickers)
+    render_layout_flow_cards(layout_mode, "Active ETF Lab")
 
-    summary_cols = st.columns(3)
-    summary_cols[0].metric("主動式 ETF 檔數" if lang_zh else "Active ETFs selected", len(active_etf_tickers))
-    summary_cols[1].metric(
-        "可做雙 ETF 比較" if lang_zh else "Pair compare ready",
-        "是" if len(active_etf_tickers) >= 2 and lang_zh else ("Yes" if len(active_etf_tickers) >= 2 else ("否" if lang_zh else "No")),
-    )
-    summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
-
-    if bundles:
-        render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
-
-    if len(active_etf_tickers) >= 2:
-        pair_left_key = "active_etf_lab_pair_left"
-        pair_right_key = "active_etf_lab_pair_right"
-
-        if st.session_state.get(pair_left_key) not in active_etf_tickers:
-            st.session_state[pair_left_key] = active_etf_tickers[0]
-        if (
-            st.session_state.get(pair_right_key) not in active_etf_tickers
-            or st.session_state.get(pair_right_key) == st.session_state[pair_left_key]
-        ):
-            st.session_state[pair_right_key] = active_etf_tickers[1] if len(active_etf_tickers) > 1 else active_etf_tickers[0]
-
-        left_col, right_col = st.columns(2)
-        left_etf = left_col.selectbox(
-            "比較 ETF A" if lang_zh else "Compare ETF A",
-            options=active_etf_tickers,
-            format_func=display_ticker_label,
-            key=pair_left_key,
+    def _render_etf_briefing() -> None:
+        render_taiwan_market_macro_strip(force_show=True)
+        summary_cols = st.columns(3)
+        summary_cols[0].metric("主動式 ETF 檔數" if lang_zh else "Active ETFs selected", len(active_etf_tickers))
+        summary_cols[1].metric(
+            "可做雙 ETF 比較" if lang_zh else "Pair compare ready",
+            "是" if len(active_etf_tickers) >= 2 and lang_zh else ("Yes" if len(active_etf_tickers) >= 2 else ("否" if lang_zh else "No")),
         )
-        right_options = [ticker for ticker in active_etf_tickers if ticker != left_etf] or active_etf_tickers
-        if st.session_state.get(pair_right_key) not in right_options:
-            st.session_state[pair_right_key] = right_options[0]
-        right_etf = right_col.selectbox(
-            "比較 ETF B" if lang_zh else "Compare ETF B",
-            options=right_options,
-            format_func=display_ticker_label,
-            key=pair_right_key,
-        )
-        render_active_etf_pair_comparison(left_etf, right_etf)
+        summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
+        if bundles:
+            render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
 
-    tabs = st.tabs([display_ticker_label(ticker) for ticker in active_etf_tickers])
-    for tab, ticker in zip(tabs, active_etf_tickers):
-        with tab:
-            bundle = bundle_map.get(ticker)
-            if bundle is None:
-                st.warning(
-                    "目前抓不到這檔主動式 ETF 的完整研究資料。"
-                    if lang_zh
-                    else f"Research data is currently unavailable for {display_ticker_label(ticker)}."
-                )
-                continue
-            render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(active_etf_tickers))
+    def _render_etf_pair_compare() -> None:
+        left_etf, right_etf = render_active_etf_pair_picker(active_etf_tickers)
+        if left_etf and right_etf:
+            render_active_etf_pair_comparison(left_etf, right_etf)
+
+    if layout_mode == "Standard":
+        standard_sections = [
+            "layout_standard_etf_brief_tab",
+            "layout_standard_pair_compare_tab",
+            "layout_standard_etf_workspace_tab",
+        ]
+        current_section = render_standard_step_navigator(
+            standard_sections,
+            state_key="dashboard_standard_etf_section",
+        )
+        if current_section == "layout_standard_etf_brief_tab":
+            _render_etf_briefing()
+        elif current_section == "layout_standard_pair_compare_tab":
+            _render_etf_pair_compare()
+        else:
+            render_single_bundle_workspace_picker(bundles, lens_meta=lens_meta)
+    elif layout_mode == "Advanced":
+        brief_tab, compare_tab, workspace_tab = st.tabs(
+            [
+                t("layout_brief_tab"),
+                t("layout_compare_tab"),
+                t("layout_workspace_tab"),
+            ]
+        )
+        with brief_tab:
+            _render_etf_briefing()
+        with compare_tab:
+            _render_etf_pair_compare()
+        with workspace_tab:
+            render_bundle_workspace_tabs(bundles, lens_meta=lens_meta)
+    else:
+        _render_etf_briefing()
+        compare_tab, workspace_tab = st.tabs(
+            [
+                t("layout_comparison_desk_tab"),
+                t("layout_etf_workspaces_tab"),
+            ]
+        )
+        with compare_tab:
+            _render_etf_pair_compare()
+        with workspace_tab:
+            render_bundle_workspace_tabs(bundles, lens_meta=lens_meta)
 
 
 
@@ -14359,6 +14771,1608 @@ def inject_device_layout_overrides(device_mode: str) -> None:
         """
     st.markdown(css, unsafe_allow_html=True)
 
+
+
+# Restored Active ETF helper block
+
+def lookup_taiwan_holding_symbol(query: str) -> dict:
+    raw_query = str(query or "").strip()
+    if not raw_query:
+        return {}
+
+    query_token = _normalize_holding_alias_text(raw_query)
+    candidates = fetch_remote_symbol_search(raw_query, max_results=10)
+    best: dict = {}
+    best_score = -1
+
+    for item in candidates:
+        symbol = normalize_dashboard_ticker(item.get("symbol", ""))
+        if not symbol or not is_taiwan_ticker(symbol):
+            continue
+
+        label_name = str(item.get("name", "")).strip()
+        label_token = _normalize_holding_alias_text(label_name)
+        symbol_token = _normalize_holding_alias_text(symbol)
+        score = 0
+
+        if symbol in TAIWAN_TICKER_METADATA:
+            score += 30
+        if symbol.endswith(".TW") or symbol.endswith(".TWO"):
+            score += 18
+        if _contains_cjk_text(label_name):
+            score += 10
+        if label_token == query_token:
+            score += 24
+        elif query_token and label_token and (query_token in label_token or label_token in query_token):
+            score += 12
+        if query_token and symbol_token and (query_token in symbol_token or symbol_token in query_token):
+            score += 8
+
+        exchange_text = str(item.get("exchange", "")).upper()
+        if any(token in exchange_text for token in ("TAI", "TWO", "TPEx".upper(), "TWSE")):
+            score += 4
+
+        if score > best_score:
+            best = {"symbol": symbol, "name": label_name, "exchange": exchange_text}
+            best_score = score
+
+    return best if best_score >= 18 else {}
+
+
+def build_holding_name_cell(name: str) -> str:
+    resolved_name = resolve_holding_display_name(name)
+    original_name = str(name or "").strip()
+    lang_zh = get_language() == "zh_TW"
+    if not original_name:
+        return f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+    if resolved_name != original_name and not lang_zh:
+        return (
+            f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+            f'<div class="etf-tracker-sub">{escape(original_name)}</div>'
+        )
+    return f'<div class="etf-tracker-name">{escape(resolved_name)}</div>'
+
+
+def resolve_holding_display_name(name: str) -> str:
+    raw_name = str(name or "").strip()
+    if not raw_name:
+        return "N/A"
+
+    normalized = normalize_dashboard_ticker(raw_name)
+    if normalized and normalized != raw_name and (normalized in TAIWAN_TICKER_METADATA or is_taiwan_ticker(normalized)):
+        return display_ticker_label(normalized)
+
+    if raw_name.upper() in TAIWAN_TICKER_METADATA or is_taiwan_ticker(raw_name):
+        return display_ticker_label(raw_name)
+
+    base_code_match = re.search(r"\b(\d{4,6})(?:\.TW|\.TWO)?\b", raw_name.upper())
+    if base_code_match:
+        resolved = normalize_dashboard_ticker(base_code_match.group(1))
+        if resolved:
+            label = display_ticker_label(resolved)
+            if label:
+                return label
+
+    alias_key = _normalize_holding_alias_text(raw_name)
+    matched_ticker = TAIWAN_HOLDING_ALIAS_MAP.get(alias_key)
+    if matched_ticker:
+        return display_ticker_label(matched_ticker)
+
+    for alias, ticker in TAIWAN_HOLDING_ALIAS_MAP.items():
+        if alias and (alias in alias_key or alias_key in alias):
+            return display_ticker_label(ticker)
+
+    if get_language() == "zh_TW" and not _contains_cjk_text(raw_name):
+        matched = lookup_taiwan_holding_symbol(raw_name)
+        symbol = str(matched.get("symbol", "")).upper().strip()
+        if symbol and is_taiwan_ticker(symbol):
+            zh_name = fetch_taiwan_company_name_map().get(symbol, "").strip()
+            fallback_name = str(matched.get("name", "")).strip()
+            final_name = zh_name or (fallback_name if _contains_cjk_text(fallback_name) else "")
+            if final_name:
+                register_runtime_symbol_metadata(symbol, name=final_name, market="Taiwan")
+                return f"{ticker_base_code(symbol)} {final_name}"
+
+    return raw_name
+
+
+def inject_active_etf_tracker_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .etf-tracker-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid rgba(56, 189, 248, 0.16);
+            border-radius: 20px;
+            background: linear-gradient(180deg, rgba(9, 20, 38, 0.94) 0%, rgba(5, 12, 26, 0.98) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.03),
+                0 18px 40px rgba(1, 9, 22, 0.28),
+                0 0 18px rgba(56, 189, 248, 0.06);
+        }
+        .etf-tracker-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 560px;
+        }
+        .etf-tracker-table thead th {
+            text-align: left;
+            padding: 13px 14px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            color: rgba(103, 232, 249, 0.86);
+            background: linear-gradient(180deg, rgba(14, 29, 54, 0.92) 0%, rgba(8, 18, 34, 0.98) 100%);
+            border-bottom: 1px solid rgba(56, 189, 248, 0.14);
+            white-space: nowrap;
+        }
+        .etf-tracker-table tbody td {
+            padding: 13px 14px;
+            font-size: 14px;
+            line-height: 1.45;
+            color: rgba(241, 245, 255, 0.92);
+            border-top: 1px solid rgba(255,255,255,0.05);
+            vertical-align: top;
+            background: rgba(255,255,255,0.01);
+        }
+        .etf-tracker-table tbody tr:hover td {
+            background: rgba(56, 189, 248, 0.03);
+        }
+        .etf-tracker-name {
+            font-weight: 800;
+            color: #ffffff;
+        }
+        .etf-tracker-sub {
+            margin-top: 4px;
+            font-size: 12px;
+            color: rgba(191, 210, 232, 0.76);
+        }
+        .etf-tracker-value {
+            font-weight: 800;
+            color: #ffffff;
+            white-space: nowrap;
+        }
+        .etf-tracker-delta-up { color: #aaf3d7; font-weight: 800; }
+        .etf-tracker-delta-down { color: #ffd0d0; font-weight: 800; }
+        .etf-tracker-delta-flat { color: rgba(226,232,240,.86); font-weight: 700; }
+        .etf-tracker-text {
+            color: rgba(241, 245, 255, 0.92);
+            line-height: 1.52;
+        }
+        .etf-tracker-muted {
+            margin-top: 4px;
+            font-size: 12px;
+            color: rgba(191, 210, 232, 0.76);
+            line-height: 1.45;
+        }
+        .etf-tracker-status-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            border: 1px solid rgba(56, 189, 248, 0.12);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 10px rgba(56, 189, 248, 0.04);
+        }
+        .etf-tracker-status-up {
+            background: rgba(52, 211, 153, 0.14);
+            border-color: rgba(52, 211, 153, 0.24);
+            color: #b9f5df;
+        }
+        .etf-tracker-status-down {
+            background: rgba(248, 113, 113, 0.14);
+            border-color: rgba(248, 113, 113, 0.24);
+            color: #ffd0d0;
+        }
+        .etf-tracker-status-flat {
+            background: rgba(129, 140, 248, 0.14);
+            border-color: rgba(129, 140, 248, 0.22);
+            color: #e6e8ff;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_active_etf_tracker_table(headers: list[str], rows: list[list[str]], empty_text: str) -> None:
+    if not rows:
+        st.caption(empty_text)
+        return
+    thead = "".join(f"<th>{escape(header)}</th>" for header in headers)
+    body_rows = []
+    for row in rows:
+        body_rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>")
+    st.markdown(
+        f"""
+        <div class="etf-tracker-table-wrap">
+            <table class="etf-tracker-table">
+                <thead><tr>{thead}</tr></thead>
+                <tbody>{''.join(body_rows)}</tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _active_etf_plain_cell(value: object, *, class_name: str = "etf-tracker-value") -> str:
+    return f'<div class="{class_name}">{escape(str(value))}</div>'
+
+
+def _active_etf_story_cell(title: str, subtitle: str = "") -> str:
+    title_html = f'<div class="etf-tracker-text">{escape(str(title or "—"))}</div>'
+    if subtitle:
+        title_html += f'<div class="etf-tracker-muted">{escape(str(subtitle))}</div>'
+    return title_html
+
+
+def _active_etf_score_cell(score: float) -> str:
+    if score > 0:
+        cls = "etf-tracker-delta-up"
+    elif score < 0:
+        cls = "etf-tracker-delta-down"
+    else:
+        cls = "etf-tracker-delta-flat"
+    return f'<div class="{cls}">{score:+.2f}</div>'
+
+
+def _extract_holdings_records_from_frame(frame: pd.DataFrame) -> list[dict]:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return []
+    df = frame.copy()
+
+    if df.shape[0] == 1 and df.shape[1] > 1:
+        row = pd.to_numeric(df.iloc[0], errors="coerce").dropna()
+        records = [{"name": str(col), "weight": float(val)} for col, val in row.items() if not _is_numericish_holding_token(col)]
+        normalized = _normalize_holdings_records(records)
+        if normalized:
+            return normalized
+
+    if len(df.columns) == 1 and df.index.notna().all():
+        only_col = df.columns[0]
+        series = pd.to_numeric(df[only_col], errors="coerce")
+        index_values = [str(idx).strip() for idx in series.dropna().index]
+        numeric_index_ratio = (
+            sum(1 for value in index_values if _is_numericish_holding_token(value)) / max(len(index_values), 1)
+        )
+        if numeric_index_ratio < 0.6:
+            records = [{"name": str(idx), "weight": float(val)} for idx, val in series.dropna().items()]
+            return _normalize_holdings_records(records)
+        return []
+
+    if df.shape[1] >= 2:
+        first_col, second_col = df.columns[:2]
+        first_series = df[first_col].astype(str).str.strip()
+        second_series = pd.to_numeric(df[second_col], errors="coerce")
+        if second_series.notna().sum() >= max(3, int(len(df) * 0.5)) and first_series.map(_is_numericish_holding_token).mean() < 0.5:
+            records = []
+            for idx in df.index:
+                name = str(df.at[idx, first_col]).strip()
+                weight = pd.to_numeric(pd.Series([df.at[idx, second_col]]), errors="coerce").iloc[0]
+                if name and name.lower() not in {"nan", "none"} and pd.notna(weight):
+                    records.append({"name": name, "weight": float(weight)})
+            normalized = _normalize_holdings_records(records)
+            if normalized:
+                return normalized
+
+    name_col, weight_col = _pick_name_and_weight_columns(df)
+    records: list[dict] = []
+
+    if name_col is not None and weight_col is not None:
+        weights = pd.to_numeric(df[weight_col], errors="coerce")
+        for _, row in df.assign(__weight=weights).dropna(subset=["__weight"]).iterrows():
+            name = str(row[name_col]).strip()
+            if name and name.lower() not in {"nan", "none"} and not _is_numericish_holding_token(name):
+                records.append({"name": name, "weight": float(row["__weight"])})
+        normalized = _normalize_holdings_records(records)
+        if normalized:
+            return normalized
+
+    if df.index.notna().all():
+        for idx, row in df.iterrows():
+            if _is_numericish_holding_token(idx):
+                continue
+            numeric_values = pd.to_numeric(pd.Series(row), errors="coerce").dropna()
+            if not numeric_values.empty:
+                records.append({"name": str(idx), "weight": float(numeric_values.iloc[0])})
+    return _normalize_holdings_records(records)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict:
+    ticker_upper = str(ticker).upper()
+    result = {"items": [], "source": "", "error": ""}
+    try:
+        tk = yf.Ticker(ticker_upper)
+        candidates = []
+
+        funds_data = getattr(tk, "funds_data", None)
+        if funds_data is not None:
+            for attr in ("top_holdings", "equity_holdings"):
+                try:
+                    candidate = getattr(funds_data, attr, None)
+                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                        candidates.append(candidate)
+                except Exception:
+                    pass
+
+        for attr in ("fund_top_holdings", "top_holdings"):
+            try:
+                candidate = getattr(tk, attr, None)
+                if isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                    candidates.append(candidate)
+            except Exception:
+                pass
+
+        try:
+            info = getattr(tk, "get_info", None)
+            info_payload = info() if callable(info) else getattr(tk, "info", {})
+            if isinstance(info_payload, dict):
+                holdings = info_payload.get("holdings") or info_payload.get("topHoldings")
+                if isinstance(holdings, list) and holdings:
+                    result["items"] = _normalize_holdings_records(
+                        [{"name": row.get("holdingName") or row.get("symbol") or row.get("name"), "weight": row.get("holdingPercent") or row.get("weight")} for row in holdings],
+                        max_items=max_items,
+                    )
+                    if result["items"]:
+                        result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
+                        return result
+        except Exception:
+            pass
+
+        for frame in candidates:
+            items = _extract_holdings_records_from_frame(frame)
+            if items:
+                result["items"] = items[:max_items]
+                result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
+                return result
+
+        result["error"] = "No current holdings snapshot available."
+        return result
+    except Exception as exc:
+        result["error"] = f"Holdings snapshot unavailable: {exc}"
+        return result
+
+
+def build_active_etf_holdings_changes(ticker: str, current_items: list[dict]) -> dict:
+    current_clean = _normalize_holdings_records(current_items)
+    if current_clean:
+        _upsert_active_etf_snapshot(ticker, current_clean)
+    previous_items, previous_date, previous_source = _load_previous_active_etf_snapshot(ticker)
+
+    prev_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(previous_items, max_items=50)}
+    curr_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(current_clean, max_items=50)}
+
+    deltas = []
+    for name in sorted(set(prev_map) | set(curr_map)):
+        previous = prev_map.get(name, 0.0)
+        current = curr_map.get(name, 0.0)
+        delta = current - previous
+        status = "unchanged"
+        if previous == 0 and current > 0:
+            status = "new"
+        elif current == 0 and previous > 0:
+            status = "removed"
+        elif delta > 0:
+            status = "increase"
+        elif delta < 0:
+            status = "decrease"
+        deltas.append(
+            {
+                "name": name,
+                "previous": previous,
+                "current": current,
+                "delta": delta,
+                "status": status,
+            }
+        )
+
+    adds = [row for row in deltas if row["status"] in {"new", "increase"} and row["current"] > 0]
+    cuts = [row for row in deltas if row["status"] in {"removed", "decrease"} and row["previous"] > 0]
+    adds.sort(key=lambda row: (row["status"] != "new", row["delta"]), reverse=True)
+    cuts.sort(key=lambda row: (row["status"] != "removed", abs(row["delta"])), reverse=True)
+
+    return {
+        "previous_date": previous_date,
+        "previous_source": previous_source,
+        "adds": adds[:8],
+        "cuts": cuts[:8],
+        "current_top": current_clean[:10],
+        "has_history": bool(previous_date),
+    }
+
+
+def _twse_request_json(url: str) -> dict:
+    return _fetch_json_url(url, timeout=20)
+
+
+def _parse_twse_etf_flow_payload(payload: dict) -> pd.DataFrame:
+    data = payload.get("data") or []
+    fields = payload.get("fields") or []
+    if not data or not fields:
+        return pd.DataFrame()
+    df = pd.DataFrame(data, columns=fields[: len(data[0])])
+    rename_map = {}
+    for col in df.columns:
+        col_text = str(col)
+        if "證券代號" in col_text or col_text == "代號":
+            rename_map[col] = "code"
+        elif "證券名稱" in col_text or col_text == "名稱":
+            rename_map[col] = "name"
+        elif "外陸資買進股數" in col_text or ("外資" in col_text and "買進股數" in col_text):
+            rename_map[col] = "foreign_buy"
+        elif "外陸資賣出股數" in col_text or ("外資" in col_text and "賣出股數" in col_text):
+            rename_map[col] = "foreign_sell"
+        elif "外陸資買賣超股數" in col_text or ("外資" in col_text and "買賣超股數" in col_text):
+            rename_map[col] = "foreign_net"
+        elif "投信買進股數" in col_text:
+            rename_map[col] = "trust_buy"
+        elif "投信賣出股數" in col_text:
+            rename_map[col] = "trust_sell"
+        elif "投信買賣超股數" in col_text:
+            rename_map[col] = "trust_net"
+        elif "自營商買賣超股數" in col_text and "自行買賣" not in col_text and "避險" not in col_text:
+            rename_map[col] = "dealer_net"
+        elif "自營商自行買賣買進股數" in col_text:
+            rename_map[col] = "dealer_self_buy"
+        elif "自營商自行買賣賣出股數" in col_text:
+            rename_map[col] = "dealer_self_sell"
+        elif "自營商自行買賣買賣超股數" in col_text:
+            rename_map[col] = "dealer_self_net"
+        elif "自營商避險買進股數" in col_text:
+            rename_map[col] = "dealer_hedge_buy"
+        elif "自營商避險賣出股數" in col_text:
+            rename_map[col] = "dealer_hedge_sell"
+        elif "自營商避險買賣超股數" in col_text:
+            rename_map[col] = "dealer_hedge_net"
+        elif "三大法人買賣超股數" in col_text:
+            rename_map[col] = "three_net"
+    df = df.rename(columns=rename_map)
+
+    for col in (
+        "foreign_buy", "foreign_sell", "foreign_net",
+        "trust_buy", "trust_sell", "trust_net",
+        "dealer_net", "dealer_self_buy", "dealer_self_sell", "dealer_self_net",
+        "dealer_hedge_buy", "dealer_hedge_sell", "dealer_hedge_net", "three_net",
+    ):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
+    code = ticker_base_code(ticker)
+    today = datetime.now(TW_TZ).date()
+    errors = []
+    for offset in range(0, 8):
+        trade_date = today - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={date_str}&selectType=ETF"
+        try:
+            payload = _twse_request_json(url)
+            if str(payload.get("stat", "")).startswith("很抱歉"):
+                continue
+            frame = _parse_twse_etf_flow_payload(payload)
+            if frame.empty or "code" not in frame.columns:
+                continue
+            match = frame[frame["code"].astype(str).str.strip() == code]
+            if match.empty:
+                continue
+            row = match.iloc[0].to_dict()
+            return {
+                "date": trade_date.isoformat(),
+                "record": row,
+                "source": "TWSE T86 ETF",
+                "error": "",
+            }
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+    return {"date": None, "record": {}, "source": "TWSE T86 ETF", "error": errors[-1] if errors else "No ETF institutional flow found."}
+
+
+def _tracker_status_chip(label: str, tone: str) -> str:
+    cls_map = {
+        "up": "chip-buy",
+        "down": "chip-sell",
+        "neutral": "chip-hold",
+        "info": "chip-info",
+    }
+    return f'<span class="chip {cls_map.get(tone, "chip-info")}">{escape(label)}</span>'
+
+
+def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> None:
+    if not is_taiwan_active_etf(ticker):
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    base_code = ticker_base_code(ticker)
+    tracker_label = (
+        f"{display_ticker_label(ticker)} 主動式 ETF 收盤後追蹤"
+        if lang_zh
+        else f"{display_ticker_label(ticker)} active ETF post-close tracker"
+    )
+    helper_text = (
+        "比較最新持股快照與先前快照，並搭配 ETF 本身三大法人資金流。"
+        if lang_zh
+        else "Compare the latest holdings snapshot against the previous snapshot and pair it with official institutional ETF flows."
+    )
+
+    tracker_panel_open = render_dashboard_section_panel(
+        tracker_label,
+        "target",
+        item_count=selected_count,
+        helper_base=helper_text,
+        expanded=planner_auto_expand("target", selected_count),
+        panel_key=f"active-etf-tracker::{ticker}",
+    )
+    if tracker_panel_open:
+        inject_active_etf_tracker_css()
+
+        holdings_payload = fetch_active_etf_holdings_snapshot(ticker)
+        holdings_items = holdings_payload.get("items", [])
+        holdings_model = build_active_etf_holdings_changes(ticker, holdings_items)
+        flow_payload = fetch_twse_etf_institutional_flow(ticker)
+        flow = flow_payload.get("record", {}) or {}
+
+        now_tw = datetime.now(TW_TZ)
+        timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+        update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
+
+        header_chips = [
+            _tracker_status_chip(
+                ("主動式 ETF 持股異動追蹤" if lang_zh else "Active ETF holdings tracker"),
+                "info",
+            ),
+            _tracker_status_chip(
+                (f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"),
+                "neutral",
+            ),
+            _tracker_status_chip(
+                ("收盤後 16:00+" if lang_zh else "After close 16:00+"),
+                "up",
+            ),
+        ]
+        st.markdown(
+            f"""
+            <div class="guide-shell etf-tracker-shell">
+                <div class="section-header">{'台股主動式 ETF 追蹤' if lang_zh else 'Taiwan active ETF tracker'}</div>
+                <div class="guide-title">{escape(display_ticker_label(ticker))} · {'收盤後雙面板' if lang_zh else 'post-close dual panel'}</div>
+                <div class="guide-copy">{escape(update_note)}</div>
+                <div class="chip-row">{''.join(header_chips)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        left, right = st.columns([1.2, 1.0], gap="large")
+
+        with left:
+            st.markdown(
+                f"""
+                <div class="guide-shell etf-tracker-panel-shell">
+                    <div class="section-header">{'持股異動追蹤' if lang_zh else 'Holdings change tracker'}</div>
+                    <div class="guide-copy">{escape((f"比對代號 {base_code} 最新持股快照與前次可用快照。" if lang_zh else f"Compares the latest holdings snapshot for {base_code} against the prior available snapshot."))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            previous_date = holdings_model.get("previous_date")
+            if holdings_payload.get("error") and not holdings_items:
+                st.info(
+                    "目前抓不到最新持股快照，稍後再試或確認 Yahoo Finance 是否已有基金持股資料。"
+                    if lang_zh
+                    else "The latest holdings snapshot is not currently available. Please try again later or verify that Yahoo Finance has fund holdings data for this ETF."
+                )
+            elif not previous_date:
+                top_frame = pd.DataFrame(holdings_model.get("current_top", []))
+                if top_frame.empty:
+                    st.info("目前尚無可顯示的持股快照。" if lang_zh else "No holdings snapshot is available yet.")
+                else:
+                    rows = [
+                        [
+                            build_holding_name_cell(row.get("name", "")),
+                            f'<div class="etf-tracker-value">{float(row.get("weight", 0.0)):.2f}%</div>',
+                        ]
+                        for row in holdings_model.get("current_top", [])
+                    ]
+                    st.caption(
+                        "這是首次可用快照；從下一個交易日開始，系統會顯示新增、加碼、減碼與移除。"
+                        if lang_zh
+                        else "This is the first available snapshot. Starting with the next trading day, the dashboard will show adds, increases, decreases, and removals."
+                    )
+                    render_active_etf_tracker_table(
+                        ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+                        rows,
+                        "目前尚無可顯示的持股快照。" if lang_zh else "No holdings snapshot is available yet.",
+                    )
+            else:
+                add_rows = holdings_model.get("adds", [])
+                cut_rows = holdings_model.get("cuts", [])
+                add_df = pd.DataFrame(add_rows)
+                cut_df = pd.DataFrame(cut_rows)
+
+                cols = st.columns(2, gap="medium")
+                with cols[0]:
+                    st.markdown(f"**{'新增 / 加碼' if lang_zh else 'Adds / increases'}**")
+                    if add_df.empty:
+                        st.caption("沒有明顯新增或加碼。" if lang_zh else "No notable additions or increases.")
+                    else:
+                        rows = []
+                        for _, row in add_df.iterrows():
+                            name_cell = build_holding_name_cell(row.get("name", ""))
+                            status_label = "新增" if lang_zh and row.get("status") == "new" else "加碼" if lang_zh else "New" if row.get("status") == "new" else "Increase"
+                            rows.append([
+                                name_cell,
+                                f'<span class="etf-tracker-status-pill etf-tracker-status-up">{status_label}</span>',
+                                f'<div class="etf-tracker-value">{float(row.get("current", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-value">{float(row.get("previous", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-delta-up">+{abs(float(row.get("delta", 0.0))):.2f}%</div>',
+                            ])
+                        render_active_etf_tracker_table(
+                            [
+                                "持股 / 公司" if lang_zh else "Holding / company",
+                                "狀態" if lang_zh else "Status",
+                                "目前 %" if lang_zh else "Current %",
+                                "前次 %" if lang_zh else "Previous %",
+                                "變化 %" if lang_zh else "Delta %",
+                            ],
+                            rows,
+                            "沒有明顯新增或加碼。" if lang_zh else "No notable additions or increases.",
+                        )
+                with cols[1]:
+                    st.markdown(f"**{'減碼 / 移除' if lang_zh else 'Cuts / removals'}**")
+                    if cut_df.empty:
+                        st.caption("沒有明顯減碼或移除。" if lang_zh else "No notable cuts or removals.")
+                    else:
+                        rows = []
+                        for _, row in cut_df.iterrows():
+                            name_cell = build_holding_name_cell(row.get("name", ""))
+                            status_label = "移除" if lang_zh and row.get("status") == "removed" else "減碼" if lang_zh else "Removed" if row.get("status") == "removed" else "Decrease"
+                            rows.append([
+                                name_cell,
+                                f'<span class="etf-tracker-status-pill etf-tracker-status-down">{status_label}</span>',
+                                f'<div class="etf-tracker-value">{float(row.get("current", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-value">{float(row.get("previous", 0.0)):.2f}%</div>',
+                                f'<div class="etf-tracker-delta-down">-{abs(float(row.get("delta", 0.0))):.2f}%</div>',
+                            ])
+                        render_active_etf_tracker_table(
+                            [
+                                "持股 / 公司" if lang_zh else "Holding / company",
+                                "狀態" if lang_zh else "Status",
+                                "目前 %" if lang_zh else "Current %",
+                                "前次 %" if lang_zh else "Previous %",
+                                "變化 %" if lang_zh else "Delta %",
+                            ],
+                            rows,
+                            "沒有明顯減碼或移除。" if lang_zh else "No notable cuts or removals.",
+                        )
+
+                st.caption(
+                    (f"比較基準：{previous_date} 的前次快照。資料來源：{holdings_payload.get('source') or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL}。"
+                     if lang_zh else
+                     f"Comparison baseline: previous snapshot from {previous_date}. Source: {holdings_payload.get('source') or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL}.")
+                )
+
+        with right:
+            st.markdown(
+                f"""
+                <div class="guide-shell etf-tracker-panel-shell">
+                    <div class="section-header">{'ETF 法人資金流' if lang_zh else 'ETF institutional flow'}</div>
+                    <div class="guide-copy">{escape(('使用 TWSE 官方 ETF 三大法人日資料，觀察資金流進流出 ETF 本身。' if lang_zh else 'Uses official TWSE ETF daily institutional data to track money flowing into and out of the ETF itself.'))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if flow_payload.get("error") and not flow:
+                st.info(
+                    "目前抓不到這檔 ETF 的官方法人買賣資料，可能尚未更新或今日非交易日。"
+                    if lang_zh
+                    else "Official institutional ETF flow is not available right now. The report may not be updated yet or today may be a non-trading day."
+                )
+            else:
+                three_net = _safe_float(flow.get("three_net"))
+                foreign_net = _safe_float(flow.get("foreign_net"))
+                trust_net = _safe_float(flow.get("trust_net"))
+                dealer_net = _safe_float(flow.get("dealer_net"))
+                metric_cols = st.columns(2)
+                metric_cols[0].metric(
+                    "三大法人買賣超" if lang_zh else "3-inst. net",
+                    _format_signed_integer(three_net),
+                    _format_signed_integer(three_net, unit=(" 張" if lang_zh else " sh")),
+                )
+                metric_cols[1].metric(
+                    "資料日期" if lang_zh else "Flow date",
+                    flow_payload.get("date") or "—",
+                    flow_payload.get("source", ""),
+                )
+                flow_rows = [
+                    [
+                        _active_etf_plain_cell("外資" if lang_zh else "Foreign", class_name="etf-tracker-text"),
+                        _active_etf_plain_cell(_format_signed_integer(foreign_net), class_name="etf-tracker-delta-up" if foreign_net > 0 else "etf-tracker-delta-down" if foreign_net < 0 else "etf-tracker-delta-flat"),
+                    ],
+                    [
+                        _active_etf_plain_cell("投信" if lang_zh else "Investment trust", class_name="etf-tracker-text"),
+                        _active_etf_plain_cell(_format_signed_integer(trust_net), class_name="etf-tracker-delta-up" if trust_net > 0 else "etf-tracker-delta-down" if trust_net < 0 else "etf-tracker-delta-flat"),
+                    ],
+                    [
+                        _active_etf_plain_cell("自營商" if lang_zh else "Dealer", class_name="etf-tracker-text"),
+                        _active_etf_plain_cell(_format_signed_integer(dealer_net), class_name="etf-tracker-delta-up" if dealer_net > 0 else "etf-tracker-delta-down" if dealer_net < 0 else "etf-tracker-delta-flat"),
+                    ],
+                ]
+                render_active_etf_tracker_table(
+                    ["法人別" if lang_zh else "Institution", "買賣超" if lang_zh else "Net shares"],
+                    flow_rows,
+                    "目前無法人買賣資料。" if lang_zh else "Institutional flow is unavailable right now.",
+                )
+                st.caption(
+                    "這裡追蹤的是 ETF 受益權本身的法人買賣，不是基金經理人當日成分股交易明細。"
+                    if lang_zh
+                    else "This panel tracks institutional trading in the ETF units themselves, not the portfolio manager's exact stock trades for the day."
+                )
+
+
+def _active_etf_holdings_map(items: list[dict], max_items: int = 20) -> dict[str, float]:
+    mapped: dict[str, float] = {}
+    for item in _normalize_holdings_records(items or [], max_items=max_items):
+        name = str(item.get("name", "")).strip()
+        weight = _safe_float(item.get("weight"))
+        if not name or pd.isna(weight):
+            continue
+        mapped[name] = float(weight)
+    return mapped
+
+
+
+
+
+def inject_horizon_theme_overrides():
+    st.markdown(
+        """
+        <style>
+        :root {
+            --page: #030a14;
+            --page-2: #050c1a;
+            --paper: rgba(7, 15, 30, 0.76);
+            --card: rgba(8, 19, 37, 0.78);
+            --card-soft: rgba(56, 189, 248, 0.05);
+            --ink: #edf6ff;
+            --ink-soft: #bfd2e8;
+            --ink-muted: #7e97b8;
+            --line: rgba(102, 214, 255, 0.16);
+            --line-strong: rgba(56, 189, 248, 0.42);
+            --navy: #030a14;
+            --navy-2: #050c1a;
+            --brand: #38bdf8;
+            --brand-2: #818cf8;
+            --accent: #818cf8;
+            --green: #34d399;
+            --red: #f87171;
+            --amber: #67e8f9;
+            --shadow-lg: 0 30px 90px rgba(1, 7, 18, 0.52);
+            --shadow-md: 0 18px 44px rgba(1, 9, 22, 0.34);
+        }
+
+        .stApp {
+            background:
+                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 22%),
+                radial-gradient(circle at 88% 10%, rgba(129, 140, 248, 0.18) 0%, rgba(129, 140, 248, 0) 22%),
+                radial-gradient(circle at 50% 100%, rgba(56, 189, 248, 0.08) 0%, rgba(56, 189, 248, 0) 26%),
+                linear-gradient(180deg, #030a14 0%, #04101d 48%, #050c1a 100%) !important;
+            color: var(--ink) !important;
+        }
+
+        .block-container {
+            max-width: 1500px;
+            padding-top: 1rem;
+            padding-bottom: 2.6rem;
+        }
+
+        .top-kicker {
+            color: rgba(103, 232, 249, 0.78) !important;
+            letter-spacing: .20em;
+        }
+
+        .top-intro,
+        .hero-copy,
+        .guide-copy,
+        .reference-copy,
+        .lens-copy,
+        .compare-copy,
+        .winner-copy,
+        .catalyst-copy,
+        .alert-copy,
+        .lab-copy,
+        .trend-sub,
+        .chart-copy,
+        .explorer-nav-copy,
+        .news-board-copy,
+        .global-indicator-copy,
+        .target-watch-copy,
+        .scenario-intro-copy,
+        .planner-decision-copy,
+        .footer-note,
+        .disclaimer {
+            color: var(--ink-soft) !important;
+        }
+
+        h1, h2, h3, h4, h5, h6,
+        .hero-title, .guide-title, .reference-title, .lens-title, .compare-title,
+        .winner-title, .catalyst-title, .alert-title, .lab-title, .trend-title,
+        .chart-title, .explorer-nav-title, .lead-title, .highlight-title,
+        .brief-headline, .story-row-title, .compare-card-title, .compare-card-price,
+        .winner-main-title, .compare-table-ticker, .compare-table-value,
+        .winner-mini-value, .catalyst-value, .alert-value, .lab-value,
+        .explorer-nav-panel-value, .guide-head, .reference-head, .lens-head,
+        .compare-hero-value, .lead-panel-value, .mini-candle-name,
+        .crypto-main-number, .crypto-mini-value, .global-indicator-main-number,
+        .global-indicator-title, .target-watch-value {
+            color: var(--ink) !important;
+        }
+
+        section[data-testid="stSidebar"] {
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0) 26%),
+                radial-gradient(circle at top right, rgba(129, 140, 248, 0.14) 0%, rgba(129, 140, 248, 0) 24%),
+                linear-gradient(180deg, rgba(3, 10, 20, 0.98) 0%, rgba(5, 12, 26, 0.995) 100%) !important;
+            border-right: 1px solid rgba(56, 189, 248, 0.12);
+            box-shadow: inset -1px 0 0 rgba(129, 140, 248, 0.05);
+        }
+
+        section[data-testid="stSidebar"] * {
+            color: var(--ink) !important;
+        }
+
+        .sidebar-auth-shell,
+        .editorial-hero, .guide-shell, .lens-shell, .compare-shell, .reference-shell,
+        .winner-shell, .catalyst-shell, .alert-shell, .lab-shell, .explorer-nav-shell,
+        .trend-shell, .compare-table-shell, .compare-chart-shell, .chart-shell,
+        .story-stream-shell, .news-board-shell, .lead-story, .crypto-card,
+        .news-brief-card, .compare-card, .mini-candle-card,
+        .etf-tracker-shell, .etf-tracker-panel-shell,
+        .global-indicator-shell, .target-watch-headline, .target-watch-card,
+        div[data-testid="stMetric"] {
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(180deg, rgba(7, 15, 30, 0.86) 0%, rgba(5, 12, 26, 0.90) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.16) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.03),
+                0 0 0 1px rgba(56, 189, 248, 0.05),
+                0 18px 44px rgba(1, 9, 22, 0.34),
+                0 0 24px rgba(56, 189, 248, 0.07) !important;
+            backdrop-filter: blur(16px);
+        }
+
+        .sidebar-auth-shell::after,
+        .editorial-hero::after, .guide-shell::after, .lens-shell::after, .compare-shell::after,
+        .reference-shell::after, .winner-shell::after, .catalyst-shell::after, .alert-shell::after,
+        .lab-shell::after, .explorer-nav-shell::after, .trend-shell::after, .chart-shell::after,
+        .news-board-shell::after, .lead-story::after, .crypto-card::after,
+        .global-indicator-shell::after, .etf-tracker-shell::after, .etf-tracker-panel-shell::after {
+            content: "";
+            position: absolute;
+            right: -90px;
+            top: -82px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 72%);
+            pointer-events: none;
+        }
+
+        .sidebar-auth-shell::before,
+        .editorial-hero::before, .guide-shell::before, .lens-shell::before, .compare-shell::before,
+        .reference-shell::before, .winner-shell::before, .catalyst-shell::before, .alert-shell::before,
+        .lab-shell::before, .explorer-nav-shell::before, .trend-shell::before, .chart-shell::before,
+        .news-board-shell::before, .lead-story::before, .crypto-card::before,
+        .global-indicator-shell::before, .etf-tracker-shell::before, .etf-tracker-panel-shell::before {
+            content: "";
+            position: absolute;
+            left: -76px;
+            bottom: -88px;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(129, 140, 248, 0.12) 0%, rgba(129, 140, 248, 0) 74%);
+            pointer-events: none;
+        }
+
+        .guide-card, .reference-card, .compare-hero-tile, .winner-mini,
+        .catalyst-box, .alert-box, .lab-box, .lens-card, .explorer-nav-panel,
+        .compare-table-row, .highlight-shell, .highlight-row, .story-row, .prob-box {
+            position: relative;
+            overflow: hidden;
+            border-radius: 22px;
+            padding: 18px 18px 16px 18px;
+            background:
+                linear-gradient(180deg, rgba(10, 22, 42, 0.94) 0%, rgba(6, 14, 28, 0.96) 100%) !important;
+            border: 1px solid rgba(102, 214, 255, 0.14) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.03),
+                0 16px 34px rgba(1, 7, 18, 0.32),
+                0 0 18px rgba(56, 189, 248, 0.06) !important;
+            backdrop-filter: blur(14px);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+            min-height: 100%;
+        }
+
+        .guide-card:hover, .reference-card:hover, .compare-hero-tile:hover, .winner-mini:hover,
+        .catalyst-box:hover, .alert-box:hover, .lab-box:hover, .lens-card:hover,
+        .explorer-nav-panel:hover, .compare-card:hover, .compare-table-row:hover,
+        .mini-candle-card:hover, .story-row:hover, .highlight-row:hover, .target-watch-headline:hover,
+        .target-watch-card:hover {
+            transform: translateY(-3px);
+            border-color: rgba(56, 189, 248, 0.30) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 20px 42px rgba(1, 9, 22, 0.42),
+                0 0 28px rgba(56, 189, 248, 0.10) !important;
+        }
+
+        .guide-grid {
+            counter-reset: horizon-step;
+        }
+
+        .guide-card .guide-label {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: #67e8f9 !important;
+            letter-spacing: .16em;
+        }
+
+        .guide-card .guide-label::before {
+            counter-increment: horizon-step;
+            content: counter(horizon-step);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.24) 0%, rgba(129, 140, 248, 0.26) 100%);
+            border: 1px solid rgba(102, 214, 255, 0.22);
+            color: #e6f8ff;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: normal;
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.12);
+        }
+
+        .guide-card::after {
+            content: "↗";
+            position: absolute;
+            right: 18px;
+            top: 16px;
+            color: rgba(103, 232, 249, 0.52);
+            font-size: 18px;
+            font-weight: 900;
+        }
+
+        .hero-kicker, .guide-label, .section-header, .reference-label, .lens-label,
+        .compare-hero-label, .compare-card-kicker, .catalyst-label, .alert-label,
+        .lab-label, .winner-mini-label, .explorer-nav-kicker, .explorer-nav-panel-label,
+        .side-eyebrow, .side-group-label, .lead-kicker, .lead-panel-label,
+        .compare-stat-label, .crypto-mini-label, .prob-label, .target-watch-label,
+        .target-watch-board-label, .global-indicator-mini-label {
+            color: #67e8f9 !important;
+            letter-spacing: .18em;
+            text-transform: uppercase;
+        }
+
+        .side-group-label {
+            display: block;
+            margin: 18px 0 10px 0;
+            padding: 12px 0 6px 0;
+            font-size: 10.5px;
+            font-weight: 900;
+            border-top: 1px solid rgba(56, 189, 248, 0.14);
+            color: rgba(103, 232, 249, 0.82) !important;
+        }
+
+        section[data-testid="stSidebar"] .stCaption,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] label {
+            color: rgba(191, 210, 232, 0.86) !important;
+        }
+
+        section[data-testid="stSidebar"] [data-baseweb="select"] > div,
+        section[data-testid="stSidebar"] [data-baseweb="input"] > div,
+        section[data-testid="stSidebar"] .stTextInput > div > div,
+        .stMultiSelect [data-baseweb="select"] > div,
+        .stSelectbox [data-baseweb="select"] > div,
+        .stTextInput > div > div,
+        .stNumberInput > div > div {
+            background: linear-gradient(180deg, rgba(9, 21, 39, 0.96) 0%, rgba(5, 13, 26, 0.98) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.18) !important;
+            border-radius: 18px !important;
+            min-height: 52px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 12px 26px rgba(1, 7, 18, 0.24);
+            transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+        }
+
+        section[data-testid="stSidebar"] [data-baseweb="select"] > div:hover,
+        section[data-testid="stSidebar"] [data-baseweb="input"] > div:hover,
+        section[data-testid="stSidebar"] .stTextInput > div > div:hover,
+        .stMultiSelect [data-baseweb="select"] > div:hover,
+        .stSelectbox [data-baseweb="select"] > div:hover,
+        .stTextInput > div > div:hover,
+        .stNumberInput > div > div:hover {
+            border-color: rgba(56, 189, 248, 0.30) !important;
+            box-shadow: 0 16px 32px rgba(1, 9, 22, 0.32), 0 0 20px rgba(56, 189, 248, 0.08);
+            transform: translateY(-1px);
+        }
+
+        .stMultiSelect [data-baseweb="tag"],
+        .stSelectbox [data-baseweb="tag"],
+        section[data-testid="stSidebar"] [data-baseweb="tag"],
+        .hero-chip, .chip, .compare-table-chip, .explorer-nav-chip, .small-pill, .impact-tag,
+        .pro-tag, .lens-alert-chip, .side-lens-chip, .global-indicator-pill, .target-watch-chip,
+        .planner-decision-chip, .planner-decision-action-pill, .scenario-summary-chip {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.14) 0%, rgba(129, 140, 248, 0.16) 100%) !important;
+            border: 1px solid rgba(102, 214, 255, 0.18) !important;
+            color: #e7f8ff !important;
+            border-radius: 999px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 0 12px rgba(56, 189, 248, 0.05);
+        }
+
+        .chip-buy, .crypto-buy, .pro-tag-up, .lens-alert-bull, .highlight-up, .winner-badge {
+            background: rgba(52, 211, 153, 0.14) !important;
+            border-color: rgba(52, 211, 153, 0.24) !important;
+            color: #b9f5df !important;
+        }
+
+        .chip-hold, .crypto-hold, .pro-tag-neutral, .lens-alert-neutral, .highlight-mixed {
+            background: rgba(129, 140, 248, 0.12) !important;
+            border-color: rgba(129, 140, 248, 0.22) !important;
+            color: #e3e6ff !important;
+        }
+
+        .chip-sell, .crypto-sell, .pro-tag-down, .lens-alert-bear, .highlight-down {
+            background: rgba(248, 113, 113, 0.14) !important;
+            border-color: rgba(248, 113, 113, 0.22) !important;
+            color: #ffd3d3 !important;
+        }
+
+        section[data-testid="stSidebar"] .stButton > button,
+        .stButton > button {
+            border-radius: 16px !important;
+            border: 1px solid rgba(56, 189, 248, 0.22) !important;
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 34%),
+                linear-gradient(135deg, rgba(10, 23, 43, 0.98) 0%, rgba(7, 15, 30, 0.98) 100%) !important;
+            color: #eef9ff !important;
+            font-weight: 800 !important;
+            box-shadow: 0 14px 30px rgba(1, 9, 22, 0.28), 0 0 18px rgba(56, 189, 248, 0.06);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        }
+
+        section[data-testid="stSidebar"] .stButton > button:hover,
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            border-color: rgba(56, 189, 248, 0.34) !important;
+            box-shadow: 0 18px 36px rgba(1, 9, 22, 0.34), 0 0 22px rgba(56, 189, 248, 0.09);
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+            background: rgba(6, 14, 28, 0.68) !important;
+            border: 1px solid rgba(56, 189, 248, 0.14) !important;
+            border-radius: 24px;
+            padding: 10px;
+            box-shadow: 0 16px 34px rgba(1, 9, 22, 0.28) !important;
+            backdrop-filter: blur(14px);
+            margin-bottom: 12px;
+        }
+
+        .stTabs [data-baseweb="tab-list"]::before {
+            color: rgba(103, 232, 249, 0.72) !important;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            position: relative;
+            background: rgba(255,255,255,0.03) !important;
+            border: 1px solid rgba(102, 214, 255, 0.08) !important;
+            border-radius: 999px;
+            color: rgba(229, 241, 255, 0.88) !important;
+            font-weight: 800;
+            padding: 12px 18px;
+            min-height: 50px;
+            box-shadow: none !important;
+            transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease;
+        }
+
+        .stTabs [data-baseweb="tab"]:hover {
+            transform: translateY(-1px);
+            border-color: rgba(56, 189, 248, 0.22) !important;
+            background: rgba(255,255,255,0.05) !important;
+            box-shadow: 0 12px 22px rgba(1, 9, 22, 0.22), 0 0 16px rgba(56, 189, 248, 0.05) !important;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0) 36%),
+                linear-gradient(180deg, rgba(15, 28, 52, 0.98) 0%, rgba(8, 17, 34, 0.98) 100%) !important;
+            color: #ffffff !important;
+            border-color: rgba(56, 189, 248, 0.28) !important;
+            box-shadow:
+                0 16px 32px rgba(1, 9, 22, 0.30),
+                0 0 24px rgba(56, 189, 248, 0.08),
+                inset 0 -2px 0 rgba(56, 189, 248, 0.92) !important;
+        }
+
+        .stTabs [aria-selected="true"]::after {
+            content: "";
+            position: absolute;
+            left: 18px;
+            right: 18px;
+            bottom: 8px;
+            height: 2px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(56, 189, 248, 0.0) 0%, rgba(56, 189, 248, 1) 20%, rgba(129, 140, 248, 1) 80%, rgba(129, 140, 248, 0.0) 100%);
+            box-shadow: 0 0 14px rgba(56, 189, 248, 0.34);
+        }
+
+        .stTabs [aria-selected="true"] * {
+            color: #ffffff !important;
+        }
+
+        div[data-testid="stMetricLabel"] > div,
+        div[data-testid="stMetricLabel"] label,
+        [data-testid="stMetricLabel"] {
+            color: rgba(103, 232, 249, 0.76) !important;
+        }
+
+        div[data-testid="stMetricValue"] > div,
+        [data-testid="stMetricValue"] {
+            color: #f8fbff !important;
+        }
+
+        div[data-testid="stMetricDelta"] > div,
+        [data-testid="stMetricDelta"] {
+            color: #67e8f9 !important;
+        }
+
+        .impact-meter, .row-meter, .impact-bar-wrap, .catalyst-meter {
+            background: rgba(255,255,255,.08);
+        }
+
+        .impact-pos, .row-meter-fill-up, .impact-bar-pos, .catalyst-meter-fill {
+            background: linear-gradient(90deg, #34d399, #38bdf8);
+        }
+
+        .impact-neg, .row-meter-fill-down, .impact-bar-neg {
+            background: linear-gradient(90deg, #f87171, #fb7185);
+        }
+
+        .compare-table-head,
+        .compare-table-sub,
+        .compare-table-note,
+        .mini-candle-sub,
+        .target-watch-sub,
+        .target-watch-note,
+        .target-watch-warning,
+        .target-watch-headline-meta,
+        .target-watch-empty,
+        .global-indicator-copy,
+        .global-indicator-mini-value {
+            color: var(--ink-soft) !important;
+        }
+
+        .compare-table-row,
+        .target-watch-headline,
+        .target-watch-card {
+            background: linear-gradient(180deg, rgba(9, 21, 39, 0.96) 0%, rgba(5, 13, 26, 0.98) 100%) !important;
+            border-color: rgba(56, 189, 248, 0.14) !important;
+        }
+
+        a.inline-link, .brief-link {
+            color: var(--brand) !important;
+        }
+
+        a.inline-link:hover, .brief-link:hover {
+            color: #8fe4ff !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> None:
+    is_light = theme_mode == "Light Horizon"
+    if is_light:
+        theme_vars = """
+        :root {
+            --page: #eff7ff;
+            --page-2: #f8fbff;
+            --paper: rgba(255, 255, 255, 0.84);
+            --card: rgba(255, 255, 255, 0.90);
+            --card-soft: rgba(56, 189, 248, 0.08);
+            --ink: #091423;
+            --ink-soft: #35506f;
+            --ink-muted: #59779c;
+            --line: rgba(56, 189, 248, 0.22);
+            --line-strong: rgba(56, 189, 248, 0.42);
+            --navy: #eff7ff;
+            --navy-2: #f8fbff;
+            --brand: #0ea5e9;
+            --brand-2: #6366f1;
+            --accent: #6366f1;
+            --green: #10b981;
+            --red: #fb7185;
+            --amber: #06b6d4;
+            --shadow-lg: 0 30px 90px rgba(56, 189, 248, 0.12);
+            --shadow-md: 0 18px 44px rgba(56, 189, 248, 0.10);
+        }
+
+        .stApp {
+            background:
+                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0) 24%),
+                radial-gradient(circle at 88% 10%, rgba(129, 140, 248, 0.12) 0%, rgba(129, 140, 248, 0) 24%),
+                linear-gradient(180deg, #eff7ff 0%, #f8fbff 100%) !important;
+            color: var(--ink) !important;
+        }
+
+        section[data-testid="stSidebar"] {
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0) 30%),
+                radial-gradient(circle at top right, rgba(129, 140, 248, 0.14) 0%, rgba(129, 140, 248, 0) 26%),
+                linear-gradient(180deg, rgba(237, 247, 255, 0.97) 0%, rgba(248, 251, 255, 0.99) 100%) !important;
+            border-right: 1px solid rgba(56, 189, 248, 0.16);
+            box-shadow: inset -1px 0 0 rgba(129, 140, 248, 0.06);
+        }
+
+        .sidebar-auth-shell,
+        .editorial-hero, .guide-shell, .lens-shell, .compare-shell, .reference-shell,
+        .winner-shell, .catalyst-shell, .alert-shell, .lab-shell, .explorer-nav-shell,
+        .trend-shell, .compare-table-shell, .compare-chart-shell, .chart-shell,
+        .story-stream-shell, .news-board-shell, .lead-story, .crypto-card,
+        .news-brief-card, .compare-card, .mini-candle-card,
+        .etf-tracker-shell, .etf-tracker-panel-shell,
+        .global-indicator-shell, .target-watch-headline, .target-watch-card,
+        div[data-testid="stMetric"] {
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 250, 255, 0.92) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.18) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.60),
+                0 0 0 1px rgba(56, 189, 248, 0.06),
+                0 16px 36px rgba(56, 189, 248, 0.10),
+                0 0 20px rgba(56, 189, 248, 0.06) !important;
+        }
+
+        .guide-card, .reference-card, .compare-hero-tile, .winner-mini,
+        .catalyst-box, .alert-box, .lab-box, .lens-card, .explorer-nav-panel,
+        .compare-table-row, .highlight-shell, .highlight-row, .story-row, .prob-box {
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(246,250,255,0.96) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.14) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.60),
+                0 16px 34px rgba(56, 189, 248, 0.08),
+                0 0 18px rgba(56, 189, 248, 0.05) !important;
+        }
+
+        section[data-testid="stSidebar"] * {
+            color: #091423 !important;
+        }
+
+        section[data-testid="stSidebar"] .stCaption,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] label,
+        .top-intro,
+        .hero-copy,
+        .guide-copy,
+        .reference-copy,
+        .lens-copy,
+        .compare-copy,
+        .winner-copy,
+        .catalyst-copy,
+        .alert-copy,
+        .lab-copy,
+        .trend-sub,
+        .chart-copy,
+        .explorer-nav-copy,
+        .news-board-copy,
+        .global-indicator-copy,
+        .target-watch-copy,
+        .scenario-intro-copy,
+        .planner-decision-copy,
+        .footer-note,
+        .disclaimer {
+            color: #35506f !important;
+        }
+
+        .hero-chip, .chip, .compare-table-chip, .explorer-nav-chip, .small-pill, .impact-tag, .pro-tag, .lens-alert-chip {
+            background: linear-gradient(180deg, rgba(56,189,248,0.10) 0%, rgba(255,255,255,0.92) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.18) !important;
+            color: #0f172a !important;
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            background: rgba(255,255,255,0.72) !important;
+            border-bottom: 1px solid rgba(56,189,248,0.16) !important;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            color: #35506f !important;
+        }
+
+        .stTabs [data-baseweb="tab"][aria-selected="true"] {
+            color: #0f172a !important;
+        }
+
+        .side-hero,
+        .editorial-hero.hero-neon-bar,
+        .active-etf-hero.hero-neon-bar {
+            color: #000000 !important;
+        }
+
+        .stApp,
+        .stApp p,
+        .stApp span,
+        .stApp label,
+        .stApp li,
+        .stApp div,
+        .stMarkdown,
+        .stMarkdown p,
+        .stCaption,
+        .top-kicker,
+        .top-intro,
+        .hero-title,
+        .hero-copy,
+        .guide-title,
+        .guide-copy,
+        .reference-title,
+        .reference-copy,
+        .lens-title,
+        .lens-copy,
+        .compare-title,
+        .compare-copy,
+        .winner-title,
+        .winner-copy,
+        .catalyst-title,
+        .catalyst-copy,
+        .alert-title,
+        .alert-copy,
+        .lab-title,
+        .lab-copy,
+        .trend-title,
+        .trend-sub,
+        .chart-title,
+        .chart-copy,
+        .explorer-nav-title,
+        .explorer-nav-copy,
+        .news-board-copy,
+        .global-indicator-title,
+        .global-indicator-copy,
+        .target-watch-title,
+        .target-watch-copy,
+        .scenario-intro-copy,
+        .planner-decision-copy,
+        .footer-note,
+        .disclaimer,
+        .hero-chip,
+        .chip,
+        .compare-table-chip,
+        .explorer-nav-chip,
+        .small-pill,
+        .impact-tag,
+        .pro-tag,
+        .lens-alert-chip,
+        .hero-kicker,
+        .guide-label,
+        .section-header,
+        .reference-label,
+        .lens-label,
+        .compare-hero-label,
+        .compare-card-kicker,
+        .catalyst-label,
+        .alert-label,
+        .lab-label,
+        .winner-mini-label,
+        .explorer-nav-kicker,
+        .explorer-nav-panel-label,
+        .side-eyebrow,
+        .side-group-label,
+        .lead-kicker,
+        .lead-panel-label,
+        .compare-stat-label,
+        .crypto-mini-label,
+        .prob-label,
+        .target-watch-label,
+        .target-watch-board-label,
+        .global-indicator-mini-label,
+        .guide-head,
+        .reference-head,
+        .lens-head,
+        .winner-main-title,
+        .compare-card-title,
+        .compare-card-price,
+        .compare-table-ticker,
+        .compare-table-value,
+        .winner-mini-value,
+        .catalyst-value,
+        .alert-value,
+        .lab-value,
+        .explorer-nav-panel-value,
+        .compare-hero-value,
+        .lead-panel-value,
+        .mini-candle-name,
+        .crypto-main-number,
+        .crypto-mini-value,
+        .global-indicator-main-number,
+        .target-watch-value,
+        div[data-testid="stMetric"] label,
+        div[data-testid="stMetric"] [data-testid="stMetricLabel"],
+        div[data-testid="stMetric"] [data-testid="stMetricValue"],
+        div[data-testid="stMetric"] [data-testid="stMetricDelta"],
+        .stTabs [data-baseweb="tab"],
+        .stTabs [data-baseweb="tab"] *,
+        .stButton button,
+        .stDownloadButton button,
+        .stToggle label,
+        .stCheckbox label,
+        .stRadio label,
+        .stSelectbox label,
+        .stMultiSelect label,
+        .stTextInput label,
+        .stNumberInput label,
+        .stTextArea label,
+        .stDateInput label,
+        [data-baseweb="select"] *,
+        [data-baseweb="input"] *,
+        .stDataFrame *,
+        table *,
+        th,
+        td {
+            color: #000000 !important;
+        }
+
+        .stApp a,
+        .stApp a:visited,
+        .stApp a:hover,
+        .stApp a:active {
+            color: #000000 !important;
+        }
+
+        .guide-card .guide-label::before,
+        .guide-card::after {
+            color: #000000 !important;
+        }
+        """
+    else:
+        theme_vars = """
+        :root {
+            --page: #030a14;
+            --page-2: #050c1a;
+            --paper: rgba(7, 15, 30, 0.76);
+            --card: rgba(8, 19, 37, 0.78);
+            --card-soft: rgba(56, 189, 248, 0.05);
+            --ink: #edf6ff;
+            --ink-soft: #bfd2e8;
+            --ink-muted: #7e97b8;
+            --line: rgba(102, 214, 255, 0.16);
+            --line-strong: rgba(56, 189, 248, 0.42);
+            --navy: #030a14;
+            --navy-2: #050c1a;
+            --brand: #38bdf8;
+            --brand-2: #818cf8;
+            --accent: #818cf8;
+            --green: #34d399;
+            --red: #f87171;
+            --amber: #67e8f9;
+            --shadow-lg: 0 30px 90px rgba(1, 7, 18, 0.52);
+            --shadow-md: 0 18px 44px rgba(1, 9, 22, 0.34);
+        }
+
+        .stApp {
+            background:
+                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0) 24%),
+                radial-gradient(circle at 88% 10%, rgba(129, 140, 248, 0.20) 0%, rgba(129, 140, 248, 0) 24%),
+                radial-gradient(circle at 50% 100%, rgba(56, 189, 248, 0.10) 0%, rgba(56, 189, 248, 0) 28%),
+                linear-gradient(180deg, #030a14 0%, #04101d 48%, #050c1a 100%) !important;
+            color: var(--ink) !important;
+        }
+        """
+
+    st.markdown(
+        f"""
+        <style>
+        {theme_vars}
+
+        .side-hero,
+        .editorial-hero.hero-neon-bar,
+        .active-etf-hero.hero-neon-bar {{
+            position: relative;
+            overflow: hidden;
+            border-radius: 28px;
+            border: 1px solid rgba(56, 189, 248, 0.22) !important;
+            background:
+                linear-gradient(135deg, rgba(4, 16, 29, 0.94) 0%, rgba(5, 12, 26, 0.88) 38%, rgba(12, 25, 48, 0.92) 100%) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 20px 48px rgba(1, 9, 22, 0.34),
+                0 0 0 1px rgba(56, 189, 248, 0.08),
+                0 0 32px rgba(56, 189, 248, 0.12) !important;
+        }}
+
+        .side-hero::before,
+        .editorial-hero.hero-neon-bar::before,
+        .active-etf-hero.hero-neon-bar::before {{
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at 10% 18%, rgba(56, 189, 248, 0.22) 0%, rgba(56, 189, 248, 0) 28%),
+                radial-gradient(circle at 86% 12%, rgba(129, 140, 248, 0.22) 0%, rgba(129, 140, 248, 0) 28%),
+                linear-gradient(90deg, rgba(56, 189, 248, 0.10) 0%, rgba(129, 140, 248, 0.08) 100%);
+            pointer-events: none;
+        }}
+
+        .side-hero::after,
+        .editorial-hero.hero-neon-bar::after,
+        .active-etf-hero.hero-neon-bar::after {{
+            content: "";
+            position: absolute;
+            left: 18px;
+            right: 18px;
+            top: 0;
+            height: 2px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(56,189,248,0.0) 0%, rgba(56,189,248,0.90) 18%, rgba(129,140,248,0.90) 72%, rgba(129,140,248,0.0) 100%);
+            box-shadow: 0 0 24px rgba(56, 189, 248, 0.50);
+        }}
+
+        .editorial-hero.hero-neon-bar .hero-title,
+        .active-etf-hero.hero-neon-bar .guide-title,
+        .side-hero .side-title {{
+            text-shadow: 0 0 22px rgba(56, 189, 248, 0.16);
+        }}
+
+        .editorial-hero.hero-neon-bar .hero-chip,
+        .active-etf-hero.hero-neon-bar .chip,
+        .side-hero .side-lens-chip,
+        .side-hero .chip {{
+            background: linear-gradient(180deg, rgba(56, 189, 248, 0.16) 0%, rgba(8, 19, 37, 0.40) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.24) !important;
+            color: #e6f8ff !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px rgba(56, 189, 248, 0.10);
+        }}
+
+        .side-group-label {{
+            border-top: 1px solid rgba(45, 212, 191, 0.22);
+            color: rgba(94, 234, 212, 0.92) !important;
+        }}
+
+        .stTabs [data-baseweb="tab-highlight"] {{
+            background: linear-gradient(90deg, rgba(56,189,248,0.86) 0%, rgba(129,140,248,0.90) 100%) !important;
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.34);
+            height: 3px !important;
+            border-radius: 999px !important;
+        }}
+
+        .stTabs [data-baseweb="tab"][aria-selected="true"] {{
+            box-shadow: inset 0 -2px 0 rgba(56, 189, 248, 0.0), 0 8px 18px rgba(56, 189, 248, 0.06);
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+
 def generate_dashboard():
     init_auth_db()
     with st.sidebar:
@@ -14369,6 +16383,9 @@ def generate_dashboard():
     inject_css()
     inject_premium_overrides()
     inject_localization_overrides()
+    inject_horizon_theme_overrides()
+    inject_horizon_theme_mode_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
+    inject_layout_profile_overrides()
 
     with st.sidebar:
         current_lang = st.session_state.get("dashboard_language", "English")
@@ -14378,6 +16395,19 @@ def generate_dashboard():
             index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
         )
         st.session_state["dashboard_language"] = selected_lang
+
+        current_theme_mode = st.session_state.get("dashboard_theme_mode", "Dark Horizon")
+        if current_theme_mode not in THEME_MODE_OPTIONS:
+            current_theme_mode = "Dark Horizon"
+        selected_theme_mode = st.selectbox(
+            t("theme_mode"),
+            options=list(THEME_MODE_OPTIONS.keys()),
+            index=list(THEME_MODE_OPTIONS.keys()).index(current_theme_mode),
+            format_func=theme_mode_label,
+        )
+        st.session_state["dashboard_theme_mode"] = selected_theme_mode
+        st.caption(t("theme_mode_note"))
+        inject_horizon_theme_mode_overrides(selected_theme_mode)
 
         current_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
         if current_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
@@ -14390,6 +16420,18 @@ def generate_dashboard():
         )
         st.session_state["dashboard_mode"] = selected_dashboard_mode
         st.caption(t("dashboard_mode_note"))
+
+        current_layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
+        if current_layout_mode not in DASHBOARD_LAYOUT_OPTIONS:
+            current_layout_mode = "Advanced"
+        selected_layout_mode = st.selectbox(
+            dashboard_layout_kicker(),
+            options=DASHBOARD_LAYOUT_OPTIONS,
+            index=DASHBOARD_LAYOUT_OPTIONS.index(current_layout_mode),
+            format_func=dashboard_layout_label,
+        )
+        st.session_state["dashboard_layout_mode"] = selected_layout_mode
+        st.caption(dashboard_layout_note())
 
         current_device_control = st.session_state.get("dashboard_device_control_mode", "Auto detect")
         if current_device_control not in DEVICE_CONTROL_OPTIONS:
@@ -14516,6 +16558,8 @@ def generate_dashboard():
             {
                 "mode": selected_dashboard_mode,
                 "lang": selected_lang,
+                "theme": selected_theme_mode,
+                "layout": selected_layout_mode,
                 "devicectl": selected_device_control,
                 "device": selected_device_mode,
                 "news": selected_news_mode,
@@ -14569,38 +16613,31 @@ def generate_dashboard():
             st.warning(t("please_select_ticker"))
         return
 
+    layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
+
     with st.spinner(t("loading_data")):
         daily_data = fetch_daily_data(dashboard_tickers, period, interval)
         intraday_data = fetch_intraday_data(dashboard_tickers)
-        global_reference_data = fetch_global_reference_data(period, interval)
-        global_reference_quotes = fetch_live_reference_quotes(tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES))
 
     if daily_data is None or daily_data.empty:
         st.error(t("no_market_data"))
         return
 
     if dashboard_mode == "Active ETF Lab":
-        render_active_etf_lab_dashboard(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
+        render_active_etf_lab_dashboard(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta=lens_meta,
+            layout_mode=layout_mode,
+        )
     else:
-        global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
-        render_global_market_indicator(global_indicator)
-        if any(is_taiwan_ticker(ticker) for ticker in dashboard_tickers):
-            render_taiwan_market_macro_strip(force_show=True)
-        render_section_guide()
-        render_active_trend_lens(lens_meta)
-
-        render_stock_explorer_nav(dashboard_tickers)
-        render_global_scenario_planning_stack(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
-        render_precomparison_target_and_brief_groups(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
-        render_comparison_section(daily_data, intraday_data, dashboard_tickers, lens_meta=lens_meta)
-
-        tabs = st.tabs([display_ticker_label(ticker) for ticker in dashboard_tickers])
-        for tab, ticker in zip(tabs, dashboard_tickers):
-            with tab:
-                render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(dashboard_tickers))
-
-        render_html_block(
-            f'<div class="footer-note">{t("footer_note")}</div>'
+        render_general_market_dashboard_layout(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta=lens_meta,
+            layout_mode=layout_mode,
         )
 
 
