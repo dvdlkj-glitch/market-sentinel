@@ -495,6 +495,696 @@ def render_ticker_workspace_tabs(
             render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(tickers))
 
 
+
+LEO_TRANSLATIONS_EN = {
+    "leo_satellite_section_title": "Low-Earth Orbit supply chain",
+    "leo_satellite_section_copy": "A Taiwan-focused ranking board built from your low-earth orbit supply-chain list. It ranks names by the latest upward move first, then layers in the dashboard's existing news judgment for the current top ten.",
+    "leo_satellite_selection_note": "Scope: your curated Taiwan low-earth orbit supply-chain list",
+    "leo_satellite_rank_note": "Ranking logic: latest gain first, then trend strength, then 1Y leadership. News judgment is added only after the top ten are selected.",
+    "leo_satellite_total_names": "Supply-chain names",
+    "leo_satellite_rising_names": "Latest gainers",
+    "leo_satellite_bullish_news": "Bullish news tilt",
+    "leo_satellite_last_sync": "Last sync",
+    "leo_satellite_table_title": "Current top 10 low-earth orbit supply-chain names",
+    "leo_satellite_group_col": "Segment",
+    "leo_satellite_company_col": "Company",
+    "leo_satellite_last_price_col": "Last price",
+    "leo_satellite_move_col": "Latest move",
+    "leo_satellite_trend_col": "Trend",
+    "leo_satellite_signal_col": "Signal",
+    "leo_satellite_news_col": "News tilt",
+    "leo_satellite_story_col": "Lead story",
+    "leo_satellite_no_story": "No stock-specific news returned yet.",
+    "leo_satellite_empty": "No usable low-earth orbit supply-chain price data was returned right now.",
+    "leo_satellite_topline": "Traditional Chinese main page special focus",
+}
+
+LEO_TRANSLATIONS_ZH = {
+    "leo_satellite_section_title": "低軌衛星供應鏈",
+    "leo_satellite_section_copy": "依你指定的低軌衛星供應鏈名單，先用最新漲幅與趨勢強度做排序，再把 Dashboard 原有的新聞判別邏輯帶入目前前十名。",
+    "leo_satellite_selection_note": "範圍：你指定的台灣低軌衛星供應鏈名單",
+    "leo_satellite_rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別只套用到目前前十名。",
+    "leo_satellite_total_names": "供應鏈名單",
+    "leo_satellite_rising_names": "最新上漲家數",
+    "leo_satellite_bullish_news": "前十名偏多新聞",
+    "leo_satellite_last_sync": "更新基準",
+    "leo_satellite_table_title": "目前低軌衛星供應鏈前十名",
+    "leo_satellite_group_col": "產業別",
+    "leo_satellite_company_col": "公司",
+    "leo_satellite_last_price_col": "最新價",
+    "leo_satellite_move_col": "最新變動",
+    "leo_satellite_trend_col": "趨勢",
+    "leo_satellite_signal_col": "訊號",
+    "leo_satellite_news_col": "新聞傾向",
+    "leo_satellite_story_col": "主導新聞",
+    "leo_satellite_no_story": "目前還沒有回傳該股專屬新聞。",
+    "leo_satellite_empty": "目前沒有抓到可用的低軌衛星供應鏈價格資料。",
+    "leo_satellite_topline": "繁體中文主頁特別焦點",
+}
+
+LOW_ORBIT_SUPPLY_CHAIN_CATALOG = [
+    {"group": "衛星電路板", "code": "2313", "name": "華通", "ticker": "2313.TW"},
+    {"group": "衛星電路板", "code": "2367", "name": "燿華", "ticker": "2367.TW"},
+    {"group": "高頻銅箔基板", "code": "2383", "name": "台光電", "ticker": "2383.TW"},
+    {"group": "高頻銅箔基板", "code": "6213", "name": "聯茂", "ticker": "6213.TW"},
+    {"group": "高頻銅箔基板", "code": "6274", "name": "台燿", "ticker": "6274.TW"},
+    {"group": "通訊晶片 (IC設計)", "code": "2454", "name": "聯發科", "ticker": "2454.TW"},
+    {"group": "通訊晶片 (IC設計)", "code": "2379", "name": "瑞昱", "ticker": "2379.TW"},
+    {"group": "PA 與微波元件", "code": "3491", "name": "昇達科", "ticker": "3491.TWO"},
+    {"group": "PA 與微波元件", "code": "3105", "name": "穩懋", "ticker": "3105.TW"},
+    {"group": "PA 與微波元件", "code": "8086", "name": "宏捷科", "ticker": "8086.TWO"},
+    {"group": "地面接收 / 網通設備", "code": "6285", "name": "啟碁", "ticker": "6285.TW"},
+    {"group": "地面接收 / 網通設備", "code": "5388", "name": "中磊", "ticker": "5388.TWO"},
+    {"group": "連接器與線束", "code": "3665", "name": "貿聯-KY", "ticker": "3665.TW"},
+    {"group": "連接器與線束", "code": "6190", "name": "萬泰科", "ticker": "6190.TW"},
+    {"group": "連接器與線束", "code": "8103", "name": "瀚荃", "ticker": "8103.TWO"},
+    {"group": "天線與精密結構", "code": "3178", "name": "公準", "ticker": "3178.TWO"},
+    {"group": "天線與精密結構", "code": "2634", "name": "漢翔", "ticker": "2634.TW"},
+    {"group": "天線與精密結構", "code": "5009", "name": "榮剛", "ticker": "5009.TW"},
+    {"group": "太空能源 (太陽能)", "code": "6443", "name": "元晶", "ticker": "6443.TW"},
+    {"group": "太空能源 (太陽能)", "code": "3576", "name": "聯合再生", "ticker": "3576.TW"},
+    {"group": "太空能源 (太陽能)", "code": "6244", "name": "茂迪", "ticker": "6244.TW"},
+    {"group": "面板級封裝與液晶天線", "code": "3481", "name": "群創", "ticker": "3481.TW"},
+    {"group": "面板級封裝與液晶天線", "code": "2409", "name": "友達", "ticker": "2409.TW"},
+    {"group": "面板級封裝與液晶天線", "code": "6456", "name": "GIS-KY", "ticker": "6456.TW"},
+    {"group": "散熱模組", "code": "3017", "name": "奇鋐", "ticker": "3017.TW"},
+    {"group": "散熱模組", "code": "2421", "name": "建準", "ticker": "2421.TW"},
+]
+
+
+def low_orbit_supply_chain_universe() -> list[dict]:
+    universe: list[dict] = []
+    for item in LOW_ORBIT_SUPPLY_CHAIN_CATALOG:
+        ticker = normalize_dashboard_ticker(item["ticker"])
+        if not ticker:
+            continue
+        register_runtime_symbol_metadata(ticker, name=item["name"], market="TW")
+        universe.append({**item, "ticker": ticker})
+    return universe
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_low_orbit_supply_chain_market_data(tickers: tuple[str, ...], period: str, interval: str):
+    ticker_list = [str(ticker).upper().strip() for ticker in tickers if str(ticker).strip()]
+    if not ticker_list:
+        return pd.DataFrame(), pd.DataFrame()
+    daily = fetch_daily_data(ticker_list, period, interval)
+    intraday = fetch_intraday_data(ticker_list)
+    return daily, intraday
+
+
+
+def is_taiwan_market_open(now: pd.Timestamp | None = None) -> bool:
+    current = now or pd.Timestamp.now(tz=TW_TZ)
+    try:
+        current = pd.Timestamp(current)
+        if current.tzinfo is None:
+            current = current.tz_localize(TW_TZ)
+        else:
+            current = current.tz_convert(TW_TZ)
+    except Exception:
+        current = pd.Timestamp.now(tz=TW_TZ)
+    if current.weekday() >= 5:
+        return False
+    market_open = current.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_close = current.replace(hour=13, minute=30, second=0, microsecond=0)
+    return market_open <= current <= market_close
+
+
+
+def _normalize_tw_timestamp(value) -> pd.Timestamp | None:
+    try:
+        ts = pd.Timestamp(value)
+    except Exception:
+        return None
+    if pd.isna(ts):
+        return None
+    try:
+        if ts.tzinfo is None:
+            return ts.tz_localize(TW_TZ)
+        return ts.tz_convert(TW_TZ)
+    except Exception:
+        return None
+
+
+def _is_fresh_taiwan_intraday_timestamp(value, *, max_age_minutes: int = 20) -> bool:
+    ts = _normalize_tw_timestamp(value)
+    if ts is None:
+        return False
+    now_tw = pd.Timestamp.now(tz=TW_TZ)
+    if ts.normalize() != now_tw.normalize():
+        return False
+    if ts > now_tw + pd.Timedelta(minutes=1):
+        return False
+    return (now_tw - ts) <= pd.Timedelta(minutes=max_age_minutes)
+
+def get_taiwan_close_series(data: pd.DataFrame | None, ticker: str):
+    for field in ["Close", "Adj Close"]:
+        series = get_series(data, field, ticker)
+        if series is not None and not series.empty:
+            return ensure_datetime_index(series), field
+    return get_price_series(data, ticker)
+
+
+def build_taiwan_display_price_snapshot(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    ticker: str,
+) -> dict:
+    price_series, field_name = get_taiwan_close_series(daily_data, ticker)
+    intraday = get_intraday_snapshot(intraday_data, ticker)
+
+    intraday_ts = _normalize_tw_timestamp(intraday.get("timestamp"))
+    intraday_price = coerce_float(intraday.get("last_price", pd.NA))
+    intraday_fresh = bool(
+        intraday.get("available")
+        and pd.notna(intraday_price)
+        and _is_fresh_taiwan_intraday_timestamp(intraday_ts)
+    )
+
+    if price_series is None or price_series.empty:
+        return {
+            "latest_price": intraday_price if intraday_fresh else pd.NA,
+            "latest_move": intraday.get("change_pct", pd.NA) if intraday_fresh else pd.NA,
+            "daily_change": pd.NA,
+            "reference_close": pd.NA,
+            "previous_close": pd.NA,
+            "last_updated": intraday_ts if intraday_fresh else None,
+            "price_source": "intraday" if intraday_fresh else "unavailable",
+            "field_name": field_name or "N/A",
+            "use_intraday": intraday_fresh,
+        }
+
+    price_series = ensure_datetime_index(price_series).dropna()
+    if price_series.empty:
+        return {
+            "latest_price": pd.NA,
+            "latest_move": pd.NA,
+            "daily_change": pd.NA,
+            "reference_close": pd.NA,
+            "previous_close": pd.NA,
+            "last_updated": None,
+            "price_source": "unavailable",
+            "field_name": field_name or "N/A",
+            "use_intraday": False,
+        }
+
+    session_open = is_taiwan_market_open()
+    last_ts = _normalize_tw_timestamp(price_series.index[-1]) or pd.Timestamp.now(tz=TW_TZ)
+    current_date = pd.Timestamp.now(tz=TW_TZ).normalize()
+    last_is_today = last_ts.normalize() == current_date
+
+    if session_open and last_is_today and len(price_series) >= 2:
+        reference_close = coerce_float(price_series.iloc[-2])
+        previous_close = coerce_float(price_series.iloc[-3]) if len(price_series) >= 3 else pd.NA
+    else:
+        reference_close = coerce_float(price_series.iloc[-1])
+        previous_close = coerce_float(price_series.iloc[-2]) if len(price_series) >= 2 else pd.NA
+
+    daily_change = pd.NA
+    if pd.notna(reference_close) and pd.notna(previous_close) and previous_close != 0:
+        daily_change = ((reference_close / previous_close) - 1) * 100
+
+    use_intraday = bool(session_open and intraday_fresh)
+    latest_price = reference_close
+    latest_move = daily_change
+    last_updated = last_ts
+    price_source = "daily_close"
+
+    if use_intraday:
+        latest_price = intraday_price
+        if pd.notna(reference_close) and reference_close != 0:
+            latest_move = ((intraday_price / reference_close) - 1) * 100
+        elif pd.isna(latest_move):
+            latest_move = intraday.get("change_pct", pd.NA)
+        last_updated = intraday_ts or last_ts
+        price_source = "intraday_vs_prev_close"
+    elif intraday.get("available") and pd.notna(intraday_price) and intraday_ts is not None:
+        price_source = "daily_close_intraday_stale"
+
+    return {
+        "latest_price": latest_price,
+        "latest_move": latest_move,
+        "daily_change": daily_change,
+        "reference_close": reference_close,
+        "previous_close": previous_close,
+        "last_updated": last_updated,
+        "price_source": price_source,
+        "field_name": field_name or "N/A",
+        "use_intraday": use_intraday,
+    }
+
+def low_orbit_trend_rank(label: str) -> int:
+    return {
+        "Strong Uptrend": 4,
+        "Moderate Uptrend": 3,
+        "Flat": 2,
+        "Mild Downtrend": 1,
+        "Strong Downtrend": 0,
+        "N/A": -1,
+    }.get(str(label), -1)
+
+
+def build_low_orbit_supply_chain_rank_rows(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for item in low_orbit_supply_chain_universe():
+        ticker = item["ticker"]
+        price_series, _ = get_taiwan_close_series(daily_data, ticker)
+        if price_series is None or price_series.empty:
+            continue
+        volume_series = get_series(daily_data, "Volume", ticker)
+        analysis = analyze_market_sentinel(price_series, volume_series, [], ticker)
+        price_snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, ticker)
+
+        latest_move = price_snapshot.get("latest_move", pd.NA)
+        latest_price = price_snapshot.get("latest_price", pd.NA)
+
+        rows.append(
+            {
+                **item,
+                "latest_price": latest_price,
+                "latest_move": latest_move,
+                "daily_change": price_snapshot.get("daily_change", pd.NA),
+                "last_updated": price_snapshot.get("last_updated"),
+                "price_source": price_snapshot.get("price_source", "daily_close"),
+                "trend": analysis.get("trend", "N/A"),
+                "one_year_return": analysis.get("one_year_return", pd.NA),
+                "analysis_score": analysis.get("score", 0),
+                "positive_move": bool(pd.notna(latest_move) and float(latest_move) > 0),
+                "sort_key": (
+                    1 if pd.notna(latest_move) and float(latest_move) > 0 else 0,
+                    low_orbit_trend_rank(analysis.get("trend", "N/A")),
+                    float(latest_move) if pd.notna(latest_move) else -10**9,
+                    float(analysis.get("one_year_return")) if pd.notna(analysis.get("one_year_return", pd.NA)) else -10**9,
+                    float(analysis.get("score", 0)),
+                ),
+            }
+        )
+
+    rows.sort(key=lambda row: row["sort_key"], reverse=True)
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def enrich_low_orbit_supply_chain_top_rows(
+    rows: list[dict],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> list[dict]:
+    enriched: list[dict] = []
+    for row in rows:
+        bundle = collect_ticker_context(daily_data, intraday_data, row["ticker"], news_limit=6, lens_meta=lens_meta)
+        if bundle is None:
+            enriched.append(dict(row))
+            continue
+
+        analysis = bundle.get("analysis", {})
+        news_items = bundle.get("news_items", [])
+        pulse = analysis.get("news_pulse", {})
+        lead_story = (news_items[0].get("title") if news_items else "") or t("leo_satellite_no_story")
+        price_snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, row["ticker"])
+
+        merged = dict(row)
+        merged.update(
+            {
+                "latest_price": price_snapshot.get("latest_price", row.get("latest_price")),
+                "latest_move": price_snapshot.get("latest_move", row.get("latest_move")),
+                "daily_change": price_snapshot.get("daily_change", row.get("daily_change")),
+                "last_updated": price_snapshot.get("last_updated", row.get("last_updated")),
+                "price_source": price_snapshot.get("price_source", row.get("price_source", "daily_close")),
+                "trend": analysis.get("trend", row.get("trend", "N/A")),
+                "signal_raw": analysis.get("signal", "HOLD"),
+                "signal_label": tr_signal(analysis.get("signal", "HOLD")),
+                "news_label_raw": pulse.get("label", "Flat"),
+                "news_label": tr_news_label(pulse.get("label", "Flat")),
+                "news_score": pulse.get("score", 0.0),
+                "lead_story": lead_story,
+                "bundle": bundle,
+            }
+        )
+        enriched.append(merged)
+    return enriched
+
+
+def inject_low_orbit_supply_chain_css() -> None:
+    render_html_block(
+        """
+        <style>
+        .leo-shell {
+            margin-top: 10px;
+            margin-bottom: 14px;
+        }
+        .leo-kicker {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 82%, var(--ink, #e8f3ff));
+            margin-bottom: 8px;
+        }
+        .leo-title {
+            font-size: clamp(24px, 2.6vw, 34px);
+            font-weight: 900;
+            line-height: 1.08;
+            margin-bottom: 8px;
+            color: var(--ink, #eef7ff);
+        }
+        .leo-copy {
+            font-size: 13.5px;
+            line-height: 1.7;
+            color: var(--muted, rgba(226,238,255,.78));
+            max-width: 1000px;
+        }
+        .leo-summary-grid {
+            display: grid;
+            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            margin: 14px 0 14px 0;
+        }
+        .leo-summary-card {
+            border-radius: 18px;
+            padding: 14px 16px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent);
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 98%, transparent) 100%);
+            box-shadow: 0 14px 28px rgba(3, 10, 20, 0.14);
+        }
+        .leo-summary-label {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 72%, var(--muted, rgba(226,238,255,.72)));
+            margin-bottom: 10px;
+        }
+        .leo-summary-value {
+            font-size: 28px;
+            font-weight: 900;
+            line-height: 1;
+            color: var(--ink, #eef7ff);
+        }
+        .leo-summary-note {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.55;
+            color: var(--muted, rgba(226,238,255,.76));
+        }
+        .leo-table-shell {
+            margin-top: 10px;
+            overflow: hidden;
+            border-radius: 20px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 98%, transparent) 100%);
+            box-shadow: 0 18px 36px rgba(3, 10, 20, 0.18);
+            overflow-x: auto;
+        }
+        .leo-table {
+            min-width: 1080px;
+        }
+        .leo-table-head,
+        .leo-table-row {
+            display: grid;
+            grid-template-columns: 70px 170px 200px 120px 120px 140px 110px 150px minmax(280px, 1fr);
+            gap: 0;
+            align-items: stretch;
+        }
+        .leo-table-head {
+            background: linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 16%, transparent) 0%, color-mix(in srgb, var(--brand, #818cf8) 12%, transparent) 100%);
+            border-bottom: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+        }
+        .leo-head-cell,
+        .leo-row-cell {
+            padding: 14px 14px;
+            border-right: 1px solid rgba(255,255,255,.05);
+        }
+        .leo-head-cell:last-child,
+        .leo-row-cell:last-child {
+            border-right: 0;
+        }
+        .leo-head-cell {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+        }
+        .leo-table-row {
+            border-bottom: 1px solid rgba(255,255,255,.05);
+        }
+        .leo-table-row:last-child {
+            border-bottom: 0;
+        }
+        .leo-rank {
+            font-size: 20px;
+            font-weight: 900;
+            color: var(--ink, #eef7ff);
+        }
+        .leo-group {
+            font-size: 12px;
+            font-weight: 800;
+            line-height: 1.6;
+            color: var(--muted, rgba(226,238,255,.76));
+        }
+        .leo-company {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .leo-company-name {
+            font-size: 15px;
+            font-weight: 900;
+            color: var(--ink, #eef7ff);
+        }
+        .leo-company-code {
+            font-size: 12px;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 70%, var(--muted, rgba(226,238,255,.72)));
+            font-weight: 800;
+        }
+        .leo-value {
+            font-size: 15px;
+            font-weight: 900;
+            color: var(--ink, #eef7ff);
+        }
+        .leo-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.34rem 0.65rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 800;
+            white-space: nowrap;
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.03);
+            color: var(--ink, #eef7ff);
+        }
+        .leo-pill.up {
+            color: var(--up, #34d399);
+            border-color: color-mix(in srgb, var(--up, #34d399) 26%, transparent);
+            background: color-mix(in srgb, var(--up, #34d399) 10%, transparent);
+        }
+        .leo-pill.down {
+            color: var(--down, #f87171);
+            border-color: color-mix(in srgb, var(--down, #f87171) 26%, transparent);
+            background: color-mix(in srgb, var(--down, #f87171) 10%, transparent);
+        }
+        .leo-pill.flat {
+            color: var(--muted, rgba(226,238,255,.78));
+            border-color: rgba(255,255,255,.08);
+            background: rgba(255,255,255,.03);
+        }
+        .leo-story {
+            font-size: 12.5px;
+            line-height: 1.62;
+            color: var(--muted, rgba(226,238,255,.82));
+        }
+        .leo-rank-note {
+            margin: 12px 0 0 0;
+            font-size: 12.5px;
+            line-height: 1.65;
+            color: var(--muted, rgba(226,238,255,.74));
+        }
+        @media (max-width: 980px) {
+            .leo-summary-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        @media (max-width: 720px) {
+            .leo-summary-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        </style>
+        """
+    )
+
+
+def _leo_move_class(value) -> str:
+    if pd.notna(value):
+        if float(value) > 0:
+            return "up"
+        if float(value) < 0:
+            return "down"
+    return "flat"
+
+
+def _leo_signal_class(signal: str) -> str:
+    raw = str(signal or "").upper()
+    if raw == "BUY":
+        return "up"
+    if raw == "SELL":
+        return "down"
+    return "flat"
+
+
+def _leo_news_class(label: str) -> str:
+    lowered = str(label or "").lower()
+    if "bullish" in lowered:
+        return "up"
+    if "bearish" in lowered:
+        return "down"
+    return "flat"
+
+
+def render_low_orbit_supply_chain_section(lens_meta: dict | None = None) -> None:
+    if get_language() != "zh_TW":
+        return
+
+    inject_low_orbit_supply_chain_css()
+    panel_open = render_dashboard_section_panel(
+        t("leo_satellite_section_title"),
+        "low-orbit",
+        item_count=len(LOW_ORBIT_SUPPLY_CHAIN_CATALOG),
+        helper_base=t("leo_satellite_section_copy"),
+        expanded=True,
+        panel_key="low-orbit-supply-chain",
+    )
+    if not panel_open:
+        return
+
+    universe = low_orbit_supply_chain_universe()
+    tickers = tuple(item["ticker"] for item in universe)
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    daily_data, intraday_data = fetch_low_orbit_supply_chain_market_data(tickers, period, interval)
+    rows = build_low_orbit_supply_chain_rank_rows(daily_data, intraday_data)
+
+    if not rows:
+        st.info(t("leo_satellite_empty"))
+        return
+
+    top_rows = enrich_low_orbit_supply_chain_top_rows(rows[:10], daily_data, intraday_data, lens_meta=lens_meta)
+    latest_timestamps = [row.get("last_updated") for row in top_rows if row.get("last_updated") is not None]
+    if latest_timestamps:
+        parsed_timestamps = pd.to_datetime(latest_timestamps, errors="coerce")
+        parsed_timestamps = [stamp for stamp in parsed_timestamps if pd.notna(stamp)]
+        if parsed_timestamps:
+            last_sync = max(parsed_timestamps)
+            try:
+                last_sync = pd.Timestamp(last_sync)
+                if last_sync.tzinfo is None:
+                    last_sync = last_sync.tz_localize(TW_TZ)
+                else:
+                    last_sync = last_sync.tz_convert(TW_TZ)
+                last_sync_text = last_sync.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                last_sync_text = str(last_sync)
+        else:
+            last_sync_text = "—"
+    else:
+        last_sync_text = "—"
+
+    rising_count = sum(1 for row in rows if row.get("positive_move"))
+    bullish_news_count = sum(1 for row in top_rows if "bullish" in str(row.get("news_label_raw", "")).lower())
+
+    intraday_rows = sum(1 for row in top_rows if row.get("price_source") == "intraday_vs_prev_close")
+    summary_cards = [
+        (t("leo_satellite_total_names"), str(len(universe)), t("leo_satellite_selection_note")),
+        (t("leo_satellite_rising_names"), str(rising_count), t("leo_satellite_rank_note")),
+        (t("leo_satellite_bullish_news"), str(bullish_news_count), "原有新聞判別已帶入目前前十名。"),
+        (t("leo_satellite_last_sync"), last_sync_text, f"盤中採現價對前日收盤；非盤中採收盤價。盤中報價檔數 {intraday_rows}。"),
+    ]
+    cards_html = "".join(
+        f'''
+        <div class="leo-summary-card">
+            <div class="leo-summary-label">{escape(label)}</div>
+            <div class="leo-summary-value">{escape(value)}</div>
+            <div class="leo-summary-note">{escape(note)}</div>
+        </div>
+        '''
+        for label, value, note in summary_cards
+    )
+
+    head_html = "".join(
+        f'<div class="leo-head-cell">{escape(label)}</div>'
+        for label in [
+            "#",
+            t("leo_satellite_group_col"),
+            t("leo_satellite_company_col"),
+            t("leo_satellite_last_price_col"),
+            t("leo_satellite_move_col"),
+            t("leo_satellite_trend_col"),
+            t("leo_satellite_signal_col"),
+            t("leo_satellite_news_col"),
+            t("leo_satellite_story_col"),
+        ]
+    )
+
+    row_html_parts = []
+    for row in top_rows:
+        latest_move = row.get("latest_move", pd.NA)
+        row_html_parts.append(
+            f'''
+            <div class="leo-table-row">
+                <div class="leo-row-cell"><div class="leo-rank">#{int(row.get("rank", 0))}</div></div>
+                <div class="leo-row-cell"><div class="leo-group">{escape(str(row.get("group", "")))}</div></div>
+                <div class="leo-row-cell">
+                    <div class="leo-company">
+                        <div class="leo-company-name">{escape(str(row.get("name", display_ticker_label(row.get("ticker", "")))))}</div>
+                        <div class="leo-company-code">{escape(str(row.get("code", ticker_base_code(row.get("ticker", "")))))} · {escape(str(row.get("ticker", "")).upper())}</div>
+                    </div>
+                </div>
+                <div class="leo-row-cell">
+                    <div class="leo-value">{escape(format_local_price(row.get("latest_price"), row.get("ticker")))}</div>
+                    <div class="leo-company-code">{"盤中現價" if row.get("price_source") == "intraday_vs_prev_close" else "日線收盤"}</div>
+                </div>
+                <div class="leo-row-cell"><span class="leo-pill {_leo_move_class(latest_move)}">{escape(format_percent(latest_move))}</span></div>
+                <div class="leo-row-cell"><span class="leo-pill flat">{escape(tr_term(row.get("trend", "N/A")))}</span></div>
+                <div class="leo-row-cell"><span class="leo-pill {_leo_signal_class(row.get("signal_raw", "HOLD"))}">{escape(str(row.get("signal_label", tr_signal("HOLD"))))}</span></div>
+                <div class="leo-row-cell"><span class="leo-pill {_leo_news_class(row.get("news_label_raw", "Flat"))}">{escape(str(row.get("news_label", tr_news_label("Flat"))))}</span></div>
+                <div class="leo-row-cell"><div class="leo-story">{escape(str(row.get("lead_story", t("leo_satellite_no_story"))))}</div></div>
+            </div>
+            '''
+        )
+
+    render_html_block(
+        f'''
+        <div class="guide-shell leo-shell">
+            <div class="leo-kicker">{escape(t("leo_satellite_topline"))}</div>
+            <div class="leo-title">{escape(t("leo_satellite_section_title"))}</div>
+            <div class="leo-copy">{escape(t("leo_satellite_section_copy"))}</div>
+            <div class="chip-row">
+                <span class="explorer-nav-chip">{escape(t("leo_satellite_selection_note"))}</span>
+                <span class="explorer-nav-chip">{escape(f"{t('leo_satellite_table_title')} · Top 10")}</span>
+            </div>
+            <div class="leo-summary-grid">{cards_html}</div>
+            <div class="leo-table-shell">
+                <div class="leo-table">
+                    <div class="leo-table-head">{head_html}</div>
+                    {"".join(row_html_parts)}
+                </div>
+            </div>
+            <div class="leo-rank-note">{escape(t("leo_satellite_rank_note"))}</div>
+        </div>
+        '''
+    )
+
 def render_general_market_dashboard_layout(
     daily_data: pd.DataFrame,
     intraday_data: pd.DataFrame | None,
@@ -525,6 +1215,7 @@ def render_general_market_dashboard_layout(
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
+            render_low_orbit_supply_chain_section(lens_meta=lens_meta)
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -547,6 +1238,7 @@ def render_general_market_dashboard_layout(
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
+            render_low_orbit_supply_chain_section(lens_meta=lens_meta)
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -561,6 +1253,7 @@ def render_general_market_dashboard_layout(
         render_global_market_indicator(global_indicator)
         if show_taiwan_macro:
             render_taiwan_market_macro_strip(force_show=True)
+        render_low_orbit_supply_chain_section(lens_meta=lens_meta)
         overview_tab, compare_tab, workspace_tab = st.tabs(
             [
                 t("layout_research_flow_tab"),
@@ -1204,6 +1897,10 @@ TRANSLATIONS = {
 }
 
 
+
+
+TRANSLATIONS["English"].update(LEO_TRANSLATIONS_EN)
+TRANSLATIONS["繁體中文"].update(LEO_TRANSLATIONS_ZH)
 TRANSLATIONS["English"].update({
     "global_market_indicator": "Global Market Indicator",
     "global_market_copy": "A cross-market reference layer for the active lens. Use this to see whether U.S. and Taiwan benchmark trends are broadly supportive, mixed, or under pressure before drilling further into individual names.",
