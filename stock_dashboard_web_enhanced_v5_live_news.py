@@ -1,4 +1,12 @@
 #!/usr/bin/env python
+"""
+Version: HORIZON Release LEO Supply Chain v1.3.6
+Updated: 2026-04-23
+Highlights:
+- Added Taiwan Futures Lab with direction-aware break-even planning.
+- Added feasibility ratio, recent range proxy, settlement-pressure warning, and fresher TWSE/TAIFEX market fetches.
+- Kept the existing theme and dashboard analysis functions intact.
+"""
 from __future__ import annotations
 
 import os
@@ -42,13 +50,14 @@ DEFAULT_INTERVAL = "1d"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
 
-DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab"]
+DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab", "Taiwan Futures Lab"]
 
 
 def dashboard_mode_label(value: str) -> str:
     labels = {
         "General Market": t("dashboard_mode_main"),
         "Active ETF Lab": t("dashboard_mode_active_etf"),
+        "Taiwan Futures Lab": t("dashboard_mode_taiwan_futures"),
     }
     return labels.get(str(value), str(value))
 
@@ -61,8 +70,17 @@ def theme_mode_label(value: str) -> str:
     return labels.get(str(value), str(value))
 
 
+def futures_position_side_label(value: str) -> str:
+    labels = {
+        "Call": t("taiwan_futures_side_long"),
+        "Put": t("taiwan_futures_side_short"),
+    }
+    return labels.get(str(value), str(value))
+
+
 
 DASHBOARD_LAYOUT_OPTIONS = ["Standard", "Advanced", "Expert"]
+TX_FUTURES_POINT_VALUE = 50.0
 
 
 def dashboard_layout_label(value: str) -> str:
@@ -509,6 +527,11 @@ LEO_TRANSLATIONS_EN = {
     "leo_satellite_group_col": "Segment",
     "leo_satellite_company_col": "Company",
     "leo_satellite_last_price_col": "Last price",
+    "leo_satellite_data_status": "Data status",
+    "leo_satellite_status_live": "Live",
+    "leo_satellite_status_close": "Close",
+    "leo_satellite_status_stale_fallback": "Stale fallback",
+    "leo_satellite_status_unavailable": "Unavailable",
     "leo_satellite_move_col": "Latest move",
     "leo_satellite_trend_col": "Trend",
     "leo_satellite_signal_col": "Signal",
@@ -532,6 +555,11 @@ LEO_TRANSLATIONS_ZH = {
     "leo_satellite_group_col": "產業別",
     "leo_satellite_company_col": "公司",
     "leo_satellite_last_price_col": "最新價",
+    "leo_satellite_data_status": "資料狀態",
+    "leo_satellite_status_live": "即時",
+    "leo_satellite_status_close": "收盤",
+    "leo_satellite_status_stale_fallback": "舊值退回收盤",
+    "leo_satellite_status_unavailable": "資料不足",
     "leo_satellite_move_col": "最新變動",
     "leo_satellite_trend_col": "趨勢",
     "leo_satellite_signal_col": "訊號",
@@ -644,6 +672,58 @@ def get_taiwan_close_series(data: pd.DataFrame | None, ticker: str):
         if series is not None and not series.empty:
             return ensure_datetime_index(series), field
     return get_price_series(data, ticker)
+
+
+def format_low_orbit_price_source(source: str) -> str:
+    source_key = str(source or "").strip().lower()
+    labels = {
+        "intraday_vs_prev_close": "盤中現價",
+        "daily_close": "日線收盤",
+        "daily_close_intraday_stale": "日線收盤（盤中舊值已略過）",
+        "intraday": "盤中現價",
+        "unavailable": "資料不足",
+    }
+    return labels.get(source_key, "價格來源未明")
+
+
+def format_low_orbit_last_updated(value) -> str:
+    ts = _normalize_tw_timestamp(value)
+    if ts is None:
+        return "更新時間 —"
+    return f"更新時間 {ts.strftime('%Y-%m-%d %H:%M')}"
+
+
+
+def low_orbit_data_status_key(source: str) -> str:
+    source_key = str(source or "").strip().lower()
+    if source_key == "intraday_vs_prev_close":
+        return "live"
+    if source_key == "daily_close":
+        return "close"
+    if source_key == "daily_close_intraday_stale":
+        return "stale_fallback"
+    return "unavailable"
+
+
+def format_low_orbit_data_status(source: str) -> str:
+    status_key = low_orbit_data_status_key(source)
+    labels = {
+        "live": t("leo_satellite_status_live"),
+        "close": t("leo_satellite_status_close"),
+        "stale_fallback": t("leo_satellite_status_stale_fallback"),
+        "unavailable": t("leo_satellite_status_unavailable"),
+    }
+    return labels.get(status_key, t("leo_satellite_status_unavailable"))
+
+
+def low_orbit_data_status_class(source: str) -> str:
+    status_key = low_orbit_data_status_key(source)
+    return {
+        "live": "up",
+        "close": "flat",
+        "stale_fallback": "down",
+        "unavailable": "flat",
+    }.get(status_key, "flat")
 
 
 def build_taiwan_display_price_snapshot(
@@ -971,6 +1051,56 @@ def inject_low_orbit_supply_chain_css() -> None:
             font-weight: 900;
             color: var(--ink, #eef7ff);
         }
+        .leo-meta-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 4px;
+        }
+        .leo-update {
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1.4;
+            color: var(--muted, rgba(226,238,255,.72));
+        }
+        .leo-status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            width: fit-content;
+            padding: 0.28rem 0.58rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.04);
+            color: var(--ink, #eef7ff);
+        }
+        .leo-status-badge::before {
+            content: "";
+            width: 0.48rem;
+            height: 0.48rem;
+            border-radius: 999px;
+            background: currentColor;
+            opacity: 0.9;
+            box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
+        }
+        .leo-status-badge.up {
+            color: var(--up, #34d399);
+            border-color: color-mix(in srgb, var(--up, #34d399) 26%, transparent);
+            background: color-mix(in srgb, var(--up, #34d399) 12%, transparent);
+        }
+        .leo-status-badge.down {
+            color: var(--down, #f87171);
+            border-color: color-mix(in srgb, var(--down, #f87171) 26%, transparent);
+            background: color-mix(in srgb, var(--down, #f87171) 10%, transparent);
+        }
+        .leo-status-badge.flat {
+            color: var(--muted, rgba(226,238,255,.84));
+            border-color: rgba(255,255,255,.08);
+            background: rgba(255,255,255,.04);
+        }
         .leo-pill {
             display: inline-flex;
             align-items: center;
@@ -1152,7 +1282,11 @@ def render_low_orbit_supply_chain_section(lens_meta: dict | None = None) -> None
                 </div>
                 <div class="leo-row-cell">
                     <div class="leo-value">{escape(format_local_price(row.get("latest_price"), row.get("ticker")))}</div>
-                    <div class="leo-company-code">{"盤中現價" if row.get("price_source") == "intraday_vs_prev_close" else "日線收盤"}</div>
+                    <div class="leo-meta-stack">
+                        <div class="leo-status-badge {low_orbit_data_status_class(row.get("price_source", "daily_close"))}">{escape(format_low_orbit_data_status(row.get("price_source", "daily_close")))}</div>
+                        <div class="leo-company-code">{escape(format_low_orbit_price_source(row.get("price_source", "daily_close")))}</div>
+                        <div class="leo-update">{escape(format_low_orbit_last_updated(row.get("last_updated")))}</div>
+                    </div>
                 </div>
                 <div class="leo-row-cell"><span class="leo-pill {_leo_move_class(latest_move)}">{escape(format_percent(latest_move))}</span></div>
                 <div class="leo-row-cell"><span class="leo-pill flat">{escape(tr_term(row.get("trend", "N/A")))}</span></div>
@@ -2266,9 +2400,100 @@ TRANSLATIONS["English"].update({
 
 TRANSLATIONS["English"].update({
     "dashboard_mode": "Dashboard mode",
-    "dashboard_mode_note": "Main Dashboard keeps the full market workflow. Active ETF Dashboard shows only active-ETF research.",
+    "dashboard_mode_note": "Main Dashboard keeps the full market workflow. Active ETF Dashboard shows only active-ETF research. Taiwan Options Calculator focuses on TX options break-even planning with public TAIEX and front-month TX references.",
     "dashboard_mode_main": "Main Dashboard",
     "dashboard_mode_active_etf": "Active ETF Dashboard",
+    "dashboard_mode_taiwan_futures": "Taiwan Options Calculator",
+    "taiwan_futures_vision_deck": "Taiwan Options Lab",
+    "taiwan_futures_vision_deck_copy": "A focused TX-options planning workspace for strike, premium, break-even, and remaining-days pace checks using public TAIEX and front-month TX references.",
+    "taiwan_futures_dashboard_kicker": "Dashboard mode",
+    "taiwan_futures_dashboard_title": "Taiwan TX options break-even calculator",
+    "taiwan_futures_dashboard_copy": "Track public TAIEX and front-month TX, enter your option strike and premium, and estimate whether the remaining trading days still leave a realistic path back to break-even or your target.",
+    "taiwan_futures_side": "Position side",
+    "taiwan_futures_side_help": "Choose Call or Put so the calculator can judge break-even distance and target distance in the correct direction.",
+    "taiwan_futures_side_long": "Call",
+    "taiwan_futures_side_short": "Put",
+    "taiwan_futures_entry_price": "Strike price",
+    "taiwan_futures_entry_price_help": "Enter your option strike price.",
+    "taiwan_futures_premium": "Premium points",
+    "taiwan_futures_premium_help": "Enter the option premium you paid in points.",
+    "taiwan_futures_days": "Remaining trading days",
+    "taiwan_futures_days_help": "Use the number of trading days you realistically still want to hold. If you are managing toward settlement, enter the remaining trading days into expiry.",
+    "taiwan_futures_target_points": "Target profit points",
+    "taiwan_futures_target_points_help": "Optional. Enter how many underlying points beyond break-even you still want.",
+    "taiwan_futures_snapshot": "Market snapshot",
+    "taiwan_futures_snapshot_copy": "Public-quote view for TAIEX and front-month TX. TAIEX public data can be delayed; licensed real-time TAIEX requires exchange authorization.",
+    "taiwan_futures_taiex": "TAIEX",
+    "taiwan_futures_tx_front": "Front-month TX",
+    "taiwan_futures_current_pnl": "Break-even gap points",
+    "taiwan_futures_current_pnl_copy": "Direction-aware gap between current TX and your options break-even level.",
+    "taiwan_futures_current_pnl_amount": "Point-value proxy",
+    "taiwan_futures_current_pnl_amount_copy": "Break-even gap points multiplied by NT$50 per point as an underlying-point proxy, not actual option premium P/L.",
+
+    "taiwan_futures_contract_quick": "Multi-contract quick estimate",
+    "taiwan_futures_contract_quick_copy": "Fast point-value proxy for 1 / 2 / 5 contracts using NT$50 per point. This is not actual option premium P/L.",
+    "taiwan_futures_contract_size": "Contracts",
+    "taiwan_futures_amount_estimate": "Estimated P/L",
+    "taiwan_futures_break_even_price": "Break-even price",
+    "taiwan_futures_break_even_price_copy": "Strike plus/minus premium, depending on whether this is a Call or Put.",
+    "taiwan_futures_break_even_need": "Break-even points needed",
+    "taiwan_futures_break_even_need_copy": "How many more TX points are still needed to reach the options break-even level.",
+    "taiwan_futures_daily_need": "Break-even avg / day",
+    "taiwan_futures_daily_need_copy": "Break-even points needed divided by remaining trading days.",
+    "taiwan_futures_remaining_days": "Remaining trading days",
+    "taiwan_futures_remaining_days_copy": "This is the time window used for the break-even and target pace math.",
+    "taiwan_futures_recent_range": "Recent avg daily range",
+    "taiwan_futures_recent_range_copy": "5-day average TAIEX daily range proxy used to judge whether the required pace is realistic.",
+    "taiwan_futures_target_need": "Target points needed",
+    "taiwan_futures_target_need_copy": "How many more favorable TX points are needed beyond break-even to reach your target objective.",
+    "taiwan_futures_target_daily_need": "Target avg / day",
+    "taiwan_futures_target_daily_need_copy": "Target points needed divided by remaining trading days.",
+    "taiwan_futures_feasibility_ratio": "Feasibility ratio",
+    "taiwan_futures_feasibility_ratio_copy": "Break-even avg / day divided by recent average daily range. Lower is easier.",
+    "taiwan_futures_formula": "Core formula",
+    "taiwan_futures_formula_copy": "(Strike ± Premium − Current TX) ÷ Remaining trading days",
+    "taiwan_futures_position_read": "Position read",
+    "taiwan_futures_position_ahead": "{side} side is already ahead of break-even by {points} points.",
+    "taiwan_futures_position_behind": "{side} side is still {points} points away from break-even. Over {days} days, it would need about {per_day} points per day.",
+    "taiwan_futures_position_flat": "TX is currently at your break-even level. No point gap is open right now.",
+    "taiwan_futures_position_target": "To reach your target beyond break-even, TX would still need about {per_day} points per day over the remaining window.",
+    "taiwan_futures_scenarios": "Scenario ladder",
+    "taiwan_futures_scenarios_copy": "Quick TX scenarios around the current level, now with option-stage and suggested sell action so you can see where selling the Call/Put becomes more favorable.",
+    "taiwan_futures_price_level": "TX level",
+    "taiwan_futures_pnl_col": "Break-even gap",
+    "taiwan_futures_gap_col": "Break-even need",
+    "taiwan_futures_daily_col": "Break-even / day",
+    "taiwan_futures_target_daily_col": "Target / day",
+    "taiwan_futures_pressure": "Settlement pressure",
+    "taiwan_futures_pressure_copy": "This turns your remaining days and required pace into an early exit warning gauge.",
+    "taiwan_futures_pressure_low": "Pressure low",
+    "taiwan_futures_pressure_moderate": "Pressure moderate",
+    "taiwan_futures_pressure_high": "Pressure high",
+    "taiwan_futures_pressure_critical": "Pressure critical",
+    "taiwan_futures_pressure_note_low": "The required break-even pace is still well within recent market movement. Time pressure is manageable.",
+    "taiwan_futures_pressure_note_moderate": "The required pace is feasible, but it now needs the market to cooperate fairly consistently.",
+    "taiwan_futures_pressure_note_high": "The required pace is becoming demanding for the remaining window. If momentum does not improve soon, reducing or exiting early becomes more reasonable.",
+    "taiwan_futures_pressure_note_critical": "The required pace is now larger than the recent market range. This is a high time-pressure setup and often a signal to reassess quickly.",
+    "taiwan_futures_pressure_tooltip": "Hover to see how the dashboard labels settlement pressure from remaining days, required break-even pace, and recent market range.",
+    "taiwan_futures_pressure_tooltip_copy": "Required break-even pace ÷ recent average daily range = {ratio}. Remaining trading days = {days}.",
+    "taiwan_futures_source": "Source",
+    "taiwan_futures_updated": "Updated",
+    "taiwan_futures_status": "Data status",
+    "taiwan_futures_public_note": "Public note",
+    "taiwan_futures_public_note_copy": "TWSE public TAIEX data may be delayed. This options calculator uses public TAIEX and TX references for pace planning, not actual option premium pricing.",
+    "taiwan_futures_data_ok": "Quote available",
+    "taiwan_futures_data_partial": "Partial quote only",
+    "taiwan_futures_data_missing": "Quote unavailable",
+    "taiwan_futures_status_live": "Live",
+    "taiwan_futures_status_delayed": "Delayed",
+    "taiwan_futures_status_stale": "Stale",
+    "taiwan_futures_force_refresh": "Force refresh market quotes",
+    "taiwan_futures_force_refresh_help": "Clear the Taiwan options calculator market cache and refetch TAIEX / TX references now.",
+    "taiwan_futures_force_refresh_done": "Market quotes refreshed.",
+    "taiwan_futures_risk_note": "This options calculator focuses on strike, premium, break-even, and days-left pace math. It does not price theta or implied volatility.",
+    "taiwan_futures_data_panel": "Market data diagnostics",
+    "taiwan_futures_data_panel_copy": "Use this when one side stops updating. It shows the source, timestamp, and any parser errors captured by the dashboard.",
+    "taiwan_futures_public_realtime_note": "For exact exchange-grade real-time TAIEX, you would need a licensed feed outside this public dashboard path.",
     "active_etf_vision_deck": "Active ETF Deck",
     "active_etf_vision_deck_copy": "A dedicated selector and after-close workspace for Taiwan active ETFs. Main Dashboard watchlists remain unchanged.",
     "active_etf_universe": "Active ETF universe",
@@ -2305,9 +2530,106 @@ TRANSLATIONS["English"].update({
 
 TRANSLATIONS["繁體中文"].update({
     "dashboard_mode": "Dashboard 模式",
-    "dashboard_mode_note": "主 Dashboard 保留目前完整市場研究流程；主動式 ETF Dashboard 只顯示主動式 ETF 相關研究。",
+    "dashboard_mode_note": "主 Dashboard 保留目前完整市場研究流程；主動式 ETF Dashboard 只顯示主動式 ETF 相關研究；台股期貨試算 Dashboard 只聚焦加權指數、近月台指期與點數試算。",
     "dashboard_mode_main": "主 Dashboard",
     "dashboard_mode_active_etf": "主動式 ETF Dashboard",
+    "dashboard_mode_taiwan_futures": "台指選擇權 試算Dashboard",
+    "taiwan_futures_vision_deck": "台指選擇權試算專區",
+    "taiwan_futures_vision_deck_copy": "聚焦台指選擇權履約價、權利金、回本價與剩餘交易日節奏的專用工作台，並用公開加權指數與近月台指期做參考。",
+    "taiwan_futures_dashboard_kicker": "Dashboard 模式",
+    "taiwan_futures_dashboard_title": "台指選擇權回本試算 Dashboard",
+    "taiwan_futures_dashboard_copy": "追蹤公開可得的加權指數與近月台指期點位，帶入你的履約價與權利金後，快速評估剩餘交易日是否還足以讓部位回到損平或達成目標。",
+    "taiwan_futures_side": "部位方向",
+    "taiwan_futures_side_help": "選擇買權或賣權，系統才會用正確方向計算回本距離與目標距離。",
+    "taiwan_futures_side_long": "買權 Call",
+    "taiwan_futures_side_short": "賣權 Put",
+    "taiwan_futures_entry_price": "履約價",
+    "taiwan_futures_entry_price_help": "輸入你選擇權的履約價。",
+    "taiwan_futures_premium": "權利金點數",
+    "taiwan_futures_premium_help": "輸入你買進這個選擇權所支付的權利金點數。",
+    "taiwan_futures_days": "剩餘交易日",
+    "taiwan_futures_days_help": "填入你還願意持有的交易日數。若你是往結算去管理部位，建議直接填到結算前剩餘的交易日。",
+    "taiwan_futures_target_points": "目標獲利點數",
+    "taiwan_futures_target_points_help": "可選填。輸入你希望在回本之上，標的還要再往有利方向多跑多少點。",
+    "taiwan_futures_snapshot": "市場快照",
+    "taiwan_futures_snapshot_copy": "顯示公開可抓取的加權指數與近月台指期。加權指數公開資料可能有延遲；若要精確交易所級即時資料，需要正式授權。",
+    "taiwan_futures_taiex": "加權指數",
+    "taiwan_futures_tx_front": "近月台指期",
+    "taiwan_futures_current_pnl": "距離回本點數",
+    "taiwan_futures_current_pnl_copy": "依買權或賣權方向，計算目前台指期相對回本價的點數差。",
+    "taiwan_futures_current_pnl_amount": "點數等值金額",
+    "taiwan_futures_current_pnl_amount_copy": "把距離回本點數乘上每點 NT$50，作為標的點數等值金額參考，非選擇權實際權利金損益。",
+
+    "taiwan_futures_contract_quick": "多口快速試算",
+    "taiwan_futures_contract_quick_copy": "以每點 NT$50，快速估算 1 / 2 / 5 口的標的點數等值金額，非選擇權實際權利金損益。",
+    "taiwan_futures_contract_size": "口數",
+    "taiwan_futures_amount_estimate": "估算損益",
+    "taiwan_futures_break_even_price": "回本價",
+    "taiwan_futures_break_even_price_copy": "依買權或賣權方向，用履約價加減權利金得到回本價。",
+    "taiwan_futures_break_even_need": "回本尚需點數",
+    "taiwan_futures_break_even_need_copy": "台指期還需要再往你有利的方向走多少點，選擇權部位才會回到回本價。",
+    "taiwan_futures_daily_need": "回本平均 / 天",
+    "taiwan_futures_daily_need_copy": "把回本尚需點數除以剩餘交易日，得到平均每天需要的點數。",
+    "taiwan_futures_remaining_days": "剩餘交易日",
+    "taiwan_futures_remaining_days_copy": "這是回本與達標節奏試算所使用的時間窗。",
+    "taiwan_futures_recent_range": "近期平均日波動",
+    "taiwan_futures_recent_range_copy": "用近 5 日加權指數日波動均值作為公開可得的節奏參考，判斷要求的點數是否合理。",
+    "taiwan_futures_target_need": "達標尚需點數",
+    "taiwan_futures_target_need_copy": "若你還想在回本之上達到目標，台指期還需要再往有利方向移動多少點。",
+    "taiwan_futures_target_daily_need": "達標平均 / 天",
+    "taiwan_futures_target_daily_need_copy": "把達標尚需點數除以剩餘交易日，得到平均每天要跑的點數。",
+    "taiwan_futures_feasibility_ratio": "可行性比率",
+    "taiwan_futures_feasibility_ratio_copy": "回本平均 / 天 ÷ 近期平均日波動。數值越低，代表越容易達成。",
+    "taiwan_futures_formula": "核心公式",
+    "taiwan_futures_formula_copy": "(履約價 ± 權利金 − 目前台指期) ÷ 剩餘交易日",
+    "taiwan_futures_position_read": "倉位解讀",
+    "taiwan_futures_position_ahead": "{side}部位目前已領先 {points} 點，回到損平不再需要額外點數。",
+    "taiwan_futures_position_behind": "{side}部位目前仍落後 {points} 點。若希望在 {days} 天內回到損平，大約每天需要 {per_day} 點。",
+    "taiwan_futures_position_flat": "目前台指期剛好等於你的進場價格，暫時沒有點數差。",
+    "taiwan_futures_position_target": "若希望達到你的目標獲利，在剩餘時間內大約每天還需要 {per_day} 點。",
+    "taiwan_futures_scenarios": "情境階梯",
+    "taiwan_futures_scenarios_copy": "把目前台指期附近幾個常見點位列出來，快速看不同走法對同一個選擇權設定的回本節奏與達標節奏。",
+    "taiwan_futures_price_level": "台指期點位",
+    "taiwan_futures_pnl_col": "距離回本",
+    "taiwan_futures_gap_col": "回本尚需",
+    "taiwan_futures_daily_col": "回本 / 天",
+    "taiwan_futures_target_daily_col": "達標 / 天",
+    "taiwan_futures_pressure": "結算壓力警示",
+    "taiwan_futures_pressure_copy": "把剩餘交易日與所需點數節奏轉成提早清倉判斷的壓力儀表。",
+    "taiwan_futures_pressure_low": "壓力低",
+    "taiwan_futures_pressure_moderate": "壓力中等",
+    "taiwan_futures_pressure_high": "壓力偏高",
+    "taiwan_futures_pressure_critical": "壓力極高",
+    "taiwan_futures_pressure_note_low": "回本所需節奏仍明顯低於近期市場波動，時間壓力還算可控。",
+    "taiwan_futures_pressure_note_moderate": "回本節奏仍有機會，但需要市場在接下來幾天持續配合。",
+    "taiwan_futures_pressure_note_high": "剩餘時間內要求的節奏已偏吃力。若動能沒有很快改善，提早減碼或清倉會更合理。",
+    "taiwan_futures_pressure_note_critical": "回本所需節奏已高於近期市場波動，代表時間壓力極高，通常要更快重新評估部位。",
+    "taiwan_futures_pressure_tooltip": "滑鼠停留可查看結算壓力判定方式，會綜合剩餘交易日、回本每天所需點數，以及近期平均日波動。",
+    "taiwan_futures_pressure_tooltip_copy": "回本平均/天 ÷ 近期平均日波動 = {ratio}。剩餘交易日 = {days}。",
+
+    "taiwan_futures_action": "建議動作",
+    "taiwan_futures_action_hold": "續抱",
+    "taiwan_futures_action_observe": "觀察",
+    "taiwan_futures_action_reduce": "減碼",
+    "taiwan_futures_action_exit": "先出場",
+    "taiwan_futures_source": "資料來源",
+    "taiwan_futures_updated": "更新時間",
+    "taiwan_futures_status": "資料狀態",
+    "taiwan_futures_public_note": "公開資料註記",
+    "taiwan_futures_public_note_copy": "TWSE 公開的加權指數資料可能為延遲資訊；若要精確即時分發，需要 TWSE 正式授權。",
+    "taiwan_futures_data_ok": "行情可用",
+    "taiwan_futures_data_partial": "部分行情可用",
+    "taiwan_futures_data_missing": "行情暫時不可用",
+    "taiwan_futures_status_live": "Live",
+    "taiwan_futures_status_delayed": "Delayed",
+    "taiwan_futures_status_stale": "Stale",
+    "taiwan_futures_force_refresh": "手動強制刷新行情",
+    "taiwan_futures_force_refresh_help": "清除台指選擇權試算區的行情快取，立即重新抓取加權指數與近月台指期。",
+    "taiwan_futures_force_refresh_done": "行情已重新刷新。",
+    "taiwan_futures_risk_note": "這個試算區依照你指定的公式運作，用途是評估點數差與節奏，不代表獲利保證。",
+    "taiwan_futures_data_panel": "市場資料 diagnostics",
+    "taiwan_futures_data_panel_copy": "當其中一邊停止更新時，可在這裡看到來源、時間戳與抓取錯誤。",
+    "taiwan_futures_public_realtime_note": "若你要的是交易所級精確即時加權指數，必須改接正式授權的即時 feed。",
     "active_etf_vision_deck": "主動式 ETF 專區",
     "active_etf_vision_deck_copy": "專門給台股主動式 ETF 的選股與收盤後研究工作台，不會覆蓋主 Dashboard 的原本觀察清單。",
     "active_etf_universe": "主動式 ETF 範圍",
@@ -4178,6 +4500,25 @@ def load_dashboard_preferences() -> None:
     if manual_interval not in SUPPORTED_INTERVALS:
         manual_interval = DEFAULT_INTERVAL
 
+    tx_entry_price = _safe_float(_query_param_first("txentry") or _profile_value("txentry") or st.session_state.get("dashboard_txf_entry_price", 0.0), default=0.0)
+    if pd.isna(tx_entry_price):
+        tx_entry_price = 0.0
+    tx_days_window = int(_safe_float(_query_param_first("txdays") or _profile_value("txdays") or st.session_state.get("dashboard_txf_days_window", 3), default=3))
+    tx_days_window = max(1, min(30, tx_days_window))
+    tx_position_side = str(_query_param_first("txside") or _profile_value("txside") or st.session_state.get("dashboard_txf_position_side", "Call")).strip() or "Call"
+    if tx_position_side not in {"Call", "Put"}:
+        tx_position_side = "Call"
+    tx_premium_points = _safe_float(_query_param_first("txpremium") or _profile_value("txpremium") or st.session_state.get("dashboard_txf_premium_points", 0.0), default=0.0)
+    if pd.isna(tx_premium_points):
+        tx_premium_points = 0.0
+    tx_target_points = _safe_float(_query_param_first("txtarget") or _profile_value("txtarget") or st.session_state.get("dashboard_txf_target_points", 0.0), default=0.0)
+    if pd.isna(tx_target_points):
+        tx_target_points = 0.0
+    tx_delta_assumption = _safe_float(_query_param_first("txdelta") or _profile_value("txdelta") or st.session_state.get("dashboard_txf_delta_assumption", 0.05), default=0.05)
+    if pd.isna(tx_delta_assumption):
+        tx_delta_assumption = 0.05
+    tx_delta_assumption = max(0.01, min(1.0, float(tx_delta_assumption)))
+
     st.session_state["dashboard_mode"] = dashboard_mode
     st.session_state["dashboard_language"] = language
     st.session_state["dashboard_news_mode"] = news_mode
@@ -4200,6 +4541,12 @@ def load_dashboard_preferences() -> None:
     st.session_state["dashboard_manual_override"] = manual_override
     st.session_state["dashboard_manual_period"] = manual_period
     st.session_state["dashboard_manual_interval"] = manual_interval
+    st.session_state["dashboard_txf_entry_price"] = float(tx_entry_price)
+    st.session_state["dashboard_txf_days_window"] = int(tx_days_window)
+    st.session_state["dashboard_txf_position_side"] = tx_position_side
+    st.session_state["dashboard_txf_premium_points"] = float(tx_premium_points)
+    st.session_state["dashboard_txf_target_points"] = float(tx_target_points)
+    st.session_state["dashboard_txf_delta_assumption"] = float(tx_delta_assumption)
     st.session_state["_dashboard_prefs_loaded"] = True
 
 
@@ -17208,6 +17555,1799 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
 
 
 
+
+
+def _futures_points_text(value: object, digits: int = 1) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    return f"{numeric:,.{digits}f}"
+
+
+def _futures_point_amount(value: object, multiplier: float = TX_FUTURES_POINT_VALUE) -> object:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return pd.NA
+    return float(numeric * float(multiplier))
+
+
+def _futures_amount_text(value: object, digits: int = 0) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    return f"NT${numeric:,.{digits}f}"
+
+
+def _futures_status_label(kind: str) -> str:
+    mapping = {
+        "live": t("taiwan_futures_status_live"),
+        "delayed": t("taiwan_futures_status_delayed"),
+        "stale": t("taiwan_futures_status_stale"),
+    }
+    return mapping.get(str(kind), str(kind))
+
+
+def _futures_status_class(kind: object) -> str:
+    normalized = str(kind or "stale").strip().lower()
+    if normalized not in {"live", "delayed", "stale"}:
+        normalized = "stale"
+    return normalized
+
+
+def _futures_status_badge_html(snapshot: dict, label_prefix: str | None = None) -> str:
+    status = _futures_status_class((snapshot or {}).get("status", "stale"))
+    label = _futures_status_label(status)
+    prefix = f"{label_prefix}: " if label_prefix else ""
+    return f'<span class="tf-market-status-badge {escape(status)}">{escape(prefix + label)}</span>'
+
+
+def _clear_taiwan_futures_market_caches() -> None:
+    for cached_func in (fetch_taiwan_futures_lab_snapshot, fetch_taiwan_futures_range_proxy):
+        try:
+            cached_func.clear()
+        except Exception:
+            pass
+
+
+def _futures_public_state(snapshot: dict) -> str:
+    prices = [snapshot.get("taiex", {}).get("price"), snapshot.get("tx", {}).get("price")]
+    available = sum(0 if pd.isna(_safe_float(value)) else 1 for value in prices)
+    if available == 2:
+        return t("taiwan_futures_data_ok")
+    if available == 1:
+        return t("taiwan_futures_data_partial")
+    return t("taiwan_futures_data_missing")
+
+
+def _flatten_table_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    flattened = frame.copy()
+    flattened.columns = [
+        " ".join(str(part).strip() for part in col if str(part).strip() and not str(part).startswith("Unnamed"))
+        if isinstance(col, tuple)
+        else str(col).strip()
+        for col in flattened.columns
+    ]
+    flattened.columns = [re.sub(r"\s+", " ", str(col)).strip() for col in flattened.columns]
+    return flattened
+
+
+def _parse_timestamp_like(value: object, default_date: pd.Timestamp | None = None) -> pd.Timestamp:
+    if value is None or value is pd.NA:
+        return pd.NaT
+    raw = str(value).strip()
+    if not raw:
+        return pd.NaT
+    raw = raw.replace("年", "/").replace("月", "/").replace("日", "").replace(".", "/")
+    raw = re.sub(r"\s+", " ", raw)
+    if re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", raw):
+        if default_date is None:
+            base = pd.Timestamp.now(tz=TW_TZ)
+        else:
+            base = pd.Timestamp(default_date)
+            if base.tzinfo is None:
+                base = base.tz_localize(TW_TZ)
+            else:
+                base = base.tz_convert(TW_TZ)
+        parts = raw.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1])
+        second = int(parts[2]) if len(parts) >= 3 else 0
+        return base.replace(hour=hour, minute=minute, second=second, microsecond=0)
+    parsed = _parse_any_date_like(raw)
+    if pd.isna(parsed):
+        try:
+            parsed = pd.to_datetime(raw, errors="coerce")
+        except Exception:
+            parsed = pd.NaT
+    if pd.isna(parsed):
+        return pd.NaT
+    parsed = pd.Timestamp(parsed)
+    if parsed.tzinfo is None:
+        return parsed.tz_localize(TW_TZ)
+    return parsed.tz_convert(TW_TZ)
+
+
+
+
+def _parse_twse_mis_timestamp(row: dict, default_date: pd.Timestamp) -> pd.Timestamp:
+    date_token = str(row.get("d") or row.get("date") or "").strip()
+    time_token = str(row.get("t") or row.get("time") or row.get("ot") or "").strip()
+    if date_token and "/" in date_token:
+        raw = f"{date_token} {time_token}" if time_token else date_token
+        parsed = pd.to_datetime(raw, errors="coerce", format="%Y/%m/%d %H:%M:%S" if time_token.count(":") >= 2 else None)
+        if pd.isna(parsed):
+            parsed = pd.to_datetime(raw, errors="coerce")
+        if pd.notna(parsed):
+            parsed = pd.Timestamp(parsed)
+            return parsed.tz_localize(TW_TZ) if parsed.tzinfo is None else parsed.tz_convert(TW_TZ)
+    if time_token:
+        parsed = _parse_timestamp_like(time_token, default_date=default_date)
+        if pd.notna(parsed):
+            return parsed
+    return default_date
+
+
+def _extract_taiex_from_mis_payload(payload: object, default_date: pd.Timestamp) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    rows = payload.get("msgArray") or payload.get("msgarray") or payload.get("data") or []
+    if not isinstance(rows, list) or not rows:
+        return None
+    candidates = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text_blob = " ".join(str(value or "") for value in row.values())
+        if "t00" not in text_blob and "發行量加權股價指數" not in text_blob and "加權指數" not in text_blob:
+            continue
+        price = _safe_float(
+            row.get("z")
+            or row.get("pz")
+            or row.get("tv")
+            or row.get("latest_trade_price")
+            or _find_value_by_keywords(row, ("最新", "成交", "指數", "price", "last"))
+        )
+        if pd.isna(price):
+            continue
+        timestamp = _parse_twse_mis_timestamp(row, default_date)
+        candidates.append((timestamp, float(price), row))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0] if pd.notna(item[0]) else default_date)
+    latest_ts, latest_price, _ = candidates[-1]
+    now_tw = pd.Timestamp.now(tz=TW_TZ)
+    age_minutes = abs((now_tw - latest_ts).total_seconds()) / 60.0 if pd.notna(latest_ts) else 9999
+    return {
+        "price": latest_price,
+        "as_of": latest_ts if pd.notna(latest_ts) else now_tw,
+        "source": "TWSE MIS getStockInfo tse_t00.tw",
+        "status": "live" if age_minutes <= 10 else ("delayed" if age_minutes <= 30 else "stale"),
+        "note": t("taiwan_futures_public_realtime_note"),
+    }
+
+
+def _taifex_quote_candidates(now_tw: pd.Timestamp) -> list[str]:
+    stamp = int(now_tw.timestamp() * 1000)
+    return [
+        f"https://mis.taifex.com.tw/futures/api/getQuoteList?_={stamp}",
+        f"https://mis.taifex.com.tw/futures/api/getQuoteList?Symbol=TX&_= {stamp}".replace(" ", ""),
+        f"https://mis.taifex.com.tw/futures/api/getQuoteList?marketCode=0&_= {stamp}".replace(" ", ""),
+    ]
+
+
+def _flatten_json_records(payload: object) -> list[dict]:
+    records: list[dict] = []
+    if isinstance(payload, dict):
+        for value in payload.values():
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        records.append(item)
+                    elif isinstance(item, list):
+                        records.append({str(idx): cell for idx, cell in enumerate(item)})
+            elif isinstance(value, dict):
+                records.extend(_flatten_json_records(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                records.append(item)
+            elif isinstance(item, list):
+                records.append({str(idx): cell for idx, cell in enumerate(item)})
+    return records
+
+
+def _extract_txf_from_mis_payload(payload: object, default_time: pd.Timestamp) -> dict | None:
+    records = _flatten_json_records(payload)
+    if not records:
+        return None
+    best: dict | None = None
+    for record in records:
+        text_blob = " ".join(str(value or "") for value in record.values())
+        upper_blob = text_blob.upper()
+        if "TX" not in upper_blob and "臺股期貨" not in text_blob and "台股期貨" not in text_blob and "臺指期貨" not in text_blob:
+            continue
+        if "MTX" in upper_blob or "TMF" in upper_blob or "TXO" in upper_blob:
+            continue
+        price = _safe_float(
+            record.get("z")
+            or record.get("last")
+            or record.get("lastPrice")
+            or record.get("last_price")
+            or record.get("cl")
+            or record.get("close")
+            or _find_value_by_keywords(record, ("最後", "成交", "最新", "last", "price"))
+        )
+        if pd.isna(price):
+            numeric_values = [_safe_float(value) for value in record.values()]
+            numeric_values = [value for value in numeric_values if not pd.isna(value) and 10000 <= float(value) <= 100000]
+            if numeric_values:
+                price = numeric_values[0]
+        if pd.isna(price):
+            continue
+        contract = (
+            record.get("contract")
+            or record.get("Contract")
+            or record.get("商品代號")
+            or record.get("契約")
+            or record.get("symbol")
+            or record.get("ex")
+            or "TX"
+        )
+        time_value = (
+            record.get("t")
+            or record.get("time")
+            or record.get("timeStr")
+            or record.get("tradeTime")
+            or record.get("dateTime")
+            or record.get("成交時間")
+        )
+        timestamp = _parse_timestamp_like(time_value, default_date=default_time)
+        if pd.isna(timestamp):
+            timestamp = default_time
+        best = {
+            "contract": str(contract or "TX").strip() or "TX",
+            "price": float(price),
+            "change": _safe_float(record.get("ch") or record.get("change") or record.get("漲跌價")),
+            "change_pct": _safe_float(record.get("pch") or record.get("changePct") or record.get("漲跌%")),
+            "bid": _safe_float(record.get("b") or record.get("bid") or record.get("買價")),
+            "ask": _safe_float(record.get("a") or record.get("ask") or record.get("賣價")),
+            "as_of": timestamp,
+            "source": "TAIFEX MIS getQuoteList",
+            "status": "live",
+            "errors": [],
+        }
+        break
+    return best
+
+
+def _twse_taiex_public_candidates(now_tw: pd.Timestamp) -> list[str]:
+    date_token = now_tw.strftime("%Y%m%d")
+    stamp = int(now_tw.timestamp() * 1000)
+    return [
+        f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw&json=1&delay=0&_={stamp}",
+        f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_5MINS_HIST?response=json&date={date_token}&_={stamp}",
+        f"https://www.twse.com.tw/exchangeReport/MI_5MINS_HIST?response=json&date={date_token}&_={stamp}",
+        f"https://openapi.twse.com.tw/v1/indicesReport/MI_5MINS_HIST?_={stamp}",
+    ]
+
+
+
+def _extract_taiex_from_openapi_payload(payload: object, default_date: pd.Timestamp) -> dict | None:
+    rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    latest_price = pd.NA
+    latest_ts = pd.NaT
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        price = _safe_float(
+            _find_value_by_keywords(
+                row,
+                ("發行量加權股價指數", "加權股價指數", "指數", "ClosingIndex", "Index"),
+            )
+        )
+        if pd.isna(price):
+            continue
+        time_token = _find_value_by_keywords(
+            row,
+            ("時間", "時分", "時刻", "Time"),
+            ("日期", "Date"),
+        )
+        timestamp = _parse_timestamp_like(time_token, default_date=default_date)
+        if pd.isna(timestamp):
+            timestamp = default_date
+        latest_price = price
+        latest_ts = timestamp
+
+    if pd.isna(_safe_float(latest_price)):
+        return None
+
+    return {
+        "price": float(latest_price),
+        "as_of": latest_ts if pd.notna(latest_ts) else default_date,
+        "source": "TWSE OpenAPI MI_5MINS_HIST",
+        "status": "delayed",
+        "note": t("taiwan_futures_public_realtime_note"),
+    }
+
+
+def _extract_taiex_from_twse_payload(payload: object, default_date: pd.Timestamp) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    rows = payload.get("data") or payload.get("data9") or payload.get("aaData") or []
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    latest_row = None
+    latest_price = pd.NA
+    latest_ts = pd.NaT
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) < 2:
+            continue
+        time_token = str(row[0]).strip()
+        price = _safe_float(row[1])
+        if pd.isna(price):
+            continue
+        timestamp = _parse_timestamp_like(time_token, default_date=default_date)
+        if pd.isna(timestamp):
+            timestamp = default_date
+        latest_row = row
+        latest_price = price
+        latest_ts = timestamp
+
+    if latest_row is None or pd.isna(_safe_float(latest_price)):
+        return None
+
+    return {
+        "price": float(latest_price),
+        "as_of": latest_ts,
+        "source": "TWSE MI_5MINS_INDEX public page",
+        "status": "delayed",
+        "note": t("taiwan_futures_public_realtime_note"),
+    }
+
+
+def fetch_public_taiex_snapshot() -> dict:
+    now_tw = pd.Timestamp.now(tz=TW_TZ)
+    errors: list[str] = []
+    for url in _twse_taiex_public_candidates(now_tw):
+        try:
+            payload = _fetch_json_url(url, timeout=8)
+            if "getStockInfo.jsp" in url:
+                snapshot = _extract_taiex_from_mis_payload(payload, default_date=now_tw)
+            elif "openapi.twse.com.tw" in url:
+                snapshot = _extract_taiex_from_openapi_payload(payload, default_date=now_tw.normalize())
+            else:
+                snapshot = _extract_taiex_from_twse_payload(payload, default_date=now_tw.normalize())
+            if snapshot:
+                age_minutes = 9999.0
+                try:
+                    as_of = pd.Timestamp(snapshot.get("as_of"))
+                    if as_of.tzinfo is None:
+                        as_of = as_of.tz_localize(TW_TZ)
+                    else:
+                        as_of = as_of.tz_convert(TW_TZ)
+                    age_minutes = abs((now_tw - as_of).total_seconds()) / 60.0
+                except Exception:
+                    pass
+                # Prefer the real-time MIS endpoint. Historical endpoints are kept only as fallback.
+                if "getStockInfo.jsp" in url or age_minutes <= 45:
+                    snapshot["errors"] = errors
+                    return snapshot
+                errors.append(f"TWSE: skipped stale candidate {snapshot.get('source', 'unknown')} as_of={snapshot.get('as_of')}")
+        except HTTPError as exc:
+            if int(getattr(exc, "code", 0) or 0) != 404:
+                errors.append(f"TWSE: {exc}")
+        except Exception as exc:
+            errors.append(f"TWSE: {exc}")
+
+    fallback = fetch_live_reference_quotes(("^TWII",)).get("^TWII", {}) or {}
+    price = _safe_float(fallback.get("price"))
+    as_of = _parse_timestamp_like(fallback.get("as_of"), default_date=now_tw)
+    status = "stale"
+    if not pd.isna(as_of):
+        age_minutes = abs((now_tw - as_of).total_seconds()) / 60.0
+        status = "live" if age_minutes <= 20 else "stale"
+    return {
+        "price": price if not pd.isna(price) else pd.NA,
+        "as_of": as_of if not pd.isna(as_of) else now_tw,
+        "source": "Yahoo Finance public quote fallback",
+        "status": status,
+        "note": t("taiwan_futures_public_realtime_note"),
+        "errors": errors,
+    }
+
+
+def _select_txf_row_from_tables(tables: list[pd.DataFrame]) -> dict | None:
+    for frame in tables:
+        normalized = _flatten_table_columns(frame)
+        if normalized.empty:
+            continue
+        normalized = normalized.dropna(how="all")
+        if normalized.empty:
+            continue
+
+        records = normalized.to_dict(orient="records")
+        for record in records:
+            text_blob = " ".join(str(value or "") for value in record.values())
+            if "TX" not in text_blob and "臺股期貨" not in text_blob:
+                continue
+
+            contract_value = next(
+                (
+                    value
+                    for key, value in record.items()
+                    if any(token in str(key) for token in ["到期", "月份", "週別", "契約"])
+                ),
+                "",
+            )
+            contract_text = re.sub(r"\D+", "", str(contract_value))
+            if contract_text and len(contract_text) < 6:
+                continue
+
+            price_value = None
+            for key, value in record.items():
+                key_text = str(key)
+                if "最後" in key_text and "成交價" in key_text:
+                    price_value = value
+                    break
+            if price_value is None:
+                for key, value in record.items():
+                    key_text = str(key)
+                    if "最後" in key_text and "成交" in key_text:
+                        price_value = value
+                        break
+
+            price = _safe_float(price_value)
+            if pd.isna(price):
+                continue
+
+            change_value = next((value for key, value in record.items() if "漲跌價" in str(key)), pd.NA)
+            change_pct = next((value for key, value in record.items() if "漲跌%" in str(key)), pd.NA)
+            bid_value = next((value for key, value in record.items() if "最佳買價" in str(key)), pd.NA)
+            ask_value = next((value for key, value in record.items() if "最佳賣價" in str(key)), pd.NA)
+
+            return {
+                "contract": str(contract_value or "TX").strip() or "TX",
+                "price": float(price),
+                "change": _safe_float(change_value),
+                "change_pct": _safe_float(change_pct),
+                "bid": _safe_float(bid_value),
+                "ask": _safe_float(ask_value),
+            }
+    return None
+
+
+def fetch_public_txf_snapshot() -> dict:
+    now_tw = pd.Timestamp.now(tz=TW_TZ)
+    errors: list[str] = []
+
+    for url in _taifex_quote_candidates(now_tw):
+        try:
+            payload = _fetch_json_url(url, timeout=8)
+            selected = _extract_txf_from_mis_payload(payload, default_time=now_tw)
+            if selected:
+                selected["errors"] = errors
+                return selected
+        except HTTPError as exc:
+            errors.append(f"TAIFEX MIS: HTTP {getattr(exc, 'code', 'error')}")
+        except Exception as exc:
+            errors.append(f"TAIFEX MIS: {exc}")
+
+    url = f"https://www.taifex.com.tw/cht/3/futDailyMarketReport?_={int(now_tw.timestamp() * 1000)}"
+    try:
+        html = _fetch_text_url(url, timeout=10, accept="text/html,application/xhtml+xml,*/*")
+        tables = pd.read_html(io.StringIO(html))
+        selected = _select_txf_row_from_tables(tables)
+        if selected:
+            selected["as_of"] = now_tw
+            selected["source"] = "TAIFEX futDailyMarketReport"
+            selected["status"] = "delayed"
+            selected["errors"] = errors
+            return selected
+        errors.append("TAIFEX: TX row was not found in parsed tables.")
+    except Exception as exc:
+        errors.append(f"TAIFEX: {exc}")
+
+    return {
+        "contract": "TX",
+        "price": pd.NA,
+        "change": pd.NA,
+        "change_pct": pd.NA,
+        "bid": pd.NA,
+        "ask": pd.NA,
+        "as_of": now_tw,
+        "source": "TAIFEX public quote",
+        "status": "stale",
+        "errors": errors,
+    }
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def fetch_taiwan_futures_lab_snapshot() -> dict:
+    taiex = fetch_public_taiex_snapshot()
+    tx = fetch_public_txf_snapshot()
+    errors = []
+    errors.extend(taiex.get("errors", []) or [])
+    errors.extend(tx.get("errors", []) or [])
+    return {
+        "taiex": taiex,
+        "tx": tx,
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ),
+        "errors": errors,
+    }
+
+
+def _futures_diag_row(label: str, snapshot: dict) -> dict:
+    timestamp = snapshot.get("as_of")
+    if pd.notna(_safe_float(snapshot.get("price"))):
+        price_text = _futures_points_text(snapshot.get("price"), digits=2)
+    else:
+        price_text = "—"
+    try:
+        timestamp = pd.Timestamp(timestamp)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize(TW_TZ)
+        else:
+            timestamp = timestamp.tz_convert(TW_TZ)
+        timestamp_text = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        timestamp_text = "—"
+    return {
+        t("taiwan_futures_source"): label,
+        t("taiwan_futures_status"): _futures_status_label(snapshot.get("status", "stale")),
+        t("taiwan_futures_updated"): timestamp_text,
+        t("last_price"): price_text,
+        "Raw source": str(snapshot.get("source", "—")),
+        "Errors": " | ".join(str(item) for item in (snapshot.get("errors", []) or [])) or "—",
+    }
+
+
+@st.cache_data(ttl=20 * 60, show_spinner=False)
+def fetch_taiwan_futures_range_proxy() -> dict:
+    now_tw = pd.Timestamp.now(tz=TW_TZ)
+    try:
+        frame = yf.download("^TWII", period="1mo", interval="1d", auto_adjust=False, progress=False, threads=False)
+        if frame is None or frame.empty:
+            raise ValueError("No daily range data returned.")
+        normalized = frame.copy()
+        if isinstance(normalized.columns, pd.MultiIndex):
+            flattened = []
+            for col in normalized.columns:
+                if isinstance(col, tuple):
+                    flattened.append(str(col[0] or col[-1]))
+                else:
+                    flattened.append(str(col))
+            normalized.columns = flattened
+        normalized.columns = [str(col).strip() for col in normalized.columns]
+        high_col = next((col for col in normalized.columns if str(col).strip().lower() == "high"), None)
+        low_col = next((col for col in normalized.columns if str(col).strip().lower() == "low"), None)
+        if not high_col or not low_col:
+            raise ValueError("High/Low columns were not found.")
+        ranges = pd.to_numeric(normalized[high_col], errors="coerce") - pd.to_numeric(normalized[low_col], errors="coerce")
+        ranges = ranges.dropna().tail(5)
+        if ranges.empty:
+            raise ValueError("No valid range rows were available.")
+        as_of = pd.Timestamp(ranges.index[-1])
+        if as_of.tzinfo is None:
+            as_of = as_of.tz_localize(TW_TZ)
+        else:
+            as_of = as_of.tz_convert(TW_TZ)
+        return {
+            "avg_range": float(ranges.mean()),
+            "days_count": int(ranges.shape[0]),
+            "as_of": as_of,
+            "source": "Yahoo Finance ^TWII daily range proxy",
+            "status": "live",
+            "errors": [],
+        }
+    except Exception as exc:
+        return {
+            "avg_range": pd.NA,
+            "days_count": 0,
+            "as_of": now_tw,
+            "source": "Yahoo Finance ^TWII daily range proxy",
+            "status": "stale",
+            "errors": [f"RANGE: {exc}"],
+        }
+
+
+def _futures_current_pnl(side: str, tx_price: object, reference_price: object) -> object:
+    tx_numeric = _safe_float(tx_price)
+    reference_numeric = _safe_float(reference_price)
+    if pd.isna(tx_numeric) or pd.isna(reference_numeric):
+        return pd.NA
+    return float(tx_numeric - reference_numeric) if str(side) in {"Call", "Call"} else float(reference_numeric - tx_numeric)
+
+
+def _futures_break_even_price(side: str, strike_price: object, premium_points: object) -> object:
+    strike_numeric = _safe_float(strike_price)
+    premium_numeric = _safe_float(premium_points, default=0.0)
+    if pd.isna(strike_numeric) or pd.isna(premium_numeric):
+        return pd.NA
+    return float(strike_numeric + premium_numeric) if str(side) in {"Call", "Call"} else float(strike_numeric - premium_numeric)
+
+
+def _futures_break_even_needed(current_pnl: object) -> object:
+    pnl_numeric = _safe_float(current_pnl)
+    if pd.isna(pnl_numeric):
+        return pd.NA
+    return float(max(0.0, -pnl_numeric))
+
+
+def _futures_target_needed(current_pnl: object, target_points: object) -> object:
+    pnl_numeric = _safe_float(current_pnl)
+    target_numeric = _safe_float(target_points, default=0.0)
+    if pd.isna(pnl_numeric) or pd.isna(target_numeric):
+        return pd.NA
+    return float(max(0.0, target_numeric - pnl_numeric))
+
+
+def _futures_daily_pace(points_needed: object, days_window: int) -> object:
+    points_numeric = _safe_float(points_needed)
+    if pd.isna(points_numeric) or days_window <= 0:
+        return pd.NA
+    return float(points_numeric / days_window)
+
+
+def _futures_feasibility_ratio(daily_need: object, avg_range: object) -> object:
+    daily_numeric = _safe_float(daily_need)
+    range_numeric = _safe_float(avg_range)
+    if pd.isna(daily_numeric) or pd.isna(range_numeric) or range_numeric <= 0:
+        return pd.NA
+    return float(daily_numeric / range_numeric)
+
+
+def _futures_pressure_state(days_window: int, feasibility_ratio: object, current_pnl: object) -> str:
+    ratio = _safe_float(feasibility_ratio)
+    pnl_numeric = _safe_float(current_pnl)
+    if pd.isna(ratio):
+        return "critical" if days_window <= 3 and (pd.isna(pnl_numeric) or pnl_numeric < 0) else "moderate"
+    if not pd.isna(pnl_numeric) and pnl_numeric >= 0 and ratio <= 0:
+        return "low"
+    if ratio > 1.0:
+        return "critical"
+    if ratio > 0.65 or (days_window <= 3 and ratio > 0.60):
+        return "high"
+    if ratio > 0.35:
+        return "moderate"
+    return "low"
+
+
+def _futures_pressure_label(level: str) -> str:
+    mapping = {
+        "low": t("taiwan_futures_pressure_low"),
+        "moderate": t("taiwan_futures_pressure_moderate"),
+        "high": t("taiwan_futures_pressure_high"),
+        "critical": t("taiwan_futures_pressure_critical"),
+    }
+    return mapping.get(str(level), str(level))
+
+
+def _futures_pressure_note(level: str) -> str:
+    mapping = {
+        "low": t("taiwan_futures_pressure_note_low"),
+        "moderate": t("taiwan_futures_pressure_note_moderate"),
+        "high": t("taiwan_futures_pressure_note_high"),
+        "critical": t("taiwan_futures_pressure_note_critical"),
+    }
+    return mapping.get(str(level), "")
+
+
+
+
+def _futures_pressure_action(level: str, current_pnl: object) -> str:
+    pnl_numeric = _safe_float(current_pnl)
+    if str(level) == "low":
+        return t("taiwan_futures_action_hold")
+    if str(level) == "moderate":
+        return t("taiwan_futures_action_observe") if pd.isna(pnl_numeric) or pnl_numeric <= 0 else t("taiwan_futures_action_hold")
+    if str(level) == "high":
+        return t("taiwan_futures_action_reduce")
+    return t("taiwan_futures_action_exit")
+
+
+def _futures_contract_quick_rows(current_pnl: object, contracts: tuple[int, ...] = (1, 2, 5)) -> list[dict]:
+    rows: list[dict] = []
+    pnl_numeric = _safe_float(current_pnl)
+    for qty in contracts:
+        estimated = _futures_point_amount(pnl_numeric, TX_FUTURES_POINT_VALUE * float(qty))
+        rows.append(
+            {
+                t("taiwan_futures_contract_size"): f"{int(qty)}口",
+                t("taiwan_futures_amount_estimate"): _futures_amount_text(estimated, 0),
+            }
+        )
+    return rows
+
+
+def _options_stage_info(side: str, tx_price: object, strike_price: object, break_even_price: object, target_points: object, days_window: int) -> dict:
+    tx_numeric = _safe_float(tx_price)
+    strike_numeric = _safe_float(strike_price)
+    break_even_numeric = _safe_float(break_even_price)
+    target_numeric = _safe_float(target_points, default=0.0)
+    if pd.isna(tx_numeric) or pd.isna(strike_numeric) or pd.isna(break_even_numeric):
+        return {
+            "stage_key": "otm",
+            "stage_label": t("taiwan_options_stage_otm"),
+            "zone_label": "—",
+            "action_label": t("taiwan_options_action_wait"),
+            "comment": t("taiwan_futures_data_missing"),
+            "risk": t("taiwan_futures_data_missing"),
+            "tip": t("taiwan_futures_data_missing"),
+            "next_zone": "—",
+        }
+
+    flat_band = max(20.0, target_numeric * 0.2 if target_numeric > 0 else 20.0)
+    if str(side) == "Call":
+        target_price = break_even_numeric + target_numeric
+        if tx_numeric < strike_numeric:
+            stage_key = "otm"
+            zone_label = t("taiwan_options_zone_unfavorable_call")
+            comment = t("taiwan_options_comment_otm_call")
+            next_zone = t("taiwan_options_zone_recovery_call")
+            action_label = t("taiwan_options_action_wait") if days_window > 2 else t("taiwan_futures_action_exit")
+            risk = t("taiwan_futures_pressure_note_critical") if days_window <= 2 else t("taiwan_futures_pressure_note_high")
+            tip = "若兩日內仍無法站回履約價，時間價值壓力會變快。" if str(st.session_state.get("language",""))=="繁體中文" else "If TX cannot reclaim strike soon, theta pressure rises fast."
+        elif tx_numeric < break_even_numeric - flat_band:
+            stage_key = "pre_be"
+            zone_label = t("taiwan_options_zone_recovery_call")
+            comment = t("taiwan_options_comment_pre_be_call")
+            next_zone = t("taiwan_options_zone_flat_call")
+            action_label = t("taiwan_options_action_watch")
+            risk = "還沒回本，越接近結算越容易被時間價值吃掉。" if str(st.session_state.get("language",""))=="繁體中文" else "Still below break-even; theta matters more as expiry nears."
+            tip = "先看能否連續站穩回本價附近，再考慮明顯賣出。" if str(st.session_state.get("language",""))=="繁體中文" else "Look for a stable push toward break-even before heavier selling."
+        elif tx_numeric <= break_even_numeric + flat_band:
+            stage_key = "at_be"
+            zone_label = t("taiwan_options_zone_flat_call")
+            comment = t("taiwan_options_comment_at_be_call")
+            next_zone = t("taiwan_options_zone_profit_call")
+            action_label = t("taiwan_options_action_scale")
+            risk = "若回本附近站不穩，獲利很容易再縮回去。" if str(st.session_state.get("language",""))=="繁體中文" else "If TX cannot hold near break-even, gains can fade quickly."
+            tip = "這一段最適合先賣一部分，降低後面結算壓力。" if str(st.session_state.get("language",""))=="繁體中文" else "This is often the first sensible scale-out zone."
+        elif target_numeric > 0 and tx_numeric >= target_price:
+            stage_key = "target"
+            zone_label = t("taiwan_options_zone_target_call")
+            comment = t("taiwan_options_comment_target_call")
+            next_zone = "—"
+            action_label = t("taiwan_options_action_target")
+            risk = "再追價的報酬通常不如先鎖住已有優勢。" if str(st.session_state.get("language",""))=="繁體中文" else "Pushing for extra upside is often less attractive than locking gains."
+            tip = "這通常是比較有利的賣出 Call 區。" if str(st.session_state.get("language",""))=="繁體中文" else "This is usually a favorable Call-selling zone."
+        else:
+            stage_key = "profit"
+            zone_label = t("taiwan_options_zone_profit_call")
+            comment = t("taiwan_options_comment_profit_call")
+            next_zone = t("taiwan_options_zone_target_call") if target_numeric > 0 else "—"
+            action_label = t("taiwan_options_action_harvest")
+            risk = "若標的不再續強，選擇權利潤回吐會比標的更快。" if str(st.session_state.get("language",""))=="繁體中文" else "If momentum fades, option gains can retrace faster than the underlying."
+            tip = "可以分批賣出，不需要等到滿分才處理。" if str(st.session_state.get("language",""))=="繁體中文" else "Harvest in batches instead of waiting for a perfect exit."
+    else:
+        target_price = break_even_numeric - target_numeric
+        if tx_numeric > strike_numeric:
+            stage_key = "otm"
+            zone_label = t("taiwan_options_zone_unfavorable_put")
+            comment = t("taiwan_options_comment_otm_put")
+            next_zone = t("taiwan_options_zone_recovery_put")
+            action_label = t("taiwan_options_action_wait") if days_window > 2 else t("taiwan_futures_action_exit")
+            risk = t("taiwan_futures_pressure_note_critical") if days_window <= 2 else t("taiwan_futures_pressure_note_high")
+            tip = "若兩日內仍無法跌回履約價下方，時間價值壓力會變快。" if str(st.session_state.get("language",""))=="繁體中文" else "If TX cannot fall back below strike soon, theta pressure rises fast."
+        elif tx_numeric > break_even_numeric + flat_band:
+            stage_key = "pre_be"
+            zone_label = t("taiwan_options_zone_recovery_put")
+            comment = t("taiwan_options_comment_pre_be_put")
+            next_zone = t("taiwan_options_zone_flat_put")
+            action_label = t("taiwan_options_action_watch")
+            risk = "還沒回本，越接近結算越容易被時間價值吃掉。" if str(st.session_state.get("language",""))=="繁體中文" else "Still below break-even on P/L terms; theta matters more as expiry nears."
+            tip = "先看能否持續跌近回本價，再考慮明顯賣出。" if str(st.session_state.get("language",""))=="繁體中文" else "Wait for a cleaner move toward break-even before heavier selling."
+        elif tx_numeric >= break_even_numeric - flat_band:
+            stage_key = "at_be"
+            zone_label = t("taiwan_options_zone_flat_put")
+            comment = t("taiwan_options_comment_at_be_put")
+            next_zone = t("taiwan_options_zone_profit_put")
+            action_label = t("taiwan_options_action_scale")
+            risk = "若回本附近守不住，獲利很容易再縮回去。" if str(st.session_state.get("language",""))=="繁體中文" else "If TX cannot stay near put break-even, gains can fade quickly."
+            tip = "這一段最適合先賣一部分，降低後面結算壓力。" if str(st.session_state.get("language",""))=="繁體中文" else "This is often the first sensible scale-out zone."
+        elif target_numeric > 0 and tx_numeric <= target_price:
+            stage_key = "target"
+            zone_label = t("taiwan_options_zone_target_put")
+            comment = t("taiwan_options_comment_target_put")
+            next_zone = "—"
+            action_label = t("taiwan_options_action_target")
+            risk = "再追跌的報酬通常不如先鎖住已有優勢。" if str(st.session_state.get("language",""))=="繁體中文" else "Pushing for extra downside is often less attractive than locking gains."
+            tip = "這通常是比較有利的賣出 Put 區。" if str(st.session_state.get("language",""))=="繁體中文" else "This is usually a favorable Put-selling zone."
+        else:
+            stage_key = "profit"
+            zone_label = t("taiwan_options_zone_profit_put")
+            comment = t("taiwan_options_comment_profit_put")
+            next_zone = t("taiwan_options_zone_target_put") if target_numeric > 0 else "—"
+            action_label = t("taiwan_options_action_harvest")
+            risk = "若跌勢不再延續，選擇權利潤回吐會比標的更快。" if str(st.session_state.get("language",""))=="繁體中文" else "If downside momentum fades, option gains can retrace faster than the underlying."
+            tip = "可以分批賣出，不需要等到滿分才處理。" if str(st.session_state.get("language",""))=="繁體中文" else "Harvest in batches instead of waiting for a perfect exit."
+
+    stage_label = t({
+        "otm": "taiwan_options_stage_otm",
+        "pre_be": "taiwan_options_stage_pre_be",
+        "at_be": "taiwan_options_stage_at_be",
+        "profit": "taiwan_options_stage_profit",
+        "target": "taiwan_options_stage_target",
+    }[stage_key])
+
+    return {
+        "stage_key": stage_key,
+        "stage_label": stage_label,
+        "zone_label": zone_label,
+        "action_label": action_label,
+        "comment": comment,
+        "risk": risk,
+        "tip": tip,
+        "next_zone": next_zone,
+    }
+
+
+def _options_exit_map_rows(side: str, strike_price: object, break_even_price: object, target_points: object) -> list[dict]:
+    strike_numeric = _safe_float(strike_price)
+    be_numeric = _safe_float(break_even_price)
+    target_numeric = _safe_float(target_points, default=0.0)
+    if pd.isna(strike_numeric) or pd.isna(be_numeric):
+        return []
+    flat_band = max(20.0, target_numeric * 0.2 if target_numeric > 0 else 20.0)
+    rows = []
+    if str(side) == "Call":
+        rows = [
+            (t("taiwan_options_stage_otm"), t("taiwan_options_zone_unfavorable_call"), t("taiwan_options_action_wait"), t("taiwan_options_comment_otm_call")),
+            (t("taiwan_options_stage_pre_be"), t("taiwan_options_zone_recovery_call"), t("taiwan_options_action_watch"), t("taiwan_options_comment_pre_be_call")),
+            (t("taiwan_options_stage_at_be"), f"{_futures_points_text(be_numeric-flat_band,0)} ~ {_futures_points_text(be_numeric+flat_band,0)}", t("taiwan_options_action_scale"), t("taiwan_options_comment_at_be_call")),
+            (t("taiwan_options_stage_profit"), t("taiwan_options_zone_profit_call"), t("taiwan_options_action_harvest"), t("taiwan_options_comment_profit_call")),
+        ]
+        if target_numeric > 0:
+            rows.append((t("taiwan_options_stage_target"), f">= {_futures_points_text(be_numeric+target_numeric,0)}", t("taiwan_options_action_target"), t("taiwan_options_comment_target_call")))
+    else:
+        rows = [
+            (t("taiwan_options_stage_otm"), t("taiwan_options_zone_unfavorable_put"), t("taiwan_options_action_wait"), t("taiwan_options_comment_otm_put")),
+            (t("taiwan_options_stage_pre_be"), t("taiwan_options_zone_recovery_put"), t("taiwan_options_action_watch"), t("taiwan_options_comment_pre_be_put")),
+            (t("taiwan_options_stage_at_be"), f"{_futures_points_text(be_numeric+flat_band,0)} ~ {_futures_points_text(be_numeric-flat_band,0)}", t("taiwan_options_action_scale"), t("taiwan_options_comment_at_be_put")),
+            (t("taiwan_options_stage_profit"), t("taiwan_options_zone_profit_put"), t("taiwan_options_action_harvest"), t("taiwan_options_comment_profit_put")),
+        ]
+        if target_numeric > 0:
+            rows.append((t("taiwan_options_stage_target"), f"<= {_futures_points_text(be_numeric-target_numeric,0)}", t("taiwan_options_action_target"), t("taiwan_options_comment_target_put")))
+    return [
+        {
+            t("taiwan_options_stage_col"): a,
+            t("taiwan_options_zone_col"): b,
+            t("taiwan_options_action_col"): c,
+            t("taiwan_options_comment_col"): d,
+        }
+        for a,b,c,d in rows
+    ]
+
+
+def _options_contract_exposure_rows(current_pnl: object, days_window: int, contracts: tuple[int, ...] = (1, 2, 5)) -> list[dict]:
+    rows = []
+    gap_numeric = _safe_float(_futures_break_even_needed(current_pnl), default=0.0)
+    current_numeric = _safe_float(current_pnl)
+    pace_numeric = _safe_float(_futures_daily_pace(gap_numeric, days_window), default=0.0)
+    for qty in contracts:
+        est = _futures_point_amount(gap_numeric, TX_FUTURES_POINT_VALUE * float(qty))
+        if pd.notna(current_numeric) and current_numeric >= 0:
+            comment = "已進入回本或獲利區，可按口數分批賣出，口數越大越適合提早鎖利。" if str(st.session_state.get("language",""))=="繁體中文" else "Already at/above break-even; larger size usually favors earlier scaling out."
+        else:
+            comment = (
+                f"若仍差 {_futures_points_text(gap_numeric,1)} 點回本，{int(qty)} 口代表要承受約 {_futures_amount_text(est,0)} 的點值壓力；平均每天需 {_futures_points_text(pace_numeric,1)} 點。"
+                if str(st.session_state.get("language",""))=="繁體中文"
+                else f"If break-even is still {gap_numeric:.1f} points away, {int(qty)} contracts imply about {_futures_amount_text(est,0)} of point-value pressure and {pace_numeric:.1f} points/day."
+            )
+        rows.append({
+            t("taiwan_futures_contract_size"): f"{int(qty)}口",
+            t("taiwan_futures_amount_estimate"): _futures_amount_text(est, 0),
+            t("taiwan_options_contract_comment"): comment,
+        })
+    return rows
+
+
+
+
+def _options_estimated_premium(side: str, current_tx: object, scenario_tx: object, current_premium: object, delta_assumption: object) -> object:
+    current_tx_numeric = _safe_float(current_tx)
+    scenario_tx_numeric = _safe_float(scenario_tx)
+    premium_numeric = _safe_float(current_premium)
+    delta_numeric = _safe_float(delta_assumption)
+    if pd.isna(current_tx_numeric) or pd.isna(scenario_tx_numeric) or pd.isna(premium_numeric) or pd.isna(delta_numeric):
+        return pd.NA
+    favorable_move = float(scenario_tx_numeric - current_tx_numeric) if str(side) == "Call" else float(current_tx_numeric - scenario_tx_numeric)
+    return float(max(0.0, premium_numeric + favorable_move * delta_numeric))
+
+
+def _options_underlying_move_for_premium_increase(delta_assumption: object, premium_increase: object) -> object:
+    delta_numeric = _safe_float(delta_assumption)
+    premium_numeric = _safe_float(premium_increase)
+    if pd.isna(delta_numeric) or pd.isna(premium_numeric) or delta_numeric <= 0:
+        return pd.NA
+    return float(premium_numeric / delta_numeric)
+
+
+def _options_premium_push_rows(side: str, current_tx: object, current_premium: object, delta_assumption: object) -> list[dict]:
+    tx_numeric = _safe_float(current_tx)
+    premium_numeric = _safe_float(current_premium)
+    delta_numeric = _safe_float(delta_assumption)
+    if pd.isna(tx_numeric) or pd.isna(premium_numeric) or pd.isna(delta_numeric) or delta_numeric <= 0:
+        return []
+    rows = []
+    for gain in (5, 10, 20, 40):
+        move_needed = _options_underlying_move_for_premium_increase(delta_numeric, gain)
+        target_tx = tx_numeric + move_needed if str(side) == "Call" else tx_numeric - move_needed
+        rows.append({
+            t("taiwan_options_premium_goal_col"): f"+{int(gain)}",
+            t("taiwan_options_delta_assumption"): f"{delta_numeric:.2f}",
+            t("taiwan_options_tx_move_needed_col"): _futures_points_text(move_needed, 1),
+            t("taiwan_options_target_tx_col"): _futures_points_text(target_tx, 1),
+            t("taiwan_options_premium_est_col"): _futures_points_text(premium_numeric + gain, 1),
+        })
+    return rows
+
+
+def _options_formula_example_text(side: str, strike_price: object, premium_points: object, current_tx: object, delta_assumption: object) -> str:
+    strike_numeric = _safe_float(strike_price)
+    premium_numeric = _safe_float(premium_points)
+    tx_numeric = _safe_float(current_tx)
+    delta_numeric = _safe_float(delta_assumption)
+    if pd.isna(strike_numeric) or pd.isna(premium_numeric) or pd.isna(tx_numeric) or pd.isna(delta_numeric) or delta_numeric <= 0:
+        return t("taiwan_futures_data_missing")
+    break_even = _futures_break_even_price(side, strike_numeric, premium_numeric)
+    gap = _futures_break_even_needed(_futures_current_pnl(side, tx_numeric, break_even))
+    plus10 = _options_underlying_move_for_premium_increase(delta_numeric, 10.0)
+    if str(get_lang()) == "繁體中文":
+        if str(side) == "Call":
+            return f"回本價約為 {_futures_points_text(break_even,1)}，目前距離回本約 {_futures_points_text(gap,1)} 點。若 delta 假設 {delta_numeric:.2f}，權利金每想多 +10 點，台指期大約要再漲 {_futures_points_text(plus10,1)} 點。"
+        return f"回本價約為 {_futures_points_text(break_even,1)}，目前距離回本約 {_futures_points_text(gap,1)} 點。若 delta 假設 {delta_numeric:.2f}，權利金每想多 +10 點，台指期大約要再跌 {_futures_points_text(plus10,1)} 點。"
+    if str(side) == "Call":
+        return f"Break-even is about {_futures_points_text(break_even,1)}, still {_futures_points_text(gap,1)} points away. With delta assumed at {delta_numeric:.2f}, every +10 premium points roughly needs another {_futures_points_text(plus10,1)} TX points higher."
+    return f"Break-even is about {_futures_points_text(break_even,1)}, still {_futures_points_text(gap,1)} points away. With delta assumed at {delta_numeric:.2f}, every +10 premium points roughly needs another {_futures_points_text(plus10,1)} TX points lower."
+
+def inject_taiwan_futures_dashboard_overrides(theme_mode: str = "Dark Horizon") -> None:
+    is_light = str(theme_mode) == "Light Horizon"
+    input_color = "#091423" if is_light else "#eef6ff"
+    input_placeholder = "rgba(9,20,35,.42)" if is_light else "rgba(191,210,232,.46)"
+    field_bg = "rgba(255,255,255,.78)" if is_light else "rgba(255,255,255,.06)"
+    field_border = "rgba(56,189,248,.18)" if is_light else "rgba(56,189,248,.24)"
+    table_head = "rgba(56,189,248,.10)" if is_light else "rgba(56,189,248,.12)"
+    table_row = "rgba(255,255,255,.90)" if is_light else "rgba(5,12,26,.72)"
+    table_row_alt = "rgba(246,250,255,.94)" if is_light else "rgba(8,19,37,.76)"
+    table_border = "rgba(56,189,248,.18)" if is_light else "rgba(56,189,248,.14)"
+    ink = "#091423" if is_light else "#edf6ff"
+    soft = "#35506f" if is_light else "#bfd2e8"
+    badge_bg = "rgba(56,189,248,.12)" if is_light else "rgba(56,189,248,.14)"
+
+    st.markdown(
+        f"""
+        <style>
+        section[data-testid="stSidebar"] [data-baseweb="input"] input,
+        section[data-testid="stSidebar"] .stTextInput input,
+        section[data-testid="stSidebar"] .stNumberInput input {{
+            color: {input_color} !important;
+            -webkit-text-fill-color: {input_color} !important;
+            caret-color: {input_color} !important;
+            font-weight: 800 !important;
+        }}
+
+        section[data-testid="stSidebar"] [data-baseweb="input"] input::placeholder,
+        section[data-testid="stSidebar"] .stTextInput input::placeholder,
+        section[data-testid="stSidebar"] .stNumberInput input::placeholder {{
+            color: {input_placeholder} !important;
+            -webkit-text-fill-color: {input_placeholder} !important;
+            opacity: 1 !important;
+        }}
+
+        section[data-testid="stSidebar"] [data-baseweb="select"] > div,
+        section[data-testid="stSidebar"] [data-baseweb="input"] > div,
+        section[data-testid="stSidebar"] .stTextInput > div > div,
+        section[data-testid="stSidebar"] .stNumberInput > div > div,
+        section[data-testid="stSidebar"] .stNumberInput [data-baseweb="input"] > div {{
+            background: {field_bg} !important;
+            border-color: {field_border} !important;
+            color: {input_color} !important;
+            box-shadow: none !important;
+        }}
+
+        section[data-testid="stSidebar"] .stNumberInput button,
+        section[data-testid="stSidebar"] .stNumberInput button[kind],
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepUp"],
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepDown"] {{
+            background: {field_bg} !important;
+            border-color: {field_border} !important;
+            color: {ink} !important;
+        }}
+
+        section[data-testid="stSidebar"] .stNumberInput button svg,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepUp"] svg,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepDown"] svg,
+        section[data-testid="stSidebar"] .stNumberInput button path {{
+            color: {ink} !important;
+            fill: {ink} !important;
+            stroke: {ink} !important;
+        }}
+
+        section[data-testid="stSidebar"] .stNumberInput button span,
+        section[data-testid="stSidebar"] .stNumberInput button div,
+        section[data-testid="stSidebar"] .stNumberInput button p,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepUp"] span,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepDown"] span {{
+            color: {ink} !important;
+        }}
+
+        section[data-testid="stSidebar"] .stNumberInput button:hover,
+        section[data-testid="stSidebar"] .stNumberInput button:focus,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepUp"]:hover,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepDown"]:hover {{
+            background: rgba(56, 189, 248, 0.16) !important;
+            border-color: rgba(56, 189, 248, 0.34) !important;
+        }}
+
+        section[data-testid="stSidebar"] .stNumberInput button:focus-visible,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepUp"]:focus-visible,
+        section[data-testid="stSidebar"] [data-testid="stNumberInputStepDown"]:focus-visible {{
+            outline: 1px solid rgba(56, 189, 248, 0.44) !important;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18) !important;
+        }}
+
+        div[data-testid="stMetricValue"] > div,
+        [data-testid="stMetricValue"] {{
+            font-size: clamp(1.45rem, 1.9vw, 2.05rem) !important;
+            line-height: 1.08 !important;
+            letter-spacing: -0.02em !important;
+        }}
+
+        div[data-testid="stMetricValue"] {{
+            max-width: 100% !important;
+        }}
+
+        div[data-testid="stMetricValue"] > div {{
+            overflow-wrap: anywhere !important;
+            word-break: break-word !important;
+        }}
+
+        div[data-testid="stMetricLabel"] > div,
+        [data-testid="stMetricLabel"] {{
+            font-size: .88rem !important;
+        }}
+
+        .tf-summary-shell {{
+            position: relative;
+            overflow: hidden;
+            border-radius: 22px;
+            padding: 16px 18px;
+            margin: 8px 0 18px 0;
+            background: linear-gradient(180deg, rgba(7, 15, 30, 0.86) 0%, rgba(5, 12, 26, 0.90) 100%);
+            border: 1px solid rgba(56, 189, 248, 0.16);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 18px 44px rgba(1, 9, 22, 0.34), 0 0 24px rgba(56, 189, 248, 0.07);
+        }}
+
+        .tf-summary-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }}
+
+        .tf-summary-card {{
+            border-radius: 16px;
+            padding: 12px 14px;
+            background: linear-gradient(180deg, rgba(8, 19, 37, 0.80) 0%, rgba(5, 12, 26, 0.82) 100%);
+            border: 1px solid rgba(56, 189, 248, 0.14);
+        }}
+
+        .tf-summary-label {{
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: {soft};
+            margin-bottom: 6px;
+        }}
+
+        .tf-summary-value {{
+            font-size: 20px;
+            font-weight: 900;
+            line-height: 1.05;
+            color: {ink};
+        }}
+
+        .tf-table-shell {{
+            overflow: hidden;
+            border-radius: 20px;
+            border: 1px solid {table_border};
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 16px 36px rgba(1,9,22,0.24);
+            margin: 10px 0 20px 0;
+        }}
+
+        .tf-table-scroll {{
+            overflow-x: auto;
+        }}
+
+        .tf-table {{
+            width: 100%;
+            border-collapse: collapse;
+            background: transparent;
+        }}
+
+        .tf-table thead th {{
+            background: {table_head};
+            color: {soft};
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: .06em;
+            text-align: left;
+            padding: 13px 14px;
+            border-bottom: 1px solid {table_border};
+            white-space: nowrap;
+        }}
+
+        .tf-table tbody tr:nth-child(odd) td {{
+            background: {table_row};
+        }}
+
+        .tf-table tbody tr:nth-child(even) td {{
+            background: {table_row_alt};
+        }}
+
+        .tf-table td {{
+            color: {ink};
+            padding: 13px 14px;
+            border-top: 1px solid {table_border};
+            vertical-align: top;
+        }}
+
+        .tf-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border-radius: 999px;
+            padding: 4px 10px;
+            background: {badge_bg};
+            border: 1px solid {table_border};
+            color: {ink};
+            font-size: 12px;
+            font-weight: 800;
+            white-space: nowrap;
+        }}
+
+        .tf-pressure-shell {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin: 12px 0 18px 0;
+            padding: 14px 16px;
+            border-radius: 20px;
+            background: linear-gradient(180deg, rgba(8, 19, 37, 0.84) 0%, rgba(5, 12, 26, 0.88) 100%);
+            border: 1px solid rgba(56, 189, 248, 0.16);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 14px 36px rgba(1,9,22,0.24);
+        }}
+
+        .tf-pressure-main {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+            flex-wrap: wrap;
+        }}
+
+        .tf-pressure-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border-radius: 999px;
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 900;
+            letter-spacing: .04em;
+            border: 1px solid transparent;
+            white-space: nowrap;
+            cursor: help;
+        }}
+
+        .tf-pressure-badge.low {{
+            color: #052e1d;
+            background: rgba(52, 211, 153, 0.92);
+            border-color: rgba(167, 243, 208, 0.85);
+        }}
+
+        .tf-pressure-badge.moderate {{
+            color: #3b2f06;
+            background: rgba(250, 204, 21, 0.92);
+            border-color: rgba(253, 224, 71, 0.88);
+        }}
+
+        .tf-pressure-badge.high {{
+            color: #431407;
+            background: rgba(251, 146, 60, 0.92);
+            border-color: rgba(253, 186, 116, 0.88);
+        }}
+
+        .tf-pressure-badge.critical {{
+            color: #4c0519;
+            background: rgba(248, 113, 113, 0.94);
+            border-color: rgba(252, 165, 165, 0.88);
+        }}
+
+        .tf-pressure-copy {{
+            color: {ink};
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1.55;
+        }}
+
+        .tf-pressure-tooltip {{
+            color: {soft};
+            font-size: 12px;
+            font-weight: 700;
+            text-align: right;
+            white-space: nowrap;
+        }}
+
+        .tf-market-refresh-row {{
+            display: flex;
+            justify-content: flex-end;
+            margin: -6px 0 12px 0;
+        }}
+
+        .tf-market-status-badge {{
+            display: inline-flex;
+            align-items: center;
+            width: fit-content;
+            border-radius: 999px;
+            padding: 5px 10px;
+            margin: 4px 0 6px 0;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            border: 1px solid rgba(56, 189, 248, 0.18);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+        }}
+
+        .tf-market-status-badge.live {{
+            color: #052e1d;
+            background: rgba(52, 211, 153, 0.90);
+            border-color: rgba(167, 243, 208, 0.88);
+        }}
+
+        .tf-market-status-badge.delayed {{
+            color: #0f2b46;
+            background: rgba(125, 211, 252, 0.90);
+            border-color: rgba(186, 230, 253, 0.88);
+        }}
+
+        .tf-market-status-badge.stale {{
+            color: #431407;
+            background: rgba(251, 146, 60, 0.92);
+            border-color: rgba(253, 186, 116, 0.88);
+        }}
+
+        @media (max-width: 980px) {{
+            .tf-pressure-shell {{
+                flex-direction: column;
+                align-items: flex-start;
+            }}
+
+            .tf-pressure-tooltip {{
+                text-align: left;
+                white-space: normal;
+            }}
+        }}
+
+        @media (max-width: 980px) {{
+            .tf-summary-grid {{
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }}
+        }}
+
+        @media (max-width: 640px) {{
+            .tf-summary-grid {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_taiwan_futures_summary(strike_price: object, premium_points: object, days_window: int, position_side: str, target_points: object) -> None:
+    side_text = futures_position_side_label(position_side)
+    cards = [
+        (t("taiwan_futures_side"), side_text),
+        (t("taiwan_futures_entry_price"), _futures_points_text(strike_price, 1)),
+        (t("taiwan_futures_premium"), _futures_points_text(premium_points, 1)),
+        (t("taiwan_futures_days"), str(days_window)),
+        (t("taiwan_futures_target_points"), _futures_points_text(target_points, 1)),
+    ]
+    cells = "".join(
+        f'<div class="tf-summary-card"><div class="tf-summary-label">{escape(label)}</div><div class="tf-summary-value">{escape(value)}</div></div>'
+        for label, value in cards
+    )
+    render_html_block(f'<div class="tf-summary-shell"><div class="tf-summary-grid">{cells}</div></div>')
+
+
+def _render_taiwan_futures_table(rows: list[dict], columns: list[str], badge_columns: set[str] | None = None) -> None:
+    badge_columns = set(badge_columns or set())
+    if not rows:
+        st.info(t("taiwan_futures_data_missing"))
+        return
+    head_html = "".join(f"<th>{escape(str(col))}</th>" for col in columns)
+    body_parts = []
+    for row in rows:
+        cells = []
+        for col in columns:
+            value = row.get(col, "—")
+            text_value = "—" if value in (None, "") else str(value)
+            if col in badge_columns:
+                cell_html = f'<span class="tf-badge">{escape(text_value)}</span>'
+            else:
+                cell_html = escape(text_value).replace("\n", "<br>")
+            cells.append(f"<td>{cell_html}</td>")
+        body_parts.append(f"<tr>{''.join(cells)}</tr>")
+    render_html_block(
+        '<div class="tf-table-shell"><div class="tf-table-scroll"><table class="tf-table">'
+        f'<thead><tr>{head_html}</tr></thead><tbody>{"".join(body_parts)}</tbody></table></div></div>'
+    )
+
+
+def render_taiwan_futures_dashboard(layout_mode: str = "Advanced") -> None:
+    inject_taiwan_futures_dashboard_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
+    force_refresh_clicked = st.button(
+        f"↻ {t('taiwan_futures_force_refresh')}",
+        key="taiwan_futures_force_refresh_button",
+        help=t("taiwan_futures_force_refresh_help"),
+    )
+    if force_refresh_clicked:
+        _clear_taiwan_futures_market_caches()
+        st.session_state["taiwan_futures_last_manual_refresh"] = pd.Timestamp.now(tz=TW_TZ).isoformat()
+        try:
+            st.toast(t("taiwan_futures_force_refresh_done"))
+        except Exception:
+            st.success(t("taiwan_futures_force_refresh_done"))
+    snapshot = fetch_taiwan_futures_lab_snapshot()
+    range_proxy = fetch_taiwan_futures_range_proxy()
+    taiex = snapshot.get("taiex", {}) or {}
+    tx = snapshot.get("tx", {}) or {}
+
+    tx_price = _safe_float(tx.get("price"))
+    taiex_price = _safe_float(taiex.get("price"))
+    strike_price = _safe_float(st.session_state.get("dashboard_txf_entry_price", 0.0), default=0.0)
+    premium_points = max(0.0, float(_safe_float(st.session_state.get("dashboard_txf_premium_points", 0.0), default=0.0)))
+    days_window = int(_safe_float(st.session_state.get("dashboard_txf_days_window", 3), default=3))
+    days_window = max(1, min(30, days_window))
+    position_side = str(st.session_state.get("dashboard_txf_position_side", "Call")).strip() or "Call"
+    if position_side not in {"Call", "Put"}:
+        position_side = "Call"
+    target_points = max(0.0, float(_safe_float(st.session_state.get("dashboard_txf_target_points", 0.0), default=0.0)))
+    delta_assumption = max(0.01, min(1.0, float(_safe_float(st.session_state.get("dashboard_txf_delta_assumption", 0.05), default=0.05))))
+    side_label = futures_position_side_label(position_side)
+
+    break_even_price = _futures_break_even_price(position_side, strike_price, premium_points)
+    current_pnl = _futures_current_pnl(position_side, tx_price, break_even_price)
+    break_even_needed = _futures_break_even_needed(current_pnl)
+    daily_need = _futures_daily_pace(break_even_needed, days_window)
+    target_needed = _futures_target_needed(current_pnl, target_points)
+    target_daily_need = _futures_daily_pace(target_needed, days_window)
+    current_pnl_amount = _futures_point_amount(current_pnl)
+    avg_daily_range = _safe_float(range_proxy.get("avg_range"))
+    feasibility_ratio = _futures_feasibility_ratio(daily_need, avg_daily_range)
+    pressure_level = _futures_pressure_state(days_window, feasibility_ratio, current_pnl)
+    pressure_label = _futures_pressure_label(pressure_level)
+    pressure_note = _futures_pressure_note(pressure_level)
+    pressure_action = _futures_pressure_action(pressure_level, current_pnl)
+
+    render_html_block(
+        f'''
+        <div class="guide-shell active-etf-hero hero-neon-bar">
+            <div class="hero-kicker">{escape(t("taiwan_futures_dashboard_kicker"))}</div>
+            <div class="hero-title">{escape(t("taiwan_futures_dashboard_title"))}</div>
+            <div class="hero-copy">{escape(t("taiwan_futures_dashboard_copy"))}</div>
+            <div class="hero-chip-row">
+                <span class="hero-chip">{escape(t("taiwan_futures_formula"))}: {escape(t("taiwan_futures_formula_copy"))}</span>
+                <span class="hero-chip">{escape(side_label)}</span>
+                <span class="hero-chip">{escape(_futures_public_state(snapshot))}</span>
+            </div>
+        </div>
+        ''',
+    )
+
+    _render_taiwan_futures_summary(strike_price, premium_points, days_window, position_side, target_points)
+
+    top_cols = st.columns(6)
+    with top_cols[0]:
+        st.metric(t("taiwan_futures_taiex"), _futures_points_text(taiex_price, 2))
+        render_html_block(_futures_status_badge_html(taiex))
+        st.caption(f"{t('taiwan_futures_source')}: {taiex.get('source', '—')}")
+        st.caption(f"{t('taiwan_futures_updated')}: {format_low_orbit_last_updated(taiex.get('as_of'))}")
+    with top_cols[1]:
+        tx_label = t("taiwan_futures_tx_front")
+        if tx.get("contract"):
+            tx_label = f"{tx_label} ({tx.get('contract')})"
+        st.metric(tx_label, _futures_points_text(tx_price, 0))
+        render_html_block(_futures_status_badge_html(tx))
+        st.caption(f"{t('taiwan_futures_source')}: {tx.get('source', '—')}")
+        st.caption(f"{t('taiwan_futures_updated')}: {format_low_orbit_last_updated(tx.get('as_of'))}")
+    with top_cols[2]:
+        st.metric(t("taiwan_futures_current_pnl"), _futures_points_text(current_pnl, 1))
+        st.caption(t("taiwan_futures_current_pnl_copy"))
+    with top_cols[3]:
+        st.metric(t("taiwan_futures_break_even_price"), _futures_points_text(break_even_price, 1))
+        st.caption(t("taiwan_futures_break_even_price_copy"))
+    with top_cols[4]:
+        st.metric(t("taiwan_futures_break_even_need"), _futures_points_text(break_even_needed, 1))
+        st.caption(t("taiwan_futures_break_even_need_copy"))
+    with top_cols[5]:
+        ratio_numeric = _safe_float(feasibility_ratio)
+        ratio_text = "—" if pd.isna(ratio_numeric) else f"{ratio_numeric:.2f}x"
+        st.metric(t("taiwan_futures_feasibility_ratio"), ratio_text)
+        st.caption(t("taiwan_futures_feasibility_ratio_copy"))
+    
+    second_cols = st.columns(6)
+    with second_cols[0]:
+        st.metric(t("taiwan_futures_remaining_days"), str(days_window))
+        st.caption(t("taiwan_futures_remaining_days_copy"))
+    with second_cols[1]:
+        st.metric(t("taiwan_futures_daily_need"), _futures_points_text(daily_need, 1))
+        st.caption(t("taiwan_futures_daily_need_copy"))
+    with second_cols[2]:
+        st.metric(t("taiwan_futures_recent_range"), _futures_points_text(avg_daily_range, 1))
+        render_html_block(_futures_status_badge_html(range_proxy))
+        st.caption(t("taiwan_futures_recent_range_copy"))
+    with second_cols[3]:
+        st.metric(t("taiwan_futures_target_need"), _futures_points_text(target_needed, 1))
+        st.caption(t("taiwan_futures_target_need_copy"))
+    with second_cols[4]:
+        st.metric(t("taiwan_futures_target_daily_need"), _futures_points_text(target_daily_need, 1))
+        st.caption(t("taiwan_futures_target_daily_need_copy"))
+    with second_cols[5]:
+        st.metric(t("taiwan_futures_current_pnl_amount"), _futures_amount_text(current_pnl_amount, 0))
+        st.caption(t("taiwan_futures_current_pnl_amount_copy"))
+
+    st.caption(
+        (
+            f"{t('taiwan_futures_side')}: {side_label} · "
+            f"{t('taiwan_futures_entry_price')}: {_futures_points_text(strike_price, 1)} · "
+            f"{t('taiwan_futures_premium')}: {_futures_points_text(premium_points, 1)} · "
+            f"{t('taiwan_futures_days')}: {days_window} · "
+            f"{t('taiwan_futures_target_points')}: {_futures_points_text(target_points, 1)} · "
+            f"{t('taiwan_options_delta_assumption')}: {delta_assumption:.2f}"
+        )
+    )
+
+    stage_info = _options_stage_info(position_side, tx_price, strike_price, break_even_price, target_points, days_window)
+    render_html_block(
+        f"""
+        <div class="planner-decision-shell">
+            <div class="planner-decision-head">
+                <div>
+                    <div class="planner-decision-action-label">{escape(t("taiwan_options_sell_zone_title"))}</div>
+                    <div class="planner-decision-copy">{escape(t("taiwan_options_sell_zone_copy"))}</div>
+                </div>
+                <div class="planner-decision-chip-row">
+                    <span class="planner-decision-action-pill">{escape(t("taiwan_options_sell_zone_now"))}: {escape(stage_info.get("stage_label", "—"))}</span>
+                    <span class="planner-decision-action-pill">{escape(t("taiwan_options_sell_zone_next"))}: {escape(stage_info.get("next_zone", "—"))}</span>
+                </div>
+            </div>
+            <div class="planner-decision-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+                <div class="planner-decision-card">
+                    <div class="planner-decision-label">{escape(t("taiwan_options_action_col"))}</div>
+                    <div class="planner-decision-value">{escape(stage_info.get("action_label", "—"))}</div>
+                </div>
+                <div class="planner-decision-card">
+                    <div class="planner-decision-label">{escape(t("taiwan_options_zone_col"))}</div>
+                    <div class="planner-decision-value">{escape(stage_info.get("zone_label", "—"))}</div>
+                </div>
+                <div class="planner-decision-card">
+                    <div class="planner-decision-label">{escape(t("taiwan_options_sell_zone_risk"))}</div>
+                    <div class="planner-decision-copy">{escape(stage_info.get("risk", "—"))}</div>
+                </div>
+                <div class="planner-decision-card">
+                    <div class="planner-decision-label">{escape(t("taiwan_options_sell_zone_tip"))}</div>
+                    <div class="planner-decision-copy">{escape(stage_info.get("tip", "—"))}</div>
+                </div>
+            </div>
+        </div>
+        """
+    )
+
+    if pd.isna(current_pnl):
+        position_read = t("taiwan_futures_data_missing")
+    elif current_pnl > 0:
+        position_read = t("taiwan_futures_position_ahead").format(
+            side=side_label,
+            points=_futures_points_text(abs(current_pnl), 1),
+        )
+    elif current_pnl < 0:
+        position_read = t("taiwan_futures_position_behind").format(
+            side=side_label,
+            points=_futures_points_text(abs(current_pnl), 1),
+            days=days_window,
+            per_day=_futures_points_text(abs(daily_need), 1),
+        )
+    else:
+        position_read = t("taiwan_futures_position_flat")
+
+    target_copy = ""
+    if target_points > 0:
+        target_copy = t("taiwan_futures_position_target").format(
+            per_day=_futures_points_text(target_daily_need, 1),
+        )
+
+    render_html_block(
+        f'''
+        <div class="planner-decision-shell">
+            <div class="planner-decision-head">
+                <div>
+                    <div class="planner-decision-action-label">{escape(t("taiwan_futures_position_read"))}</div>
+                    <div class="planner-decision-copy">{escape(position_read)}</div>
+                    <div class="planner-decision-copy">{escape(target_copy)}</div>
+                </div>
+                <div class="planner-decision-chip-row">
+                    <span class="planner-decision-action-pill">{escape(t("taiwan_futures_formula_copy"))}</span>
+                    <span class="planner-decision-action-pill">{escape(t("taiwan_futures_risk_note"))}</span>
+                </div>
+            </div>
+        </div>
+        ''',
+    )
+
+    render_html_block(
+        f"""
+        <div class="planner-decision-shell">
+            <div class="planner-decision-head">
+                <div>
+                    <div class="planner-decision-action-label">{escape(t("taiwan_options_formula_card"))}</div>
+                    <div class="planner-decision-copy">{escape(_options_formula_example_text(position_side, strike_price, premium_points, tx_price, delta_assumption))}</div>
+                </div>
+                <div class="planner-decision-chip-row">
+                    <span class="planner-decision-action-pill">{escape(t("taiwan_options_delta_assumption"))}: {escape(f"{delta_assumption:.2f}")}</span>
+                    <span class="planner-decision-action-pill">{escape(t("taiwan_futures_break_even_price"))}: {escape(_futures_points_text(break_even_price,1))}</span>
+                </div>
+            </div>
+        </div>
+        """
+    )
+
+    pressure_ratio_text = "—" if pd.isna(_safe_float(feasibility_ratio)) else f"{_safe_float(feasibility_ratio):.2f}x"
+    pressure_tooltip = f"{t('taiwan_futures_pressure_tooltip')} {t('taiwan_futures_pressure_tooltip_copy').format(ratio=pressure_ratio_text, days=days_window)}"
+    render_html_block(
+        f"""
+        <div class="tf-pressure-shell">
+            <div class="tf-pressure-main">
+                <span class="tf-pressure-badge {escape(pressure_level)}" title="{escape(pressure_tooltip)}">{escape(t("taiwan_futures_pressure"))} · {escape(pressure_label)}</span>
+                <div class="tf-pressure-copy">{escape(pressure_note)}</div>
+                <div class="tf-pressure-copy"><strong>{escape(t("taiwan_futures_action"))}：</strong>{escape(pressure_action)}</div>
+            </div>
+            <div class="tf-pressure-tooltip" title="{escape(pressure_tooltip)}">ⓘ {escape(t("taiwan_futures_pressure_tooltip"))}</div>
+        </div>
+        """,
+    )
+
+    st.markdown(f"### {t('taiwan_options_contract_exposure')}")
+    st.caption(t("taiwan_options_contract_exposure_copy"))
+    _render_taiwan_futures_table(
+        _options_contract_exposure_rows(current_pnl, days_window),
+        [t("taiwan_futures_contract_size"), t("taiwan_futures_amount_estimate"), t("taiwan_options_contract_comment")],
+        badge_columns={t("taiwan_futures_contract_size")},
+    )
+
+    st.markdown(f"### {t('taiwan_options_exit_map')}")
+    st.caption(t("taiwan_options_exit_map_copy"))
+
+    exit_map_rows = _options_exit_map_rows(position_side, strike_price, break_even_price, target_points)
+    if exit_map_rows:
+        _render_taiwan_futures_table(
+            exit_map_rows,
+            [t("taiwan_options_stage_col"), t("taiwan_options_zone_col"), t("taiwan_options_action_col"), t("taiwan_options_comment_col")],
+            badge_columns={t("taiwan_options_stage_col"), t("taiwan_options_action_col")},
+        )
+    else:
+        st.info(t("taiwan_futures_data_missing"))
+
+    st.markdown(f"### {t('taiwan_options_premium_push_title')}")
+    st.caption(t("taiwan_options_premium_push_copy"))
+    premium_push_rows = _options_premium_push_rows(position_side, tx_price, premium_points, delta_assumption)
+    if premium_push_rows:
+        _render_taiwan_futures_table(
+            premium_push_rows,
+            [
+                t("taiwan_options_premium_goal_col"),
+                t("taiwan_options_delta_assumption"),
+                t("taiwan_options_tx_move_needed_col"),
+                t("taiwan_options_target_tx_col"),
+                t("taiwan_options_premium_est_col"),
+            ],
+            badge_columns={t("taiwan_options_premium_goal_col")},
+        )
+    else:
+        st.info(t("taiwan_futures_data_missing"))
+
+    st.markdown(f"### {t('taiwan_futures_scenarios')}")
+    st.caption(t("taiwan_futures_scenarios_copy"))
+
+    scenario_rows = []
+    if not pd.isna(tx_price):
+        for offset in [-300, -200, -100, -50, 0, 50, 100, 200, 300]:
+            level = tx_price + offset
+            pnl = _futures_current_pnl(position_side, level, break_even_price)
+            scenario_break_even = _futures_break_even_needed(pnl)
+            scenario_break_even_per_day = _futures_daily_pace(scenario_break_even, days_window)
+            scenario_target_needed = _futures_target_needed(pnl, target_points)
+            scenario_target_per_day = _futures_daily_pace(scenario_target_needed, days_window)
+            stage_preview = _options_stage_info(position_side, level, strike_price, break_even_price, target_points, days_window)
+            scenario_est_premium = _options_estimated_premium(position_side, tx_price, level, premium_points, delta_assumption)
+            scenario_rows.append(
+                {
+                    t("taiwan_futures_price_level"): _futures_points_text(level, 0),
+                    t("taiwan_options_premium_est_col"): _futures_points_text(scenario_est_premium, 1),
+                    t("taiwan_options_stage_col"): stage_preview.get("stage_label", "—"),
+                    t("taiwan_options_action_col"): stage_preview.get("action_label", "—"),
+                    t("taiwan_futures_gap_col"): _futures_points_text(scenario_break_even, 1),
+                    t("taiwan_futures_daily_col"): _futures_points_text(scenario_break_even_per_day, 1),
+                    t("taiwan_futures_target_daily_col"): _futures_points_text(scenario_target_per_day, 1),
+                }
+            )
+    if scenario_rows:
+        scenario_columns = [
+            t("taiwan_futures_price_level"),
+            t("taiwan_options_premium_est_col"),
+            t("taiwan_options_stage_col"),
+            t("taiwan_options_action_col"),
+            t("taiwan_futures_gap_col"),
+            t("taiwan_futures_daily_col"),
+            t("taiwan_futures_target_daily_col"),
+        ]
+        _render_taiwan_futures_table(scenario_rows, scenario_columns, badge_columns={t("taiwan_options_stage_col"), t("taiwan_options_action_col")})
+    else:
+        st.info(t("taiwan_futures_data_missing"))
+
+    if layout_mode in {"Advanced", "Expert"}:
+        diag_rows = [
+            _futures_diag_row(t("taiwan_futures_taiex"), taiex),
+            _futures_diag_row(t("taiwan_futures_tx_front"), tx),
+            {
+                t("taiwan_futures_source"): t("taiwan_futures_recent_range"),
+                t("taiwan_futures_status"): _futures_status_label(range_proxy.get("status", "stale")),
+                t("taiwan_futures_updated"): format_low_orbit_last_updated(range_proxy.get("as_of")),
+                t("last_price"): _futures_points_text(avg_daily_range, 1),
+                "Raw source": str(range_proxy.get("source", "—")),
+                "Errors": " | ".join(str(item) for item in (range_proxy.get("errors", []) or [])) or "—",
+            },
+        ]
+        st.markdown(f"### {t('taiwan_futures_data_panel')}")
+        st.caption(t("taiwan_futures_data_panel_copy"))
+        diag_columns = [
+            t("taiwan_futures_source"),
+            t("taiwan_futures_status"),
+            t("taiwan_futures_updated"),
+            t("last_price"),
+            "Raw source",
+            "Errors",
+        ]
+        _render_taiwan_futures_table(diag_rows, diag_columns, badge_columns={t("taiwan_futures_status")})
+
+    note_level = st.warning if snapshot.get("errors") or range_proxy.get("errors") else st.info
+    note_level(t("taiwan_futures_public_note_copy"))
+
+
+
+# Option exit-stage translations are applied here so t(...) returns readable labels instead of raw keys.
+TRANSLATIONS["English"].update({
+    "taiwan_options_action_col": "Suggested action",
+    "taiwan_options_action_harvest": "Harvest profit",
+    "taiwan_options_action_scale": "Scale out",
+    "taiwan_options_action_target": "Lock profit",
+    "taiwan_options_action_wait": "Wait / protect capital",
+    "taiwan_options_action_watch": "Watch closely",
+    "taiwan_options_comment_at_be_call": "Near break-even. Consider partial selling if momentum slows.",
+    "taiwan_options_comment_at_be_put": "Near break-even. Consider partial selling if downside momentum slows.",
+    "taiwan_options_comment_col": "Comment",
+    "taiwan_options_comment_otm_call": "If TX cannot reclaim strike soon, theta pressure can rise quickly.",
+    "taiwan_options_comment_otm_put": "If TX cannot fall back below strike soon, theta pressure can rise quickly.",
+    "taiwan_options_comment_pre_be_call": "The call is repairing, but it still needs more upside to reach break-even.",
+    "taiwan_options_comment_pre_be_put": "The put is repairing, but it still needs more downside to reach break-even.",
+    "taiwan_options_comment_profit_call": "Profit zone. Scaling out becomes more reasonable.",
+    "taiwan_options_comment_profit_put": "Profit zone. Scaling out becomes more reasonable.",
+    "taiwan_options_comment_target_call": "Target zone. Locking profit usually matters more than waiting.",
+    "taiwan_options_comment_target_put": "Target zone. Locking profit usually matters more than waiting.",
+    "taiwan_options_contract_comment": "This converts the remaining break-even gap into point-value pressure by contract count. It does not estimate live option premium.",
+    "taiwan_options_contract_exposure": "Option position exposure",
+    "taiwan_options_contract_exposure_copy": "Use this as a pressure map for scaling out. It is a point-value proxy, not a full option pricing model.",
+    "taiwan_options_delta_assumption": "Delta assumption",
+    "taiwan_options_delta_assumption_help": "Use a simple delta estimate to approximate how many TX points might be needed to push the option premium higher. This is a planning shortcut, not a live options model.",
+    "taiwan_options_exit_map": "Option exit stage map",
+    "taiwan_options_exit_map_copy": "Map the current TX level against strike, break-even, and target to judge whether the option is still in pressure, recovery, break-even, profit, or target zone.",
+    "taiwan_options_formula_card": "How to read this option",
+    "taiwan_options_premium_est_col": "Estimated premium",
+    "taiwan_options_premium_goal_col": "Premium goal",
+    "taiwan_options_premium_push_copy": "Approximate how many TX points may be needed to push the current premium higher under the chosen delta assumption.",
+    "taiwan_options_premium_push_title": "Premium push calculator",
+    "taiwan_options_sell_zone_copy": "This panel translates strike, premium, current TX, remaining days, and target points into a practical exit-stage read.",
+    "taiwan_options_sell_zone_next": "Next better zone",
+    "taiwan_options_sell_zone_now": "Current stage",
+    "taiwan_options_sell_zone_risk": "Settlement risk",
+    "taiwan_options_sell_zone_tip": "Practical tip",
+    "taiwan_options_sell_zone_title": "Option selling zone",
+    "taiwan_options_stage_at_be": "Near break-even",
+    "taiwan_options_stage_col": "Stage",
+    "taiwan_options_stage_otm": "Out of the money",
+    "taiwan_options_stage_pre_be": "Before break-even",
+    "taiwan_options_stage_profit": "Profit zone",
+    "taiwan_options_stage_target": "Target zone",
+    "taiwan_options_target_tx_col": "Estimated TX level",
+    "taiwan_options_tx_move_needed_col": "TX move needed",
+    "taiwan_options_zone_col": "Zone",
+    "taiwan_options_zone_flat_call": "Around break-even. This is the first practical scale-out zone.",
+    "taiwan_options_zone_flat_put": "Around break-even. This is the first practical scale-out zone.",
+    "taiwan_options_zone_profit_call": "Above break-even. Selling conditions are more favorable.",
+    "taiwan_options_zone_profit_put": "Below break-even. Selling conditions are more favorable.",
+    "taiwan_options_zone_recovery_call": "Above strike but below break-even. Recovery has started, but profit is not confirmed.",
+    "taiwan_options_zone_recovery_put": "Below strike but above break-even. Recovery has started, but profit is not confirmed.",
+    "taiwan_options_zone_target_call": "Above target. Prioritize locking profit instead of hoping for more.",
+    "taiwan_options_zone_target_put": "Below target. Prioritize locking profit instead of hoping for more.",
+    "taiwan_options_zone_unfavorable_call": "Below strike. The call is still under heavy pressure.",
+    "taiwan_options_zone_unfavorable_put": "Above strike. The put is still under heavy pressure."
+})
+TRANSLATIONS["繁體中文"].update({
+    "taiwan_options_action_col": "建議動作",
+    "taiwan_options_action_harvest": "鎖利",
+    "taiwan_options_action_scale": "分批賣",
+    "taiwan_options_action_target": "優先鎖利",
+    "taiwan_options_action_wait": "先出場",
+    "taiwan_options_action_watch": "續抱但只等回本",
+    "taiwan_options_comment_at_be_call": "接近回本區，如果動能開始變慢，可考慮分批賣出。",
+    "taiwan_options_comment_at_be_put": "接近回本區，如果下跌動能開始變慢，可考慮分批賣出。",
+    "taiwan_options_comment_col": "說明",
+    "taiwan_options_comment_otm_call": "如果台指期無法盡快站回履約價，時間價值壓力會很快增加。",
+    "taiwan_options_comment_otm_put": "如果台指期無法盡快跌回履約價下方，時間價值壓力會很快增加。",
+    "taiwan_options_comment_pre_be_call": "買權正在修復，但仍需要更多上漲才會接近回本。",
+    "taiwan_options_comment_pre_be_put": "賣權正在修復，但仍需要更多下跌才會接近回本。",
+    "taiwan_options_comment_profit_call": "已進入獲利區，分批賣出會更合理。",
+    "taiwan_options_comment_profit_put": "已進入獲利區，分批賣出會更合理。",
+    "taiwan_options_comment_target_call": "已進入目標區，通常鎖利比繼續硬等更重要。",
+    "taiwan_options_comment_target_put": "已進入目標區，通常鎖利比繼續硬等更重要。",
+    "taiwan_options_contract_comment": "這裡把回本缺口轉成不同口數的點值壓力；不等於即時權利金估值。",
+    "taiwan_options_contract_exposure": "多口部位賣出壓力",
+    "taiwan_options_contract_exposure_copy": "用來判斷多口部位是否需要提早分批處理。這是點數等值壓力，不是完整選擇權定價模型。",
+    "taiwan_options_delta_assumption": "Delta 假設值",
+    "taiwan_options_delta_assumption_help": "用簡化 delta 估計台指期大約要走多少點，才可能把目前權利金往上推。這是節奏試算，不是即時選擇權定價模型。",
+    "taiwan_options_exit_map": "選擇權賣出階段圖",
+    "taiwan_options_exit_map_copy": "把目前台指期對照履約價、回本價與目標區，判斷這張選擇權目前在壓力、修復、回本、獲利或目標區。",
+    "taiwan_options_formula_card": "這張選擇權怎麼看",
+    "taiwan_options_premium_est_col": "推估權利金",
+    "taiwan_options_premium_goal_col": "目標權利金增量",
+    "taiwan_options_premium_push_copy": "依你設定的 delta 假設值，估算台指期大約還要走多少點，才可能把目前權利金推高。",
+    "taiwan_options_premium_push_title": "權利金推升試算",
+    "taiwan_options_sell_zone_copy": "這個區塊會把履約價、權利金、目前台指期、剩餘交易日與目標點數，轉成實際可看的出場階段。",
+    "taiwan_options_sell_zone_next": "下一個較有利區",
+    "taiwan_options_sell_zone_now": "目前階段",
+    "taiwan_options_sell_zone_risk": "結算風險",
+    "taiwan_options_sell_zone_tip": "操作提示",
+    "taiwan_options_sell_zone_title": "選擇權賣出區間",
+    "taiwan_options_stage_at_be": "回本附近",
+    "taiwan_options_stage_col": "階段",
+    "taiwan_options_stage_otm": "價外壓力區",
+    "taiwan_options_stage_pre_be": "回本前修復區",
+    "taiwan_options_stage_profit": "獲利區",
+    "taiwan_options_stage_target": "目標區",
+    "taiwan_options_target_tx_col": "推估台指期點位",
+    "taiwan_options_tx_move_needed_col": "台指期所需點數",
+    "taiwan_options_zone_col": "區間",
+    "taiwan_options_zone_flat_call": "接近回本價，這是第一個可考慮分批賣出的區間。",
+    "taiwan_options_zone_flat_put": "接近回本價，這是第一個可考慮分批賣出的區間。",
+    "taiwan_options_zone_profit_call": "台指期高於回本價，賣出條件開始較有利。",
+    "taiwan_options_zone_profit_put": "台指期低於回本價，賣出條件開始較有利。",
+    "taiwan_options_zone_recovery_call": "台指期高於履約價但低於回本價，開始修復但尚未真正回本。",
+    "taiwan_options_zone_recovery_put": "台指期低於履約價但高於回本價，開始修復但尚未真正回本。",
+    "taiwan_options_zone_target_call": "已進入目標區，通常優先鎖利，不宜只期待更高。",
+    "taiwan_options_zone_target_put": "已進入目標區，通常優先鎖利，不宜只期待更低。",
+    "taiwan_options_zone_unfavorable_call": "台指期仍低於履約價，買權仍在較不利區。",
+    "taiwan_options_zone_unfavorable_put": "台指期仍高於履約價，賣權仍在較不利區。"
+})
+
 def generate_dashboard():
     init_auth_db()
     with st.sidebar:
@@ -17318,8 +19458,15 @@ def generate_dashboard():
         st.caption(t("news_display_note"))
         st.caption(t("saved_preferences_note"))
 
-        side_title_key = "active_etf_vision_deck" if selected_dashboard_mode == "Active ETF Lab" else "vision_deck"
-        side_copy_key = "active_etf_vision_deck_copy" if selected_dashboard_mode == "Active ETF Lab" else "vision_deck_copy"
+        if selected_dashboard_mode == "Active ETF Lab":
+            side_title_key = "active_etf_vision_deck"
+            side_copy_key = "active_etf_vision_deck_copy"
+        elif selected_dashboard_mode == "Taiwan Futures Lab":
+            side_title_key = "taiwan_futures_vision_deck"
+            side_copy_key = "taiwan_futures_vision_deck_copy"
+        else:
+            side_title_key = "vision_deck"
+            side_copy_key = "vision_deck_copy"
         st.markdown(
             f"""
             <div class="side-hero">
@@ -17331,8 +19478,90 @@ def generate_dashboard():
             unsafe_allow_html=True,
         )
 
+        selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+        selected_groups = list(st.session_state.get("dashboard_selected_groups", MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]))
+        custom_ticker_text = str(st.session_state.get("dashboard_custom_symbols", "")).strip()
+        symbol_search_query = str(st.session_state.get("dashboard_symbol_search", "")).strip()
+        tickers = []
+
         if selected_dashboard_mode == "Active ETF Lab":
             tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query = render_active_etf_sidebar_selector(selected_lang)
+        elif selected_dashboard_mode == "Taiwan Futures Lab":
+            render_html_block(f'<div class="side-group-label">{t("taiwan_futures_dashboard_title")}</div>')
+
+            if "dashboard_txf_entry_price" not in st.session_state:
+                st.session_state["dashboard_txf_entry_price"] = 0.0
+            if "dashboard_txf_days_window" not in st.session_state:
+                st.session_state["dashboard_txf_days_window"] = 3
+            if "dashboard_txf_position_side" not in st.session_state:
+                st.session_state["dashboard_txf_position_side"] = "Call"
+            if "dashboard_txf_premium_points" not in st.session_state:
+                st.session_state["dashboard_txf_premium_points"] = 0.0
+            if "dashboard_txf_target_points" not in st.session_state:
+                st.session_state["dashboard_txf_target_points"] = 0.0
+            if "dashboard_txf_delta_assumption" not in st.session_state:
+                st.session_state["dashboard_txf_delta_assumption"] = 0.05
+
+            tx_side_value = str(st.session_state.get("dashboard_txf_position_side", "Call")).strip() or "Call"
+            if tx_side_value not in {"Call", "Put"}:
+                tx_side_value = "Call"
+            st.session_state["dashboard_txf_position_side"] = tx_side_value
+            st.session_state["dashboard_txf_entry_price"] = float(_safe_float(st.session_state.get("dashboard_txf_entry_price", 0.0), default=0.0))
+            st.session_state["dashboard_txf_premium_points"] = max(0.0, float(_safe_float(st.session_state.get("dashboard_txf_premium_points", 0.0), default=0.0)))
+            st.session_state["dashboard_txf_days_window"] = max(1, min(30, int(_safe_float(st.session_state.get("dashboard_txf_days_window", 3), default=3))))
+            st.session_state["dashboard_txf_target_points"] = max(0.0, float(_safe_float(st.session_state.get("dashboard_txf_target_points", 0.0), default=0.0)))
+            st.session_state["dashboard_txf_delta_assumption"] = max(0.01, min(1.0, float(_safe_float(st.session_state.get("dashboard_txf_delta_assumption", 0.05), default=0.05))))
+
+            st.selectbox(
+                t("taiwan_futures_side"),
+                options=["Call", "Put"],
+                index=["Call", "Put"].index(st.session_state["dashboard_txf_position_side"]),
+                format_func=futures_position_side_label,
+                help=t("taiwan_futures_side_help"),
+                key="dashboard_txf_position_side",
+            )
+            st.number_input(
+                t("taiwan_futures_entry_price"),
+                min_value=0.0,
+                step=1.0,
+                help=t("taiwan_futures_entry_price_help"),
+                key="dashboard_txf_entry_price",
+                format="%.0f",
+            )
+            st.number_input(
+                t("taiwan_futures_premium"),
+                min_value=0.0,
+                step=1.0,
+                help=t("taiwan_futures_premium_help"),
+                key="dashboard_txf_premium_points",
+                format="%.0f",
+            )
+            st.number_input(
+                t("taiwan_futures_days"),
+                min_value=1,
+                max_value=30,
+                step=1,
+                help=t("taiwan_futures_days_help"),
+                key="dashboard_txf_days_window",
+                format="%d",
+            )
+            st.number_input(
+                t("taiwan_futures_target_points"),
+                min_value=0.0,
+                step=1.0,
+                help=t("taiwan_futures_target_points_help"),
+                key="dashboard_txf_target_points",
+                format="%.0f",
+            )
+            st.number_input(
+                t("taiwan_options_delta_assumption"),
+                min_value=0.01,
+                max_value=1.00,
+                step=0.01,
+                help=t("taiwan_options_delta_assumption_help"),
+                key="dashboard_txf_delta_assumption",
+                format="%.2f",
+            )
         else:
             tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query = render_general_market_sidebar_selector(selected_lang)
 
@@ -17420,6 +19649,12 @@ def generate_dashboard():
                 "manual": "1" if manual_override else "0",
                 "period": manual_period,
                 "interval": manual_interval,
+                "txentry": str(st.session_state.get("dashboard_txf_entry_price", 0.0)),
+                "txdays": str(st.session_state.get("dashboard_txf_days_window", 3)),
+                "txside": str(st.session_state.get("dashboard_txf_position_side", "Call")),
+                "txpremium": str(st.session_state.get("dashboard_txf_premium_points", 0.0)),
+                "txtarget": str(st.session_state.get("dashboard_txf_target_points", 0.0)),
+                "txdelta": str(st.session_state.get("dashboard_txf_delta_assumption", 0.05)),
             }
         )
 
@@ -17435,6 +19670,12 @@ def generate_dashboard():
     )
 
     dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
+    layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
+
+    if dashboard_mode == "Taiwan Futures Lab":
+        render_taiwan_futures_dashboard(layout_mode=layout_mode)
+        return
+
     dashboard_tickers = (
         [ticker for ticker in tickers if is_taiwan_active_etf(ticker)]
         if dashboard_mode == "Active ETF Lab"
@@ -17447,8 +19688,6 @@ def generate_dashboard():
         else:
             st.warning(t("please_select_ticker"))
         return
-
-    layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
 
     with st.spinner(t("loading_data")):
         daily_data = fetch_daily_data(dashboard_tickers, period, interval)
