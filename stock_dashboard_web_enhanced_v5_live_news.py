@@ -14129,36 +14129,89 @@ def _parse_twse_etf_flow_payload(payload: dict) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
-    code = ticker_base_code(ticker)
+    """Fetch TWSE T86 institutional flow for a listed ETF.
+
+    The TWSE T86 report is published after market close and the ETF filter can
+    vary across TWSE response paths. Try the ETF filter first, then fall back to
+    the all-securities T86 report so active ETFs are not missed.
+    """
+    code = ticker_base_code(ticker).upper().strip()
     today = datetime.now(TW_TZ).date()
-    errors = []
-    for offset in range(0, 8):
+    errors: list[str] = []
+    tried_urls: list[str] = []
+
+    def _candidate_urls(date_str: str) -> list[tuple[str, str]]:
+        base_paths = [
+            "https://www.twse.com.tw/rwd/zh/fund/T86",
+            "https://www.twse.com.tw/fund/T86",
+            "https://www.twse.com.tw/exchangeReport/T86",
+        ]
+        variants = [
+            ("ETF", "selectType=ETF"),
+            ("ALL", "selectType=ALL"),
+            ("ALLBUT0999", "selectType=ALLBUT0999"),
+            ("no-filter", ""),
+        ]
+        urls: list[tuple[str, str]] = []
+        for base in base_paths:
+            for label, select_part in variants:
+                query = f"response=json&date={date_str}"
+                if select_part:
+                    query = f"{query}&{select_part}"
+                urls.append((label, f"{base}?{query}"))
+        return urls
+
+    for offset in range(0, 22):
         trade_date = today - pd.Timedelta(days=offset)
         date_str = trade_date.strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={date_str}&selectType=ETF"
-        try:
-            payload = _twse_request_json(url)
-            if str(payload.get("stat", "")).startswith("很抱歉"):
+
+        for source_label, url in _candidate_urls(date_str):
+            tried_urls.append(url)
+            try:
+                payload = _twse_request_json(url)
+                stat = str(payload.get("stat", "") or "")
+                if stat.startswith("很抱歉") or "查無" in stat or "無資料" in stat:
+                    continue
+
+                frame = _parse_twse_etf_flow_payload(payload)
+                if frame.empty or "code" not in frame.columns:
+                    continue
+
+                normalized_codes = frame["code"].astype(str).str.upper().str.strip()
+                match = frame[normalized_codes == code]
+                if match.empty:
+                    compact_codes = normalized_codes.str.replace(r"[^0-9A-Z]", "", regex=True)
+                    match = frame[compact_codes == re.sub(r"[^0-9A-Z]", "", code)]
+
+                if match.empty:
+                    continue
+
+                row = match.iloc[0].to_dict()
+                return {
+                    "date": trade_date.isoformat(),
+                    "record": row,
+                    "source": f"TWSE T86 {source_label}",
+                    "error": "",
+                    "status": "ok",
+                    "tried": tried_urls[-4:],
+                }
+            except Exception as exc:
+                message = str(exc)
+                if message not in errors:
+                    errors.append(message)
                 continue
-            frame = _parse_twse_etf_flow_payload(payload)
-            if frame.empty or "code" not in frame.columns:
-                continue
-            match = frame[frame["code"].astype(str).str.strip() == code]
-            if match.empty:
-                continue
-            row = match.iloc[0].to_dict()
-            return {
-                "date": trade_date.isoformat(),
-                "record": row,
-                "source": "TWSE T86 ETF",
-                "error": "",
-            }
-        except Exception as exc:
-            errors.append(str(exc))
-            continue
-    return {"date": None, "record": {}, "source": "TWSE T86 ETF", "error": errors[-1] if errors else "No ETF institutional flow found."}
+
+    last_error = errors[-1] if errors else f"No T86 row matched ETF code {code} in the last 22 calendar days."
+    return {
+        "date": None,
+        "record": {},
+        "source": "TWSE T86",
+        "error": last_error,
+        "status": "missing",
+        "tried": tried_urls[-6:],
+    }
 
 
 def _tracker_status_chip(label: str, tone: str) -> str:
@@ -15957,6 +16010,68 @@ def inject_device_layout_overrides(device_mode: str) -> None:
 
 # Restored Active ETF helper block
 
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_taiwan_company_name_map() -> dict[str, str]:
+    """Return Taiwan ticker -> Chinese company name map for holding display fallback."""
+    name_map: dict[str, str] = {}
+
+    for ticker, meta in TAIWAN_TICKER_METADATA.items():
+        zh_name = str(meta.get("zh", "")).strip()
+        if zh_name:
+            name_map[normalize_dashboard_ticker(ticker)] = zh_name
+
+    sources = (
+        "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+    )
+
+    for url in sources:
+        try:
+            payload = _fetch_json_url(url, timeout=20)
+            if isinstance(payload, dict):
+                rows = payload.get("data") or payload.get("aaData") or payload.get("items") or []
+            elif isinstance(payload, list):
+                rows = payload
+            else:
+                rows = []
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+
+                code = str(
+                    row.get("公司代號")
+                    or row.get("公司代碼")
+                    or row.get("股票代號")
+                    or row.get("證券代號")
+                    or row.get("有價證券代號")
+                    or row.get("Code")
+                    or ""
+                ).strip()
+                name = str(
+                    row.get("公司名稱")
+                    or row.get("公司簡稱")
+                    or row.get("公司簡稱(中文)")
+                    or row.get("有價證券名稱")
+                    or row.get("證券名稱")
+                    or row.get("Name")
+                    or ""
+                ).strip()
+
+                code_match = re.search(r"\d{4,6}", code)
+                if not code_match or not name:
+                    continue
+
+                normalized = normalize_dashboard_ticker(code_match.group(0))
+                if normalized and is_taiwan_ticker(normalized):
+                    name_map.setdefault(normalized, name)
+        except Exception:
+            continue
+
+    return name_map
+
+
 def lookup_taiwan_holding_symbol(query: str) -> dict:
     raw_query = str(query or "").strip()
     if not raw_query:
@@ -16429,36 +16544,89 @@ def _parse_twse_etf_flow_payload(payload: dict) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
-    code = ticker_base_code(ticker)
+    """Fetch TWSE T86 institutional flow for a listed ETF.
+
+    The TWSE T86 report is published after market close and the ETF filter can
+    vary across TWSE response paths. Try the ETF filter first, then fall back to
+    the all-securities T86 report so active ETFs are not missed.
+    """
+    code = ticker_base_code(ticker).upper().strip()
     today = datetime.now(TW_TZ).date()
-    errors = []
-    for offset in range(0, 8):
+    errors: list[str] = []
+    tried_urls: list[str] = []
+
+    def _candidate_urls(date_str: str) -> list[tuple[str, str]]:
+        base_paths = [
+            "https://www.twse.com.tw/rwd/zh/fund/T86",
+            "https://www.twse.com.tw/fund/T86",
+            "https://www.twse.com.tw/exchangeReport/T86",
+        ]
+        variants = [
+            ("ETF", "selectType=ETF"),
+            ("ALL", "selectType=ALL"),
+            ("ALLBUT0999", "selectType=ALLBUT0999"),
+            ("no-filter", ""),
+        ]
+        urls: list[tuple[str, str]] = []
+        for base in base_paths:
+            for label, select_part in variants:
+                query = f"response=json&date={date_str}"
+                if select_part:
+                    query = f"{query}&{select_part}"
+                urls.append((label, f"{base}?{query}"))
+        return urls
+
+    for offset in range(0, 22):
         trade_date = today - pd.Timedelta(days=offset)
         date_str = trade_date.strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={date_str}&selectType=ETF"
-        try:
-            payload = _twse_request_json(url)
-            if str(payload.get("stat", "")).startswith("很抱歉"):
+
+        for source_label, url in _candidate_urls(date_str):
+            tried_urls.append(url)
+            try:
+                payload = _twse_request_json(url)
+                stat = str(payload.get("stat", "") or "")
+                if stat.startswith("很抱歉") or "查無" in stat or "無資料" in stat:
+                    continue
+
+                frame = _parse_twse_etf_flow_payload(payload)
+                if frame.empty or "code" not in frame.columns:
+                    continue
+
+                normalized_codes = frame["code"].astype(str).str.upper().str.strip()
+                match = frame[normalized_codes == code]
+                if match.empty:
+                    compact_codes = normalized_codes.str.replace(r"[^0-9A-Z]", "", regex=True)
+                    match = frame[compact_codes == re.sub(r"[^0-9A-Z]", "", code)]
+
+                if match.empty:
+                    continue
+
+                row = match.iloc[0].to_dict()
+                return {
+                    "date": trade_date.isoformat(),
+                    "record": row,
+                    "source": f"TWSE T86 {source_label}",
+                    "error": "",
+                    "status": "ok",
+                    "tried": tried_urls[-4:],
+                }
+            except Exception as exc:
+                message = str(exc)
+                if message not in errors:
+                    errors.append(message)
                 continue
-            frame = _parse_twse_etf_flow_payload(payload)
-            if frame.empty or "code" not in frame.columns:
-                continue
-            match = frame[frame["code"].astype(str).str.strip() == code]
-            if match.empty:
-                continue
-            row = match.iloc[0].to_dict()
-            return {
-                "date": trade_date.isoformat(),
-                "record": row,
-                "source": "TWSE T86 ETF",
-                "error": "",
-            }
-        except Exception as exc:
-            errors.append(str(exc))
-            continue
-    return {"date": None, "record": {}, "source": "TWSE T86 ETF", "error": errors[-1] if errors else "No ETF institutional flow found."}
+
+    last_error = errors[-1] if errors else f"No T86 row matched ETF code {code} in the last 22 calendar days."
+    return {
+        "date": None,
+        "record": {},
+        "source": "TWSE T86",
+        "error": last_error,
+        "status": "missing",
+        "tried": tried_urls[-6:],
+    }
 
 
 def _tracker_status_chip(label: str, tone: str) -> str:
@@ -17601,6 +17769,56 @@ def _futures_status_badge_html(snapshot: dict, label_prefix: str | None = None) 
     return f'<span class="tf-market-status-badge {escape(status)}">{escape(prefix + label)}</span>'
 
 
+def _market_status_from_timestamp(
+    timestamp: object,
+    now_tw: pd.Timestamp | None = None,
+    *,
+    live_minutes: float = 10.0,
+    delayed_minutes: float = 45.0,
+) -> str:
+    """Classify public market data freshness without marking same-day after-close quotes as stale."""
+    if now_tw is None:
+        now_tw = pd.Timestamp.now(tz=TW_TZ)
+    try:
+        as_of = pd.Timestamp(timestamp)
+        if pd.isna(as_of):
+            return "stale"
+        if as_of.tzinfo is None:
+            as_of = as_of.tz_localize(TW_TZ)
+        else:
+            as_of = as_of.tz_convert(TW_TZ)
+    except Exception:
+        return "stale"
+
+    age_minutes = max(0.0, (now_tw - as_of).total_seconds() / 60.0)
+    if age_minutes <= live_minutes:
+        return "live"
+
+    # Public exchange pages often stop updating after the cash/futures session closes.
+    # Same-date quotes should be treated as delayed/closed-session data, not stale.
+    if as_of.date() == now_tw.date():
+        return "delayed"
+
+    if age_minutes <= delayed_minutes:
+        return "delayed"
+    return "stale"
+
+
+def _filter_expected_market_errors(errors: list[str], *, source_ok: bool) -> list[str]:
+    """Suppress noisy public-endpoint probes once a fallback source returned usable data."""
+    if not source_ok:
+        return errors
+    filtered: list[str] = []
+    for item in errors:
+        text = str(item)
+        if "TAIFEX MIS: HTTP 405" in text:
+            continue
+        if "HTTP Error 404" in text and "MI_5MINS_INDEX" in text:
+            continue
+        filtered.append(text)
+    return filtered
+
+
 def _clear_taiwan_futures_market_caches() -> None:
     for cached_func in (fetch_taiwan_futures_lab_snapshot, fetch_taiwan_futures_range_proxy):
         try:
@@ -17717,11 +17935,12 @@ def _extract_taiex_from_mis_payload(payload: object, default_date: pd.Timestamp)
     latest_ts, latest_price, _ = candidates[-1]
     now_tw = pd.Timestamp.now(tz=TW_TZ)
     age_minutes = abs((now_tw - latest_ts).total_seconds()) / 60.0 if pd.notna(latest_ts) else 9999
+    as_of_value = latest_ts if pd.notna(latest_ts) else now_tw
     return {
         "price": latest_price,
-        "as_of": latest_ts if pd.notna(latest_ts) else now_tw,
+        "as_of": as_of_value,
         "source": "TWSE MIS getStockInfo tse_t00.tw",
-        "status": "live" if age_minutes <= 10 else ("delayed" if age_minutes <= 30 else "stale"),
+        "status": _market_status_from_timestamp(as_of_value, now_tw, live_minutes=10, delayed_minutes=45),
         "note": t("taiwan_futures_public_realtime_note"),
     }
 
@@ -17922,19 +18141,21 @@ def fetch_public_taiex_snapshot() -> dict:
             else:
                 snapshot = _extract_taiex_from_twse_payload(payload, default_date=now_tw.normalize())
             if snapshot:
-                age_minutes = 9999.0
+                snapshot["status"] = _market_status_from_timestamp(snapshot.get("as_of"), now_tw, live_minutes=10, delayed_minutes=45)
+                source_is_mis = "getStockInfo.jsp" in url
+                source_is_same_day = False
                 try:
                     as_of = pd.Timestamp(snapshot.get("as_of"))
                     if as_of.tzinfo is None:
                         as_of = as_of.tz_localize(TW_TZ)
                     else:
                         as_of = as_of.tz_convert(TW_TZ)
-                    age_minutes = abs((now_tw - as_of).total_seconds()) / 60.0
+                    source_is_same_day = as_of.date() == now_tw.date()
                 except Exception:
                     pass
-                # Prefer the real-time MIS endpoint. Historical endpoints are kept only as fallback.
-                if "getStockInfo.jsp" in url or age_minutes <= 45:
-                    snapshot["errors"] = errors
+                # Prefer the MIS quote endpoint. Historical endpoints are fallback, but same-day after-close values remain valid.
+                if source_is_mis or source_is_same_day or snapshot["status"] != "stale":
+                    snapshot["errors"] = _filter_expected_market_errors(errors, source_ok=not pd.isna(_safe_float(snapshot.get("price"))))
                     return snapshot
                 errors.append(f"TWSE: skipped stale candidate {snapshot.get('source', 'unknown')} as_of={snapshot.get('as_of')}")
         except HTTPError as exc:
@@ -17946,10 +18167,7 @@ def fetch_public_taiex_snapshot() -> dict:
     fallback = fetch_live_reference_quotes(("^TWII",)).get("^TWII", {}) or {}
     price = _safe_float(fallback.get("price"))
     as_of = _parse_timestamp_like(fallback.get("as_of"), default_date=now_tw)
-    status = "stale"
-    if not pd.isna(as_of):
-        age_minutes = abs((now_tw - as_of).total_seconds()) / 60.0
-        status = "live" if age_minutes <= 20 else "stale"
+    status = _market_status_from_timestamp(as_of, now_tw, live_minutes=20, delayed_minutes=45) if not pd.isna(as_of) else "stale"
     return {
         "price": price if not pd.isna(price) else pd.NA,
         "as_of": as_of if not pd.isna(as_of) else now_tw,
@@ -18029,7 +18247,8 @@ def fetch_public_txf_snapshot() -> dict:
             payload = _fetch_json_url(url, timeout=8)
             selected = _extract_txf_from_mis_payload(payload, default_time=now_tw)
             if selected:
-                selected["errors"] = errors
+                selected["status"] = _market_status_from_timestamp(selected.get("as_of"), now_tw, live_minutes=10, delayed_minutes=45)
+                selected["errors"] = _filter_expected_market_errors(errors, source_ok=True)
                 return selected
         except HTTPError as exc:
             errors.append(f"TAIFEX MIS: HTTP {getattr(exc, 'code', 'error')}")
@@ -18045,7 +18264,8 @@ def fetch_public_txf_snapshot() -> dict:
             selected["as_of"] = now_tw
             selected["source"] = "TAIFEX futDailyMarketReport"
             selected["status"] = "delayed"
-            selected["errors"] = errors
+            selected["errors"] = _filter_expected_market_errors(errors, source_ok=True)
+            selected["note"] = "TAIFEX MIS quote endpoints were unavailable; using public daily market report fallback."
             return selected
         errors.append("TAIFEX: TX row was not found in parsed tables.")
     except Exception as exc:
@@ -18611,6 +18831,98 @@ def inject_taiwan_futures_dashboard_overrides(theme_mode: str = "Dark Horizon") 
         [data-testid="stMetricLabel"] {{
             font-size: .88rem !important;
         }}
+
+
+        /* HORIZON action buttons: prevent Streamlit default white button state. */
+        div[data-testid="stButton"] > button,
+        div[data-testid="stButton"] > button[kind],
+        .stButton > button,
+        .stButton button {{
+            width: auto !important;
+            min-height: 42px !important;
+            border-radius: 999px !important;
+            padding: 0.62rem 1.05rem !important;
+            border: 1px solid rgba(56, 189, 248, 0.46) !important;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.20), rgba(129, 140, 248, 0.16)) !important;
+            color: #eef8ff !important;
+            -webkit-text-fill-color: #eef8ff !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 18px rgba(56, 189, 248, 0.16) !important;
+            font-weight: 900 !important;
+            letter-spacing: .02em !important;
+        }}
+
+        div[data-testid="stButton"] > button p,
+        div[data-testid="stButton"] > button span,
+        div[data-testid="stButton"] > button div,
+        .stButton > button p,
+        .stButton > button span,
+        .stButton > button div {{
+            color: #eef8ff !important;
+            -webkit-text-fill-color: #eef8ff !important;
+            font-weight: 900 !important;
+        }}
+
+        div[data-testid="stButton"] > button svg,
+        div[data-testid="stButton"] > button path,
+        .stButton > button svg,
+        .stButton > button path {{
+            color: #eef8ff !important;
+            fill: #eef8ff !important;
+            stroke: #eef8ff !important;
+        }}
+
+        div[data-testid="stButton"] > button:hover,
+        div[data-testid="stButton"] > button:focus,
+        div[data-testid="stButton"] > button:focus-visible,
+        .stButton > button:hover,
+        .stButton > button:focus,
+        .stButton > button:focus-visible {{
+            border-color: rgba(125, 211, 252, 0.82) !important;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.34), rgba(129, 140, 248, 0.24)) !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.14), 0 0 26px rgba(56, 189, 248, 0.26) !important;
+        }}
+
+        div[data-testid="stButton"] > button:disabled,
+        div[data-testid="stButton"] > button[disabled],
+        .stButton > button:disabled,
+        .stButton > button[disabled] {{
+            border-color: rgba(56, 189, 248, 0.22) !important;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(129, 140, 248, 0.10)) !important;
+            color: rgba(238, 248, 255, 0.70) !important;
+            -webkit-text-fill-color: rgba(238, 248, 255, 0.70) !important;
+            opacity: 1 !important;
+        }}
+
+        div[data-testid="stButton"] > button:disabled p,
+        div[data-testid="stButton"] > button:disabled span,
+        div[data-testid="stButton"] > button[disabled] p,
+        div[data-testid="stButton"] > button[disabled] span,
+        .stButton > button:disabled p,
+        .stButton > button:disabled span,
+        .stButton > button[disabled] p,
+        .stButton > button[disabled] span {{
+            color: rgba(238, 248, 255, 0.70) !important;
+            -webkit-text-fill-color: rgba(238, 248, 255, 0.70) !important;
+        }}
+
+        html[data-horizon-theme="light"] div[data-testid="stButton"] > button,
+        html[data-horizon-theme="light"] .stButton > button {{
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.20), rgba(129, 140, 248, 0.14)) !important;
+            color: #091423 !important;
+            -webkit-text-fill-color: #091423 !important;
+            border-color: rgba(14, 116, 144, 0.28) !important;
+        }}
+
+        html[data-horizon-theme="light"] div[data-testid="stButton"] > button p,
+        html[data-horizon-theme="light"] div[data-testid="stButton"] > button span,
+        html[data-horizon-theme="light"] .stButton > button p,
+        html[data-horizon-theme="light"] .stButton > button span {{
+            color: #091423 !important;
+            -webkit-text-fill-color: #091423 !important;
+        }}
+
 
         .tf-summary-shell {{
             position: relative;
@@ -19713,6 +20025,221 @@ def generate_dashboard():
             lens_meta=lens_meta,
             layout_mode=layout_mode,
         )
+
+
+# ---------------------------------------------------------------------------
+# Active ETF pair comparison v2
+# ---------------------------------------------------------------------------
+
+def _active_etf_holding_compare_key(name: str) -> str:
+    """Return a stable compare key so English / Chinese names still overlap."""
+    raw_name = str(name or "").strip()
+    symbol = lookup_taiwan_holding_symbol(raw_name)
+    if symbol:
+        return f"symbol:{symbol}"
+    normalized = _normalize_holding_alias_text(raw_name)
+    return f"name:{normalized}" if normalized else f"name:{raw_name.upper()}"
+
+
+def _active_etf_holdings_compare_map(items: list[dict], max_items: int = 40) -> dict[str, dict]:
+    """Map ETF holdings by stable key and preserve display name + merged weight."""
+    mapped: dict[str, dict] = {}
+    for item in _normalize_holdings_records(items or [], max_items=max_items):
+        raw_name = str(item.get("name", "")).strip()
+        weight = _safe_float(item.get("weight"))
+        if not raw_name or pd.isna(weight):
+            continue
+
+        key = _active_etf_holding_compare_key(raw_name)
+        symbol = lookup_taiwan_holding_symbol(raw_name)
+        current = mapped.get(key)
+        if current is None:
+            mapped[key] = {
+                "name": raw_name,
+                "symbol": symbol,
+                "weight": float(weight),
+            }
+        else:
+            current["weight"] = float(current.get("weight", 0.0) or 0.0) + float(weight)
+            if not current.get("symbol") and symbol:
+                current["symbol"] = symbol
+    return mapped
+
+
+def _active_etf_compare_summary_cards(
+    left_label: str,
+    right_label: str,
+    common_count: int,
+    left_unique_count: int,
+    right_unique_count: int,
+    overlap_weight_left: float,
+    overlap_weight_right: float,
+    lang_zh: bool,
+) -> None:
+    title_common = "共同持股" if lang_zh else "Common holdings"
+    title_left = f"{left_label} 獨有" if lang_zh else f"{left_label} unique"
+    title_right = f"{right_label} 獨有" if lang_zh else f"{right_label} unique"
+    title_weight = "共同持股權重" if lang_zh else "Overlap weight"
+    weight_text = f"{overlap_weight_left:.2f}% / {overlap_weight_right:.2f}%"
+    st.markdown(
+        f"""
+        <div class="futures-metric-grid etf-compare-summary-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 1rem;">
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_common)}</div>
+                <div class="futures-metric-value">{common_count}</div>
+                <div class="futures-metric-note">{escape('兩檔 ETF 共同持有的成分數' if lang_zh else 'Positions held by both ETFs')}</div>
+            </div>
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_left)}</div>
+                <div class="futures-metric-value">{left_unique_count}</div>
+                <div class="futures-metric-note">{escape('只出現在 ETF A 的持股' if lang_zh else 'Only held by ETF A')}</div>
+            </div>
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_right)}</div>
+                <div class="futures-metric-value">{right_unique_count}</div>
+                <div class="futures-metric-note">{escape('只出現在 ETF B 的持股' if lang_zh else 'Only held by ETF B')}</div>
+            </div>
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_weight)}</div>
+                <div class="futures-metric-value" style="font-size: clamp(1.15rem, 1.8vw, 1.8rem);">{escape(weight_text)}</div>
+                <div class="futures-metric-note">{escape(left_label)} / {escape(right_label)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> None:
+    """Render ETF A/B holdings comparison with stable overlap detection."""
+    lang_zh = get_language() == "zh_TW"
+    inject_active_etf_tracker_css()
+    inject_taiwan_futures_dashboard_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
+
+    left_payload = fetch_active_etf_holdings_snapshot(left_ticker, max_items=40)
+    right_payload = fetch_active_etf_holdings_snapshot(right_ticker, max_items=40)
+
+    left_items = left_payload.get("items", []) or []
+    right_items = right_payload.get("items", []) or []
+
+    if not left_items and not right_items:
+        st.info(
+            "目前抓不到這兩檔主動式 ETF 的持股快照，請稍後再試。"
+            if lang_zh
+            else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
+        )
+        return
+
+    now_tw = datetime.now(TW_TZ)
+    timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+    update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
+    left_label = display_ticker_label(left_ticker)
+    right_label = display_ticker_label(right_ticker)
+
+    chips = [
+        _tracker_status_chip(("雙 ETF 持股對比" if lang_zh else "Dual ETF holdings comparison"), "info"),
+        _tracker_status_chip((f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
+        _tracker_status_chip(("共同 / 獨有 / 權重差" if lang_zh else "Common / unique / weight gap"), "up"),
+    ]
+
+    st.markdown(
+        f"""
+        <div class="guide-shell etf-tracker-shell">
+            <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
+            <div class="guide-title">{escape(left_label)} × {escape(right_label)}</div>
+            <div class="guide-copy">{escape(update_note)} {'這裡會重新比對中英文持股名稱與台股代號，列出共同持股、權重差距、各自獨有持股，以及共同/不同數量。' if lang_zh else 'This section matches holdings by Taiwan symbol and normalized Chinese/English names, then lists common holdings, weight gaps, unique positions, and overlap counts.'}</div>
+            <div class="chip-row">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
+    right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
+
+    common_keys = set(left_map) & set(right_map)
+    left_unique_keys = set(left_map) - set(right_map)
+    right_unique_keys = set(right_map) - set(left_map)
+
+    overlap_weight_left = sum(float(left_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+    overlap_weight_right = sum(float(right_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+
+    _active_etf_compare_summary_cards(
+        left_label,
+        right_label,
+        len(common_keys),
+        len(left_unique_keys),
+        len(right_unique_keys),
+        overlap_weight_left,
+        overlap_weight_right,
+        lang_zh,
+    )
+
+    overlap_rows = []
+    for key in sorted(
+        common_keys,
+        key=lambda row_key: abs(float(left_map[row_key].get("weight", 0.0) or 0.0) - float(right_map[row_key].get("weight", 0.0) or 0.0)),
+        reverse=True,
+    ):
+        left_weight = float(left_map[key].get("weight", 0.0) or 0.0)
+        right_weight = float(right_map[key].get("weight", 0.0) or 0.0)
+        delta = left_weight - right_weight
+        display_name = left_map[key].get("name") or right_map[key].get("name") or key
+        name_cell = build_holding_name_cell(str(display_name))
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
+        overlap_rows.append([
+            name_cell,
+            f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+            f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+            f'<div class="{delta_class}">{delta:+.2f}%</div>',
+        ])
+
+    left_only_rows = []
+    for key in sorted(left_unique_keys, key=lambda row_key: float(left_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
+        item = left_map[key]
+        left_only_rows.append([
+            build_holding_name_cell(str(item.get("name", key))),
+            f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
+        ])
+
+    right_only_rows = []
+    for key in sorted(right_unique_keys, key=lambda row_key: float(right_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
+        item = right_map[key]
+        right_only_rows.append([
+            build_holding_name_cell(str(item.get("name", key))),
+            f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
+        ])
+
+    st.markdown(f"### {'共同持股與權重差距' if lang_zh else 'Common holdings and weight gap'}")
+    render_active_etf_tracker_table(
+        [
+            "持股 / 公司" if lang_zh else "Holding / company",
+            left_label,
+            right_label,
+            "權重差 A-B" if lang_zh else "Weight gap A-B",
+        ],
+        overlap_rows[:25],
+        "目前尚無共同持股可供比較。若你確定兩檔有共同持股，通常是 Yahoo 持股名稱格式不同；本版已用台股代號與中英文名稱做加強比對。"
+        if lang_zh
+        else "No overlapping holdings are currently available for comparison.",
+    )
+
+    unique_cols = st.columns(2, gap="large")
+    with unique_cols[0]:
+        st.markdown(f"### {escape(left_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        render_active_etf_tracker_table(
+            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            left_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+    with unique_cols[1]:
+        st.markdown(f"### {escape(right_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        render_active_etf_tracker_table(
+            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            right_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+
 
 
 if __name__ == "__main__":
