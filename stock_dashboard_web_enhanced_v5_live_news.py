@@ -2456,6 +2456,8 @@ def peek_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = N
     snapshot = (store.get("items", {}) or {}).get(_supply_chain_snapshot_key(config_key, period, interval))
     if not isinstance(snapshot, dict):
         return None
+    if int(snapshot.get("version", 0) or 0) != SUPPLY_CHAIN_SNAPSHOT_VERSION:
+        return None
     return snapshot
 
 
@@ -2660,6 +2662,124 @@ def render_thematic_supply_chain_sections(lens_meta: dict | None = None) -> None
         return
     for config_key in SUPPLY_CHAIN_FOCUS_ORDER:
         render_supply_chain_focus_section(config_key, lens_meta=lens_meta)
+
+
+def render_supply_chain_focus_section(config_key: str, lens_meta: dict | None = None) -> None:
+    if get_language() != "zh_TW":
+        return
+
+    config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+    if not config:
+        return
+
+    inject_low_orbit_supply_chain_css()
+    inject_supply_chain_focus_css()
+
+    catalog = config["catalog"]
+    panel_open = render_dashboard_section_panel(
+        config["title"],
+        config["panel_section"],
+        item_count=len(catalog),
+        helper_base=config["copy"],
+        expanded=True,
+        panel_key=config["panel_key"],
+    )
+    if not panel_open:
+        return
+
+    snapshot_cols = st.columns([3, 1])
+    with snapshot_cols[1]:
+        refresh_clicked = st.button(
+            f"↻ 刷新 {config['title']}",
+            key=f"supply_chain_refresh::{config_key}",
+            use_container_width=True,
+        )
+
+    cached_snapshot = peek_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta)
+    snapshot_missing = not isinstance(cached_snapshot, dict)
+    if refresh_clicked:
+        with st.spinner(f"正在更新 {config['title']} 快照…"):
+            snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=True)
+        try:
+            st.toast(f"{config['title']} 快照已更新")
+        except Exception:
+            st.success(f"{config['title']} 快照已更新")
+    elif snapshot_missing:
+        with st.spinner(f"正在建立 {config['title']} 初始快照…"):
+            snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=False)
+    else:
+        snapshot = cached_snapshot
+
+    if not isinstance(snapshot, dict):
+        st.info(config["empty_note"])
+        return
+
+    fetched_at_text = format_supply_chain_snapshot_fetched_at(snapshot.get("fetched_at"))
+    last_sync_text = str(snapshot.get("last_sync_text") or "—")
+    lens_title = str(snapshot.get("lens_title", "") or (lens_meta or {}).get("title", DEFAULT_TREND_LENS))
+    with snapshot_cols[0]:
+        st.caption(f"快照建立：{fetched_at_text} · 市價基準：{last_sync_text} · Lens：{lens_title} · 本區只在你按右側刷新時才重抓")
+
+    if str(snapshot.get("status", "ready")) != "ready":
+        st.info(config["empty_note"])
+        return
+
+    top_rows = _deserialize_supply_chain_rows(snapshot.get("top_rows", []))
+    summary_cards = [
+        (
+            str(card.get("label", "")).strip(),
+            str(card.get("value", "")).strip() or "—",
+            str(card.get("note", "")).strip(),
+        )
+        for card in snapshot.get("summary_cards", [])
+        if isinstance(card, dict)
+    ]
+    if not top_rows:
+        st.info(config["empty_note"])
+        return
+
+    cards_html = "".join(
+        f'''
+        <div class="leo-summary-card">
+            <div class="leo-summary-label">{escape(label)}</div>
+            <div class="leo-summary-value">{escape(value)}</div>
+            <div class="leo-summary-note">{escape(note)}</div>
+        </div>
+        '''
+        for label, value, note in summary_cards
+    )
+
+    head_html = "".join(f'<div class="sc-head-cell">{escape(str(column.get("label", "")))}</div>' for column in config["columns"])
+    row_html_parts = []
+    for row in top_rows:
+        cells = "".join(_render_supply_chain_focus_cell_html(column, row, config["lead_story_fallback"]) for column in config["columns"])
+        row_html_parts.append(f'<div class="sc-table-row" style="grid-template-columns:{config["grid_template"]};">{cells}</div>')
+
+    chips = [config["selection_note"]]
+    driver_note = str(config.get("driver_note", "") or "").strip()
+    if driver_note:
+        chips.append(driver_note)
+    chips.append(f'{config["table_title"]} · Top {len(top_rows)}')
+    chip_html = "".join(f'<span class="explorer-nav-chip">{escape(chip)}</span>' for chip in chips if str(chip).strip())
+
+    render_html_block(
+        f'''
+        <div class="guide-shell leo-shell">
+            <div class="leo-kicker">{escape(config["topline"])}</div>
+            <div class="leo-title">{escape(config["title"])}</div>
+            <div class="leo-copy">{escape(config["copy"])}</div>
+            <div class="chip-row">{chip_html}</div>
+            <div class="leo-summary-grid">{cards_html}</div>
+            <div class="sc-table-shell">
+                <div class="sc-table" style="min-width:{config["min_width"]};">
+                    <div class="sc-table-head" style="grid-template-columns:{config["grid_template"]};">{head_html}</div>
+                    {"".join(row_html_parts)}
+                </div>
+            </div>
+            <div class="leo-rank-note">{escape(config["rank_note"])}</div>
+        </div>
+        '''
+    )
 
 
 def render_general_market_dashboard_layout(
@@ -12661,91 +12781,6 @@ def render_planner_decision_board(summary: dict, symbol: str, entry_weights: lis
             </div>
         </div>
         <div class="planner-decision-grid">
-            <div class="pla              "順勢執行" if lang_zh else "Trend-follow",
-                "分批加碼" if lang_zh else "Add in tranches",
-                "保留最後一段火力" if lang_zh else "Keep final tranche",
-            ],
-        }
-
-    if expected_value < 0 or risk_reward_ratio < 0.95 or suggested_position_pct <= 35:
-        return {
-            "class": "planner-decision-action planner-decision-action-bad",
-            "title": "建議減碼 / 收斂風險" if lang_zh else "Suggested action: Reduce risk",
-            "copy": (
-                "目前風報比或期望值不夠有利，較好的做法是縮小倉位、把停損收緊，或先降低曝險等待更乾淨的訊號。"
-                if lang_zh else
-                "The setup is not paying enough for the risk right now. A better move is to reduce size, tighten stops, or cut exposure until the signal improves."
-            ),
-            "pills": [
-                "降低倉位" if lang_zh else "Cut size",
-                "提高現金比重" if lang_zh else "Raise cash",
-                "等待重置" if lang_zh else "Wait for reset",
-            ],
-        }
-
-    return {
-        "class": "planner-decision-action planner-decision-action-warn",
-        "title": "建議等待 / 分批布局" if lang_zh else "Suggested action: Wait / Build gradually",
-        "copy": (
-            "這是一個可以觀察並逐步佈局的狀態。先用前兩段小倉測試，等價格與新聞催化更一致後，再決定是否完成最後一段。"
-            if lang_zh else
-            "This is a selective setup. Start with smaller early tranches and only complete the final leg if price action and catalysts align more cleanly."
-        ),
-        "pills": [
-            "先小倉試單" if lang_zh else "Probe small",
-            "等催化確認" if lang_zh else "Wait for catalyst",
-            "保留調整空間" if lang_zh else "Keep flexibility",
-        ],
-    }
-
-def render_planner_decision_board(summary: dict, symbol: str, entry_weights: list[int], take_profit_weights: list[int], win_rate_mode: str):
-    if not summary:
-        return
-
-    lang_zh = get_language() == "zh_TW"
-    risk_reward_ratio = float(summary.get("risk_reward_ratio", 0.0) or 0.0)
-    assumed_win_rate = float(summary.get("assumed_win_rate", 0.0) or 0.0)
-    expected_value = float(summary.get("expected_value", 0.0) or 0.0)
-    suggested_position_pct = float(summary.get("suggested_position_pct", 0.0) or 0.0)
-    recommended_capital = float(summary.get("recommended_capital", 0.0) or 0.0)
-    acceptable_loss_amount = float(summary.get("acceptable_loss_amount", 0.0) or 0.0)
-
-    if expected_value >= 0 and risk_reward_ratio >= 1.8:
-        stance_text = "可積極執行" if lang_zh else "Constructive setup"
-        stance_class = "planner-decision-chip planner-decision-chip-good"
-    elif expected_value >= 0 and risk_reward_ratio >= 1.1:
-        stance_text = "可選擇性執行" if lang_zh else "Selective setup"
-        stance_class = "planner-decision-chip planner-decision-chip-warn"
-    else:
-        stance_text = "先收斂風險" if lang_zh else "Tighten risk first"
-        stance_class = "planner-decision-chip planner-decision-chip-bad"
-
-    expected_chip_class = "planner-decision-chip planner-decision-chip-good" if expected_value >= 0 else "planner-decision-chip planner-decision-chip-bad"
-    expected_chip_text = (
-        f"期望值 {symbol}{expected_value:,.0f}"
-        if lang_zh
-        else f"Expected value {symbol}{expected_value:,.0f}"
-    )
-
-    action = compute_planner_action_recommendation(summary)
-    action_pills = "".join(
-        f'<div class="planner-decision-action-pill">{escape(str(pill))}</div>'
-        for pill in action.get("pills", [])
-    )
-
-    board_html = f'''
-    <div class="planner-decision-shell">
-        <div class="planner-decision-head">
-            <div>
-                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("進階決策面板" if lang_zh else "Advanced decision board")}</div>
-                <div class="guide-copy">{escape("把風報比、勝率假設、期望值與建議倉位集中成一個更接近實戰的執行面板。" if lang_zh else "A compact execution board that pulls risk/reward, hit-rate, expectancy, and suggested sizing into one practical decision layer.")}</div>
-            </div>
-            <div class="planner-decision-chip-row">
-                <div class="{stance_class}">{escape(stance_text)}</div>
-                <div class="{expected_chip_class}">{escape(expected_chip_text)}</div>
-            </div>
-        </div>
-        <div class="planner-decision-grid">
             <div class="planner-decision-card">
                 <div class="planner-decision-label">{escape("風報比" if lang_zh else "Risk / reward")}</div>
                 <div class="planner-decision-kpi planner-decision-kpi-up">{risk_reward_ratio:.2f}R</div>
@@ -22058,4 +22093,101 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         f"""
         <div class="guide-shell etf-tracker-shell">
             <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
-            <div class="
+            <div class="guide-title">{escape(left_label)} × {escape(right_label)}</div>
+            <div class="guide-copy">{escape(update_note)} {'這裡會重新比對中英文持股名稱與台股代號，列出共同持股、權重差距、各自獨有持股，以及共同/不同數量。' if lang_zh else 'This section matches holdings by Taiwan symbol and normalized Chinese/English names, then lists common holdings, weight gaps, unique positions, and overlap counts.'}</div>
+            <div class="chip-row">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
+    right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
+
+    common_keys = set(left_map) & set(right_map)
+    left_unique_keys = set(left_map) - set(right_map)
+    right_unique_keys = set(right_map) - set(left_map)
+
+    overlap_weight_left = sum(float(left_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+    overlap_weight_right = sum(float(right_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+
+    _active_etf_compare_summary_cards(
+        left_label,
+        right_label,
+        len(common_keys),
+        len(left_unique_keys),
+        len(right_unique_keys),
+        overlap_weight_left,
+        overlap_weight_right,
+        lang_zh,
+    )
+
+    overlap_rows = []
+    for key in sorted(
+        common_keys,
+        key=lambda row_key: abs(float(left_map[row_key].get("weight", 0.0) or 0.0) - float(right_map[row_key].get("weight", 0.0) or 0.0)),
+        reverse=True,
+    ):
+        left_weight = float(left_map[key].get("weight", 0.0) or 0.0)
+        right_weight = float(right_map[key].get("weight", 0.0) or 0.0)
+        delta = left_weight - right_weight
+        display_name = left_map[key].get("name") or right_map[key].get("name") or key
+        name_cell = build_holding_name_cell(str(display_name))
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
+        overlap_rows.append([
+            name_cell,
+            f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+            f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+            f'<div class="{delta_class}">{delta:+.2f}%</div>',
+        ])
+
+    left_only_rows = []
+    for key in sorted(left_unique_keys, key=lambda row_key: float(left_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
+        item = left_map[key]
+        left_only_rows.append([
+            build_holding_name_cell(str(item.get("name", key))),
+            f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
+        ])
+
+    right_only_rows = []
+    for key in sorted(right_unique_keys, key=lambda row_key: float(right_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
+        item = right_map[key]
+        right_only_rows.append([
+            build_holding_name_cell(str(item.get("name", key))),
+            f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
+        ])
+
+    st.markdown(f"### {'共同持股與權重差距' if lang_zh else 'Common holdings and weight gap'}")
+    render_active_etf_tracker_table(
+        [
+            "持股 / 公司" if lang_zh else "Holding / company",
+            left_label,
+            right_label,
+            "權重差 A-B" if lang_zh else "Weight gap A-B",
+        ],
+        overlap_rows[:25],
+        "目前尚無共同持股可供比較。若你確定兩檔有共同持股，通常是 Yahoo 持股名稱格式不同；本版已用台股代號與中英文名稱做加強比對。"
+        if lang_zh
+        else "No overlapping holdings are currently available for comparison.",
+    )
+
+    unique_cols = st.columns(2, gap="large")
+    with unique_cols[0]:
+        st.markdown(f"### {escape(left_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        render_active_etf_tracker_table(
+            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            left_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+    with unique_cols[1]:
+        st.markdown(f"### {escape(right_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        render_active_etf_tracker_table(
+            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            right_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+
+
+
+if __name__ == "__main__":
+    generate_dashboard()
