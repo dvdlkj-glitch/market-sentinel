@@ -405,6 +405,14 @@ def inject_lightweight_option_selector_css(state_key: str) -> None:
         .st-key-{selector_key} label[data-baseweb="radio"] {{
             margin: 0 !important;
             flex: 0 1 auto;
+            color: #f2d18b !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] span,
+        .st-key-{selector_key} label[data-baseweb="radio"] div,
+        .st-key-{selector_key} label[data-baseweb="radio"] p {{
+            color: #f2d18b !important;
+            -webkit-text-fill-color: #f2d18b !important;
+            opacity: 1 !important;
         }}
         .st-key-{selector_key} label[data-baseweb="radio"] > div:first-child {{
             display: none !important;
@@ -437,12 +445,26 @@ def inject_lightweight_option_selector_css(state_key: str) -> None:
                 background 140ms ease,
                 color 140ms ease;
         }}
+        .st-key-{selector_key} label[data-baseweb="radio"] > div:last-child * {{
+            color: #f2d18b !important;
+            fill: #f2d18b !important;
+        }}
         .st-key-{selector_key} label[data-baseweb="radio"]:hover > div:last-child {{
             transform: translateY(-1px);
             border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 68%, transparent);
             box-shadow:
                 inset 0 1px 0 rgba(255,255,255,0.04),
                 0 16px 32px rgba(56, 189, 248, 0.14);
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"]:hover > div:last-child * {{
+            color: #ffe5aa !important;
+            fill: #ffe5aa !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"]:hover span,
+        .st-key-{selector_key} label[data-baseweb="radio"]:hover div,
+        .st-key-{selector_key} label[data-baseweb="radio"]:hover p {{
+            color: #ffe5aa !important;
+            -webkit-text-fill-color: #ffe5aa !important;
         }}
         .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] > div:last-child {{
             background:
@@ -453,6 +475,17 @@ def inject_lightweight_option_selector_css(state_key: str) -> None:
                 0 18px 36px rgba(56, 189, 248, 0.20),
                 inset 0 1px 0 rgba(255,255,255,0.08);
             color: #f7fcff !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] > div:last-child * {{
+            color: #fff7df !important;
+            fill: #fff7df !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] span,
+        .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] div,
+        .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] p {{
+            color: #fff7df !important;
+            -webkit-text-fill-color: #fff7df !important;
+            opacity: 1 !important;
         }}
         @media (max-width: 720px) {{
             .st-key-{selector_key} [role="radiogroup"] {{
@@ -14994,6 +15027,127 @@ def render_target_watch_section(ticker: str, context: dict):
 
 
 
+def build_target_watch_panel_preview_html(ticker: str, context: dict) -> str:
+    if not context:
+        return ""
+
+    lang_zh = get_language() == "zh_TW"
+    if not context.get("available"):
+        empty_text = (
+            "目前沒有結構化分析師目標價"
+            if lang_zh else
+            "No structured analyst target data right now"
+        )
+        return (
+            '<div class="planner-panel-preview-row">'
+            f'<div class="planner-panel-preview-chip"><div class="planner-panel-preview-label">{"狀態" if lang_zh else "Status"}</div><div class="planner-panel-preview-value">{escape(empty_text)}</div></div>'
+            '</div>'
+        )
+
+    upside_value = coerce_float(context.get("upside_to_mean"))
+    preview_parts = [
+        (
+            "期限" if lang_zh else "Horizon",
+            str(context.get("timeframe_label") or "N/A"),
+            "",
+        ),
+        (
+            "共識目標" if lang_zh else "Consensus",
+            format_local_price(context.get("mean_target"), ticker),
+            "",
+        ),
+        (
+            "上行空間" if lang_zh else "Upside",
+            format_percent(context.get("upside_to_mean", pd.NA)),
+            "tone-up" if pd.notna(upside_value) and upside_value > 0 else "",
+        ),
+        (
+            "分析師看法" if lang_zh else "Bias",
+            str(context.get("bias") or "N/A"),
+            "",
+        ),
+    ]
+    chips = []
+    for label, value, tone in preview_parts:
+        chips.append(
+            "".join(
+                [
+                    f'<div class="planner-panel-preview-chip {tone}">',
+                    f'<div class="planner-panel-preview-label">{escape(label)}</div>',
+                    f'<div class="planner-panel-preview-value">{escape(str(value or "N/A"))}</div>',
+                    '</div>',
+                ]
+            )
+        )
+    return f'<div class="planner-panel-preview-row">{"".join(chips)}</div>'
+
+
+def render_workspace_target_watch_panel(bundle: dict, selected_count: int = 1) -> None:
+    ticker = str(bundle.get("ticker", "")).upper()
+    if not ticker:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    safe_ticker_key = re.sub(r"[^A-Za-z0-9_]+", "_", ticker) or "ticker"
+    timeframe_state_key = f"workspace_target_watch_timeframe_{safe_ticker_key}"
+    if timeframe_state_key not in st.session_state:
+        st.session_state[timeframe_state_key] = active_target_watch_timeframe(ticker)
+
+    preview_timeframe = normalize_planner_timeframe(st.session_state.get(timeframe_state_key, "6m"))
+    context = build_target_watch_context(
+        ticker,
+        bundle.get("price_series"),
+        bundle.get("news_items", []),
+        timeframe=preview_timeframe,
+    )
+    collapsed_preview_html = build_target_watch_panel_preview_html(ticker, context)
+
+    panel_label = (
+        f"{display_ticker_label(ticker)} 市場預估 / 目標價觀測"
+        if lang_zh else
+        f"{display_ticker_label(ticker)} market expectation / target watch"
+    )
+    helper_base = (
+        "這裡看的是分析師共識目標價，不是交易所官方保證價。適合拿來搭配新聞、催化與股價結構一起判讀。"
+        if lang_zh else
+        "This layer uses analyst consensus targets, not an official exchange price. It works best when read with catalysts, news flow, and price structure."
+    )
+    panel_open = render_dashboard_section_panel(
+        panel_label,
+        "target",
+        item_count=selected_count,
+        helper_base=helper_base,
+        expanded=planner_auto_expand("target", selected_count),
+        panel_key=f"workspace-target-watch::{ticker}",
+        collapsed_preview_html=collapsed_preview_html,
+    )
+    if not panel_open:
+        return
+
+    selected_timeframe = render_lightweight_option_selector(
+        PLANNER_TIMEFRAME_OPTIONS,
+        timeframe_state_key,
+        format_func=planner_timeframe_label,
+        helper_text=(
+            "切換投資期限後，系統會把共識目標價區間調整成對應時間框架的參考帶。"
+            if lang_zh else
+            "Changing the horizon rescales the consensus target band to the investment window you want to evaluate."
+        ),
+        widget_label=f"target-watch-timeframe-{safe_ticker_key}",
+    )
+    selected_timeframe = normalize_planner_timeframe(selected_timeframe)
+    st.session_state["dashboard_target_watch_timeframe"] = selected_timeframe
+    if selected_timeframe != preview_timeframe:
+        context = build_target_watch_context(
+            ticker,
+            bundle.get("price_series"),
+            bundle.get("news_items", []),
+            timeframe=selected_timeframe,
+        )
+
+    render_target_watch_section(ticker, context)
+
+
 def render_global_scenario_planning_stack(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, tickers: list[str], lens_meta: dict | None = None):
     if not tickers:
         return
@@ -17027,6 +17181,7 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
     render_asset_profile_section(bundle, selected_count=selected_count)
+    render_workspace_target_watch_panel(bundle, selected_count=selected_count)
 
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
