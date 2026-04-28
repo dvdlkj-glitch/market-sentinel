@@ -570,6 +570,58 @@ LEO_TRANSLATIONS_ZH = {
     "leo_satellite_topline": "繁體中文主頁特別焦點",
 }
 
+ABF_TRANSLATIONS_EN = {
+    "abf_supply_section_title": "ABF substrate supply chain",
+    "abf_supply_section_copy": "A Taiwan-focused board for the four ABF substrate leaders from your note. It keeps the core-advantage, ABF exposure, and customer-focus fields visible while ranking by the latest move and the dashboard's existing trend stack.",
+    "abf_supply_selection_note": "Scope: the four Taiwan ABF substrate leaders from your supplied list",
+    "abf_supply_rank_note": "Ranking logic: latest gain first, then trend strength, then 1Y leadership. News judgment is added after the ranked list is built.",
+    "abf_supply_total_names": "ABF names",
+    "abf_supply_rising_names": "Latest gainers",
+    "abf_supply_bullish_news": "Bullish news tilt",
+    "abf_supply_last_sync": "Last sync",
+    "abf_supply_table_title": "Current ABF substrate ranking board",
+    "abf_supply_company_col": "Company",
+    "abf_supply_core_col": "Core edge",
+    "abf_supply_share_col": "ABF share",
+    "abf_supply_focus_col": "Key tech & customers",
+    "abf_supply_last_price_col": "Last price",
+    "abf_supply_move_col": "Latest move",
+    "abf_supply_trend_col": "Trend",
+    "abf_supply_signal_col": "Signal",
+    "abf_supply_news_col": "News tilt",
+    "abf_supply_story_col": "Lead story",
+    "abf_supply_no_story": "No stock-specific news returned yet.",
+    "abf_supply_empty": "No usable ABF substrate supply-chain price data was returned right now.",
+    "abf_supply_topline": "Traditional Chinese main page special focus",
+    "abf_supply_ai_driver": "Morgan Stanley view: AI server spec upgrades are lifting ABF consumption and widening the supply gap.",
+}
+
+ABF_TRANSLATIONS_ZH = {
+    "abf_supply_section_title": "ABF 載板供應鏈",
+    "abf_supply_section_copy": "依你提供的 ABF 載板四雄名單，保留核心優勢、ABF 佔比與關鍵技術 / 客戶欄位，同時用最新漲幅、趨勢與 Dashboard 原有新聞判別來排序。",
+    "abf_supply_selection_note": "範圍：你指定的 ABF 載板四雄名單",
+    "abf_supply_rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別在排名後再套用到目前名單。",
+    "abf_supply_total_names": "ABF 名單",
+    "abf_supply_rising_names": "最新上漲家數",
+    "abf_supply_bullish_news": "偏多新聞家數",
+    "abf_supply_last_sync": "更新基準",
+    "abf_supply_table_title": "目前 ABF 載板戰力板",
+    "abf_supply_company_col": "公司",
+    "abf_supply_core_col": "核心優勢",
+    "abf_supply_share_col": "ABF 佔比",
+    "abf_supply_focus_col": "關鍵技術與客戶",
+    "abf_supply_last_price_col": "最新價",
+    "abf_supply_move_col": "最新變動",
+    "abf_supply_trend_col": "趨勢",
+    "abf_supply_signal_col": "訊號",
+    "abf_supply_news_col": "新聞傾向",
+    "abf_supply_story_col": "主導新聞",
+    "abf_supply_no_story": "目前還沒有回傳該股專屬新聞。",
+    "abf_supply_empty": "目前沒有抓到可用的 ABF 載板供應鏈價格資料。",
+    "abf_supply_topline": "繁體中文主頁特別焦點",
+    "abf_supply_ai_driver": "大摩觀點：AI 伺服器規格升級，帶動大面積、高層數 ABF 載板消耗提升，產業供需缺口有機會擴大。",
+}
+
 LOW_ORBIT_SUPPLY_CHAIN_CATALOG = [
     {"group": "衛星電路板", "code": "2313", "name": "華通", "ticker": "2313.TW"},
     {"group": "衛星電路板", "code": "2367", "name": "燿華", "ticker": "2367.TW"},
@@ -598,6 +650,315 @@ LOW_ORBIT_SUPPLY_CHAIN_CATALOG = [
     {"group": "散熱模組", "code": "3017", "name": "奇鋐", "ticker": "3017.TW"},
     {"group": "散熱模組", "code": "2421", "name": "建準", "ticker": "2421.TW"},
 ]
+
+ABF_SUPPLY_CHAIN_CATALOG = [
+    {
+        "code": "3037",
+        "name": "欣興",
+        "ticker": "3037.TW",
+        "core_advantage": "產能規模龍頭",
+        "abf_share": "50-60%",
+        "key_focus": "玻璃基板、先進封裝（Nvidia / Intel）",
+    },
+    {
+        "code": "8046",
+        "name": "南電",
+        "ticker": "8046.TW",
+        "core_advantage": "生產效率極高",
+        "abf_share": "70-80%",
+        "key_focus": "高階網通與伺服器（美系 ODM）",
+    },
+    {
+        "code": "3189",
+        "name": "景碩",
+        "ticker": "3189.TW",
+        "core_advantage": "產品結構靈活",
+        "abf_share": "35-45%",
+        "key_focus": "BT 轉型 AI 邏輯晶片（美系通訊廠）",
+    },
+    {
+        "code": "4958",
+        "name": "臻鼎-KY",
+        "ticker": "4958.TW",
+        "core_advantage": "全球 PCB 霸主",
+        "abf_share": "10-15%",
+        "key_focus": "垂直整合、一站式購足（蘋果 / 鴻海）",
+    },
+]
+
+MEMORY_SUPPLY_CHAIN_CATALOG = [
+    {"group": "記憶體晶片製造", "code": "2408", "name": "南亞科", "ticker": "2408.TW"},
+    {"group": "記憶體晶片製造", "code": "2344", "name": "華邦電", "ticker": "2344.TW"},
+    {"group": "記憶體晶片製造", "code": "2337", "name": "旺宏", "ticker": "2337.TW"},
+    {"group": "記憶體模組", "code": "3260", "name": "威剛", "ticker": "3260.TWO"},
+    {"group": "記憶體模組", "code": "2451", "name": "創見", "ticker": "2451.TW"},
+    {"group": "記憶體模組", "code": "5289", "name": "宜鼎", "ticker": "5289.TWO"},
+    {"group": "記憶體模組", "code": "8271", "name": "宇瞻", "ticker": "8271.TW"},
+    {"group": "記憶體模組", "code": "4967", "name": "十銓", "ticker": "4967.TW"},
+    {"group": "代理與通路", "code": "5386", "name": "青雲", "ticker": "5386.TWO"},
+    {"group": "代理與通路", "code": "3702", "name": "大聯大", "ticker": "3702.TW"},
+    {"group": "代理與通路", "code": "3036", "name": "文曄", "ticker": "3036.TW"},
+    {"group": "代理與通路", "code": "8112", "name": "至上", "ticker": "8112.TW"},
+    {"group": "代理與通路", "code": "3033", "name": "威健", "ticker": "3033.TW"},
+    {"group": "控制晶片 / 記憶體介面 IC", "code": "8299", "name": "群聯", "ticker": "8299.TWO"},
+    {"group": "控制晶片 / 記憶體介面 IC", "code": "5351", "name": "鈺創", "ticker": "5351.TWO"},
+    {"group": "封裝與測試服務", "code": "6239", "name": "力成", "ticker": "6239.TW"},
+    {"group": "封裝與測試服務", "code": "8110", "name": "華東", "ticker": "8110.TW"},
+    {"group": "封裝與測試服務", "code": "8131", "name": "福懋科", "ticker": "8131.TW"},
+    {"group": "特種 / 利基型記憶體", "code": "6531", "name": "愛普", "ticker": "6531.TW"},
+    {"group": "特種 / 利基型記憶體", "code": "3006", "name": "晶豪科", "ticker": "3006.TW"},
+    {"group": "測試與檢測設備", "code": "2360", "name": "致茂", "ticker": "2360.TW"},
+    {"group": "測試與檢測設備", "code": "3030", "name": "德律", "ticker": "3030.TW"},
+    {"group": "測試與檢測設備", "code": "3055", "name": "蔚華科", "ticker": "3055.TW"},
+]
+
+PACKAGING_TEST_SUPPLY_CHAIN_CATALOG = [
+    {"group": "封裝與測試服務 (OSAT)", "code": "3711", "name": "日月光投控", "ticker": "3711.TW"},
+    {"group": "封裝與測試服務 (OSAT)", "code": "6239", "name": "力成", "ticker": "6239.TW"},
+    {"group": "封裝與測試服務 (OSAT)", "code": "2449", "name": "京元電子", "ticker": "2449.TW"},
+    {"group": "封裝與測試服務 (OSAT)", "code": "3264", "name": "欣銓", "ticker": "3264.TWO"},
+    {"group": "封裝與測試服務 (OSAT)", "code": "6257", "name": "矽格", "ticker": "6257.TW"},
+    {"group": "封裝與測試服務 (OSAT)", "code": "8150", "name": "南茂", "ticker": "8150.TW"},
+    {"group": "封裝與測試服務 (OSAT)", "code": "6147", "name": "頎邦", "ticker": "6147.TWO"},
+    {"group": "探針卡 (Probe Card)", "code": "6223", "name": "旺矽", "ticker": "6223.TWO"},
+    {"group": "探針卡 (Probe Card)", "code": "6683", "name": "雍智科技", "ticker": "6683.TWO"},
+    {"group": "探針卡 (Probe Card)", "code": "6217", "name": "中探針", "ticker": "6217.TWO"},
+    {"group": "探針卡 (Probe Card)", "code": "6510", "name": "精測", "ticker": "6510.TWO"},
+    {"group": "測試 Socket 與介面", "code": "6515", "name": "穎崴", "ticker": "6515.TW"},
+    {"group": "測試設備 (ATE / AOI)", "code": "2360", "name": "致茂", "ticker": "2360.TW"},
+    {"group": "測試設備 (ATE / AOI)", "code": "3030", "name": "德律", "ticker": "3030.TW"},
+    {"group": "測試設備 (ATE / AOI)", "code": "3563", "name": "牧德", "ticker": "3563.TW"},
+    {"group": "先進封裝設備", "code": "5443", "name": "均豪", "ticker": "5443.TWO"},
+    {"group": "先進封裝設備", "code": "3131", "name": "弘塑", "ticker": "3131.TWO"},
+    {"group": "先進封裝設備", "code": "3583", "name": "辛耘", "ticker": "3583.TW"},
+    {"group": "特殊封裝", "code": "3374", "name": "精材", "ticker": "3374.TWO"},
+    {"group": "特殊封裝", "code": "6271", "name": "同欣電", "ticker": "6271.TW"},
+    {"group": "特殊封裝", "code": "6451", "name": "訊芯-KY", "ticker": "6451.TW"},
+]
+
+ROBOTICS_SUPPLY_CHAIN_CATALOG = [
+    {"group": "視覺解決方案", "code": "2359", "name": "所羅門", "ticker": "2359.TW"},
+    {"group": "控制器與核心", "code": "8234", "name": "新漢", "ticker": "8234.TWO"},
+    {"group": "控制器與核心", "code": "7750", "name": "新代", "ticker": "7750.TW"},
+    {"group": "控制器與核心", "code": "4576", "name": "大銀微", "ticker": "4576.TW"},
+    {"group": "自動化解決方案", "code": "2308", "name": "台達電", "ticker": "2308.TW"},
+    {"group": "自動化解決方案", "code": "2395", "name": "研華", "ticker": "2395.TW"},
+    {"group": "自動化解決方案", "code": "6166", "name": "凌華", "ticker": "6166.TW"},
+    {"group": "自動化解決方案", "code": "2357", "name": "華碩", "ticker": "2357.TW"},
+    {"group": "自動化解決方案", "code": "2409", "name": "友達", "ticker": "2409.TW"},
+    {"group": "自動化解決方案", "code": "3481", "name": "群創", "ticker": "3481.TW"},
+    {"group": "自動化解決方案", "code": "4938", "name": "和碩", "ticker": "4938.TW"},
+    {"group": "自動化解決方案", "code": "6414", "name": "樺漢", "ticker": "6414.TW"},
+    {"group": "機器人成品 / 模組", "code": "4585", "name": "達明機器人", "ticker": "4585.TW"},
+    {"group": "機器人成品 / 模組", "code": "1597", "name": "直得", "ticker": "1597.TW"},
+    {"group": "機器人成品 / 模組", "code": "2049", "name": "上銀", "ticker": "2049.TW"},
+    {"group": "機器人成品 / 模組", "code": "1503", "name": "士電", "ticker": "1503.TW"},
+    {"group": "自動搬運 (AMR)", "code": "2377", "name": "微星", "ticker": "2377.TW"},
+    {"group": "自動搬運 (AMR)", "code": "5371", "name": "中光電", "ticker": "5371.TWO"},
+    {"group": "自動搬運 (AMR)", "code": "3231", "name": "緯創", "ticker": "3231.TW"},
+    {"group": "系統整合", "code": "6125", "name": "廣運", "ticker": "6125.TWO"},
+    {"group": "系統整合", "code": "2464", "name": "盟立", "ticker": "2464.TW"},
+    {"group": "系統整合", "code": "8374", "name": "羅昇", "ticker": "8374.TW"},
+    {"group": "精密零件 / 外殼", "code": "4566", "name": "時碩工業", "ticker": "4566.TW"},
+]
+
+SUPPLY_CHAIN_RUNTIME_NAME_MAP = {}
+for _catalog in (
+    LOW_ORBIT_SUPPLY_CHAIN_CATALOG,
+    ABF_SUPPLY_CHAIN_CATALOG,
+    MEMORY_SUPPLY_CHAIN_CATALOG,
+    PACKAGING_TEST_SUPPLY_CHAIN_CATALOG,
+    ROBOTICS_SUPPLY_CHAIN_CATALOG,
+):
+    for _item in _catalog:
+        _ticker = str(_item.get("ticker", "")).upper().strip()
+        _name = str(_item.get("name", "")).strip()
+        if _ticker and _name:
+            SUPPLY_CHAIN_RUNTIME_NAME_MAP[_ticker] = _name
+
+SUPPLY_CHAIN_FOCUS_CONFIGS = {
+    "low-orbit": {
+        "panel_section": "low-orbit",
+        "panel_key": "low-orbit-supply-chain",
+        "catalog": LOW_ORBIT_SUPPLY_CHAIN_CATALOG,
+        "title": "低軌衛星供應鏈",
+        "copy": "依你指定的低軌衛星供應鏈名單，先用最新漲幅與趨勢強度做排序，再把 Dashboard 原有的新聞判別邏輯帶入目前前十名。",
+        "topline": "繁體中文主頁特別焦點",
+        "selection_note": "範圍：你指定的台灣低軌衛星供應鏈名單",
+        "rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別只套用到目前前十名。",
+        "empty_note": "目前沒有抓到可用的低軌衛星供應鏈價格資料。",
+        "lead_story_fallback": "目前還沒有回傳該股專屬新聞。",
+        "table_title": "目前低軌衛星供應鏈前十名",
+        "driver_note": "",
+        "grid_template": "70px 170px 200px 120px 120px 140px 110px 150px minmax(280px, 1fr)",
+        "min_width": "1080px",
+        "target_pe_sample": 4,
+        "summary_labels": {
+            "total": "供應鏈名單",
+            "rising": "最新上漲家數",
+            "bullish": "前十名偏多新聞",
+            "last_sync": "更新基準",
+        },
+        "bullish_note": "原有新聞判別已帶入目前前十名。",
+        "columns": [
+            {"label": "#", "kind": "rank"},
+            {"label": "產業別", "kind": "text", "key": "group", "value_class": "sc-text sc-text-soft"},
+            {"label": "公司", "kind": "company"},
+            {"label": "最新價", "kind": "price"},
+            {"label": "最新變動", "kind": "move"},
+            {"label": "趨勢", "kind": "trend"},
+            {"label": "訊號", "kind": "signal"},
+            {"label": "新聞傾向", "kind": "news"},
+            {"label": "主導新聞", "kind": "story"},
+        ],
+    },
+    "abf": {
+        "panel_section": "abf-supply",
+        "panel_key": "abf-supply-chain",
+        "catalog": ABF_SUPPLY_CHAIN_CATALOG,
+        "title": "ABF 載板供應鏈",
+        "copy": "依你提供的 ABF 載板四雄名單，保留核心優勢、ABF 佔比與關鍵技術 / 客戶欄位，同時用最新漲幅、趨勢與 Dashboard 原有新聞判別來排序。",
+        "topline": "繁體中文主頁特別焦點",
+        "selection_note": "範圍：你指定的 ABF 載板四雄名單",
+        "rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別在排名後再套用到目前名單。",
+        "empty_note": "目前沒有抓到可用的 ABF 載板供應鏈價格資料。",
+        "lead_story_fallback": "目前還沒有回傳該股專屬新聞。",
+        "table_title": "目前 ABF 載板戰力板",
+        "driver_note": "大摩觀點：AI 伺服器規格升級，帶動大面積、高層數 ABF 載板消耗提升，產業供需缺口有機會擴大。",
+        "grid_template": "70px 180px 190px 120px 280px 120px 120px 140px 110px 150px minmax(280px, 1fr)",
+        "min_width": "1760px",
+        "target_pe_sample": 4,
+        "summary_labels": {
+            "total": "ABF 名單",
+            "rising": "最新上漲家數",
+            "bullish": "偏多新聞家數",
+            "last_sync": "更新基準",
+        },
+        "bullish_note": "延用 Dashboard 原有個股新聞判別邏輯。",
+        "columns": [
+            {"label": "#", "kind": "rank"},
+            {"label": "公司", "kind": "company"},
+            {"label": "核心優勢", "kind": "text", "key": "core_advantage", "value_class": "sc-text sc-text-strong"},
+            {"label": "ABF 佔比", "kind": "text", "key": "abf_share", "value_class": "sc-text sc-text-highlight"},
+            {"label": "關鍵技術與客戶", "kind": "text", "key": "key_focus", "value_class": "sc-text"},
+            {"label": "最新價", "kind": "price"},
+            {"label": "最新變動", "kind": "move"},
+            {"label": "趨勢", "kind": "trend"},
+            {"label": "訊號", "kind": "signal"},
+            {"label": "新聞傾向", "kind": "news"},
+            {"label": "主導新聞", "kind": "story"},
+        ],
+    },
+    "memory": {
+        "panel_section": "memory-supply",
+        "panel_key": "memory-supply-chain",
+        "catalog": MEMORY_SUPPLY_CHAIN_CATALOG,
+        "title": "記憶體供應鏈總整理",
+        "copy": "從記憶體晶片、模組、代理通路、控制 IC、封測到檢測設備一次整理，並直接延用 Dashboard 的價格、趨勢與新聞判讀。",
+        "topline": "繁體中文主頁特別焦點",
+        "selection_note": "範圍：你提供的台灣記憶體供應鏈名單",
+        "rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別只套用到目前前十名。",
+        "empty_note": "目前沒有抓到可用的記憶體供應鏈價格資料。",
+        "lead_story_fallback": "目前還沒有回傳該股專屬新聞。",
+        "table_title": "目前記憶體供應鏈戰力板",
+        "driver_note": "觀察點：記憶體景氣循環、模組報價、控制 IC 與封測節奏。",
+        "grid_template": "70px 220px 200px 120px 120px 140px 110px 150px minmax(280px, 1fr)",
+        "min_width": "1180px",
+        "target_pe_sample": 4,
+        "summary_labels": {
+            "total": "供應鏈名單",
+            "rising": "最新上漲家數",
+            "bullish": "前十名偏多新聞",
+            "last_sync": "更新基準",
+        },
+        "bullish_note": "把個股新聞、趨勢與最新價格放進同一張記憶體戰力板。",
+        "columns": [
+            {"label": "#", "kind": "rank"},
+            {"label": "產業別", "kind": "text", "key": "group", "value_class": "sc-text sc-text-soft"},
+            {"label": "公司", "kind": "company"},
+            {"label": "最新價", "kind": "price"},
+            {"label": "最新變動", "kind": "move"},
+            {"label": "趨勢", "kind": "trend"},
+            {"label": "訊號", "kind": "signal"},
+            {"label": "新聞傾向", "kind": "news"},
+            {"label": "主導新聞", "kind": "story"},
+        ],
+    },
+    "packaging-test": {
+        "panel_section": "packaging-test-supply",
+        "panel_key": "packaging-test-supply-chain",
+        "catalog": PACKAGING_TEST_SUPPLY_CHAIN_CATALOG,
+        "title": "封裝測試產業鏈",
+        "copy": "AI 算力需求快速提升，先進封裝與晶片測試的重要性同步升溫；這裡把 OSAT、探針卡、Socket、ATE / AOI、先進封裝設備與特殊封裝整理成一張戰力板。",
+        "topline": "繁體中文主頁特別焦點",
+        "selection_note": "範圍：你提供的台灣封裝測試產業鏈名單",
+        "rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別只套用到目前前十名。",
+        "empty_note": "目前沒有抓到可用的封裝測試供應鏈價格資料。",
+        "lead_story_fallback": "目前還沒有回傳該股專屬新聞。",
+        "table_title": "目前封裝測試供應鏈戰力板",
+        "driver_note": "觀察點：先進封裝良率、測試擴產、探針卡與設備接單節奏。",
+        "grid_template": "70px 230px 200px 120px 120px 140px 110px 150px minmax(280px, 1fr)",
+        "min_width": "1200px",
+        "target_pe_sample": 4,
+        "summary_labels": {
+            "total": "供應鏈名單",
+            "rising": "最新上漲家數",
+            "bullish": "前十名偏多新聞",
+            "last_sync": "更新基準",
+        },
+        "bullish_note": "把封測、探針卡、Socket 與設備鏈的即時強弱集中比較。",
+        "columns": [
+            {"label": "#", "kind": "rank"},
+            {"label": "產業位置", "kind": "text", "key": "group", "value_class": "sc-text sc-text-soft"},
+            {"label": "公司", "kind": "company"},
+            {"label": "最新價", "kind": "price"},
+            {"label": "最新變動", "kind": "move"},
+            {"label": "趨勢", "kind": "trend"},
+            {"label": "訊號", "kind": "signal"},
+            {"label": "新聞傾向", "kind": "news"},
+            {"label": "主導新聞", "kind": "story"},
+        ],
+    },
+    "robotics": {
+        "panel_section": "robotics-supply",
+        "panel_key": "robotics-supply-chain",
+        "catalog": ROBOTICS_SUPPLY_CHAIN_CATALOG,
+        "title": "機器人產業供應鏈概覽",
+        "copy": "從視覺、控制器、自動化、機器人成品 / 模組、AMR 到系統整合與精密零件，把台灣機器人題材名單整合成可直接閱讀的供應鏈戰力板。",
+        "topline": "繁體中文主頁特別焦點",
+        "selection_note": "範圍：你提供的台灣機器人供應鏈名單",
+        "rank_note": "排序邏輯：先看最新漲幅，其次看趨勢強度，再看一年相對領先；新聞判別只套用到目前前十名。",
+        "empty_note": "目前沒有抓到可用的機器人供應鏈價格資料。",
+        "lead_story_fallback": "目前還沒有回傳該股專屬新聞。",
+        "table_title": "目前機器人供應鏈戰力板",
+        "driver_note": "觀察點：自動化資本支出、機器人滲透率、AMR 訂單與控制器升級節奏。",
+        "grid_template": "70px 220px 200px 120px 120px 140px 110px 150px minmax(280px, 1fr)",
+        "min_width": "1180px",
+        "target_pe_sample": 4,
+        "summary_labels": {
+            "total": "供應鏈名單",
+            "rising": "最新上漲家數",
+            "bullish": "前十名偏多新聞",
+            "last_sync": "更新基準",
+        },
+        "bullish_note": "讓視覺、控制器、自動化與機器人成品用同一套規則一起排序。",
+        "columns": [
+            {"label": "#", "kind": "rank"},
+            {"label": "產業位置", "kind": "text", "key": "group", "value_class": "sc-text sc-text-soft"},
+            {"label": "公司", "kind": "company"},
+            {"label": "最新價", "kind": "price"},
+            {"label": "最新變動", "kind": "move"},
+            {"label": "趨勢", "kind": "trend"},
+            {"label": "訊號", "kind": "signal"},
+            {"label": "新聞傾向", "kind": "news"},
+            {"label": "主導新聞", "kind": "story"},
+        ],
+    },
+}
+
+SUPPLY_CHAIN_FOCUS_ORDER = ["low-orbit", "abf", "memory", "packaging-test", "robotics"]
+SUPPLY_CHAIN_SNAPSHOT_VERSION = 1
+SUPPLY_CHAIN_SNAPSHOT_PATH = Path(__file__).with_name("supply_chain_focus_snapshots.json")
 
 
 def low_orbit_supply_chain_universe() -> list[dict]:
@@ -1319,6 +1680,988 @@ def render_low_orbit_supply_chain_section(lens_meta: dict | None = None) -> None
         '''
     )
 
+def abf_supply_chain_universe() -> list[dict]:
+    universe: list[dict] = []
+    for item in ABF_SUPPLY_CHAIN_CATALOG:
+        ticker = normalize_dashboard_ticker(item["ticker"])
+        if not ticker:
+            continue
+        register_runtime_symbol_metadata(ticker, name=item["name"], market="TW")
+        universe.append({**item, "ticker": ticker})
+    return universe
+
+
+def build_abf_supply_chain_rank_rows(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for item in abf_supply_chain_universe():
+        ticker = item["ticker"]
+        price_series, _ = get_taiwan_close_series(daily_data, ticker)
+        if price_series is None or price_series.empty:
+            continue
+        volume_series = get_series(daily_data, "Volume", ticker)
+        analysis = analyze_market_sentinel(price_series, volume_series, [], ticker)
+        price_snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, ticker)
+
+        latest_move = price_snapshot.get("latest_move", pd.NA)
+        latest_price = price_snapshot.get("latest_price", pd.NA)
+        rows.append(
+            {
+                **item,
+                "latest_price": latest_price,
+                "latest_move": latest_move,
+                "daily_change": price_snapshot.get("daily_change", pd.NA),
+                "last_updated": price_snapshot.get("last_updated"),
+                "price_source": price_snapshot.get("price_source", "daily_close"),
+                "trend": analysis.get("trend", "N/A"),
+                "one_year_return": analysis.get("one_year_return", pd.NA),
+                "analysis_score": analysis.get("score", 0),
+                "positive_move": bool(pd.notna(latest_move) and float(latest_move) > 0),
+                "sort_key": (
+                    1 if pd.notna(latest_move) and float(latest_move) > 0 else 0,
+                    low_orbit_trend_rank(analysis.get("trend", "N/A")),
+                    float(latest_move) if pd.notna(latest_move) else -10**9,
+                    float(analysis.get("one_year_return")) if pd.notna(analysis.get("one_year_return", pd.NA)) else -10**9,
+                    float(analysis.get("score", 0)),
+                ),
+            }
+        )
+
+    rows.sort(key=lambda row: row["sort_key"], reverse=True)
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def enrich_abf_supply_chain_top_rows(
+    rows: list[dict],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> list[dict]:
+    enriched: list[dict] = []
+    for row in rows:
+        bundle = collect_ticker_context(daily_data, intraday_data, row["ticker"], news_limit=6, lens_meta=lens_meta)
+        if bundle is None:
+            enriched.append(dict(row))
+            continue
+
+        analysis = bundle.get("analysis", {})
+        news_items = bundle.get("news_items", [])
+        pulse = analysis.get("news_pulse", {})
+        lead_story = (news_items[0].get("title") if news_items else "") or t("abf_supply_no_story")
+        price_snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, row["ticker"])
+
+        merged = dict(row)
+        merged.update(
+            {
+                "latest_price": price_snapshot.get("latest_price", row.get("latest_price")),
+                "latest_move": price_snapshot.get("latest_move", row.get("latest_move")),
+                "daily_change": price_snapshot.get("daily_change", row.get("daily_change")),
+                "last_updated": price_snapshot.get("last_updated", row.get("last_updated")),
+                "price_source": price_snapshot.get("price_source", row.get("price_source", "daily_close")),
+                "trend": analysis.get("trend", row.get("trend", "N/A")),
+                "signal_raw": analysis.get("signal", "HOLD"),
+                "signal_label": tr_signal(analysis.get("signal", "HOLD")),
+                "news_label_raw": pulse.get("label", "Flat"),
+                "news_label": tr_news_label(pulse.get("label", "Flat")),
+                "news_score": pulse.get("score", 0.0),
+                "lead_story": lead_story,
+                "bundle": bundle,
+            }
+        )
+        enriched.append(merged)
+    return enriched
+
+
+def inject_abf_supply_chain_css() -> None:
+    render_html_block(
+        """
+        <style>
+        .abf-table-shell {
+            margin-top: 10px;
+            overflow: hidden;
+            border-radius: 20px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 98%, transparent) 100%);
+            box-shadow: 0 18px 36px rgba(3, 10, 20, 0.18);
+            overflow-x: auto;
+        }
+        .abf-table {
+            min-width: 1760px;
+        }
+        .abf-table-head,
+        .abf-table-row {
+            display: grid;
+            grid-template-columns: 70px 180px 190px 120px 280px 120px 120px 140px 110px 150px minmax(280px, 1fr);
+            gap: 0;
+            align-items: stretch;
+        }
+        .abf-table-head {
+            background: linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 16%, transparent) 0%, color-mix(in srgb, var(--brand, #818cf8) 12%, transparent) 100%);
+            border-bottom: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+        }
+        .abf-head-cell,
+        .abf-row-cell {
+            padding: 14px 14px;
+            border-right: 1px solid rgba(255,255,255,.05);
+        }
+        .abf-head-cell:last-child,
+        .abf-row-cell:last-child {
+            border-right: 0;
+        }
+        .abf-head-cell {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+        }
+        .abf-table-row {
+            border-bottom: 1px solid rgba(255,255,255,.05);
+        }
+        .abf-table-row:last-child {
+            border-bottom: 0;
+        }
+        .abf-core,
+        .abf-focus {
+            font-size: 12.5px;
+            line-height: 1.62;
+            color: var(--muted, rgba(226,238,255,.82));
+        }
+        .abf-core {
+            font-weight: 800;
+            color: var(--ink, #eef7ff);
+        }
+        .abf-share {
+            font-size: 15px;
+            font-weight: 900;
+            color: var(--ink, #eef7ff);
+        }
+        </style>
+        """
+    )
+
+
+def render_abf_supply_chain_section(lens_meta: dict | None = None) -> None:
+    if get_language() != "zh_TW":
+        return
+
+    inject_low_orbit_supply_chain_css()
+    inject_abf_supply_chain_css()
+    panel_open = render_dashboard_section_panel(
+        t("abf_supply_section_title"),
+        "abf-supply",
+        item_count=len(ABF_SUPPLY_CHAIN_CATALOG),
+        helper_base=t("abf_supply_section_copy"),
+        expanded=True,
+        panel_key="abf-supply-chain",
+    )
+    if not panel_open:
+        return
+
+    universe = abf_supply_chain_universe()
+    tickers = tuple(item["ticker"] for item in universe)
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    daily_data, intraday_data = fetch_low_orbit_supply_chain_market_data(tickers, period, interval)
+    rows = build_abf_supply_chain_rank_rows(daily_data, intraday_data)
+
+    if not rows:
+        st.info(t("abf_supply_empty"))
+        return
+
+    top_rows = enrich_abf_supply_chain_top_rows(rows[:10], daily_data, intraday_data, lens_meta=lens_meta)
+    latest_timestamps = [row.get("last_updated") for row in top_rows if row.get("last_updated") is not None]
+    if latest_timestamps:
+        parsed_timestamps = pd.to_datetime(latest_timestamps, errors="coerce")
+        parsed_timestamps = [stamp for stamp in parsed_timestamps if pd.notna(stamp)]
+        if parsed_timestamps:
+            last_sync = max(parsed_timestamps)
+            try:
+                last_sync = pd.Timestamp(last_sync)
+                if last_sync.tzinfo is None:
+                    last_sync = last_sync.tz_localize(TW_TZ)
+                else:
+                    last_sync = last_sync.tz_convert(TW_TZ)
+                last_sync_text = last_sync.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                last_sync_text = str(last_sync)
+        else:
+            last_sync_text = "—"
+    else:
+        last_sync_text = "—"
+
+    rising_count = sum(1 for row in rows if row.get("positive_move"))
+    bullish_news_count = sum(1 for row in top_rows if "bullish" in str(row.get("news_label_raw", "")).lower())
+    intraday_rows = sum(1 for row in top_rows if row.get("price_source") == "intraday_vs_prev_close")
+    summary_cards = [
+        (t("abf_supply_total_names"), str(len(universe)), t("abf_supply_selection_note")),
+        (t("abf_supply_rising_names"), str(rising_count), t("abf_supply_rank_note")),
+        (t("abf_supply_bullish_news"), str(bullish_news_count), "延用 Dashboard 原有個股新聞判別邏輯。"),
+        (t("abf_supply_last_sync"), last_sync_text, f"盤中採現價對前日收盤；非盤中採收盤價。盤中報價檔數 {intraday_rows}。"),
+    ]
+    cards_html = "".join(
+        f'''
+        <div class="leo-summary-card">
+            <div class="leo-summary-label">{escape(label)}</div>
+            <div class="leo-summary-value">{escape(value)}</div>
+            <div class="leo-summary-note">{escape(note)}</div>
+        </div>
+        '''
+        for label, value, note in summary_cards
+    )
+
+    head_html = "".join(
+        f'<div class="abf-head-cell">{escape(label)}</div>'
+        for label in [
+            "#",
+            t("abf_supply_company_col"),
+            t("abf_supply_core_col"),
+            t("abf_supply_share_col"),
+            t("abf_supply_focus_col"),
+            t("abf_supply_last_price_col"),
+            t("abf_supply_move_col"),
+            t("abf_supply_trend_col"),
+            t("abf_supply_signal_col"),
+            t("abf_supply_news_col"),
+            t("abf_supply_story_col"),
+        ]
+    )
+
+    row_html_parts = []
+    for row in top_rows:
+        latest_move = row.get("latest_move", pd.NA)
+        row_html_parts.append(
+            f'''
+            <div class="abf-table-row">
+                <div class="abf-row-cell"><div class="leo-rank">#{int(row.get("rank", 0))}</div></div>
+                <div class="abf-row-cell">
+                    <div class="leo-company">
+                        <div class="leo-company-name">{escape(str(row.get("name", display_ticker_label(row.get("ticker", "")))))}</div>
+                        <div class="leo-company-code">{escape(str(row.get("code", ticker_base_code(row.get("ticker", "")))))} · {escape(str(row.get("ticker", "")).upper())}</div>
+                    </div>
+                </div>
+                <div class="abf-row-cell"><div class="abf-core">{escape(str(row.get("core_advantage", "")))}</div></div>
+                <div class="abf-row-cell"><div class="abf-share">{escape(str(row.get("abf_share", "")))}</div></div>
+                <div class="abf-row-cell"><div class="abf-focus">{escape(str(row.get("key_focus", "")))}</div></div>
+                <div class="abf-row-cell">
+                    <div class="leo-value">{escape(format_local_price(row.get("latest_price"), row.get("ticker")))}</div>
+                    <div class="leo-meta-stack">
+                        <div class="leo-status-badge {low_orbit_data_status_class(row.get("price_source", "daily_close"))}">{escape(format_low_orbit_data_status(row.get("price_source", "daily_close")))}</div>
+                        <div class="leo-company-code">{escape(format_low_orbit_price_source(row.get("price_source", "daily_close")))}</div>
+                        <div class="leo-update">{escape(format_low_orbit_last_updated(row.get("last_updated")))}</div>
+                    </div>
+                </div>
+                <div class="abf-row-cell"><span class="leo-pill {_leo_move_class(latest_move)}">{escape(format_percent(latest_move))}</span></div>
+                <div class="abf-row-cell"><span class="leo-pill flat">{escape(tr_term(row.get("trend", "N/A")))}</span></div>
+                <div class="abf-row-cell"><span class="leo-pill {_leo_signal_class(row.get("signal_raw", "HOLD"))}">{escape(str(row.get("signal_label", tr_signal("HOLD"))))}</span></div>
+                <div class="abf-row-cell"><span class="leo-pill {_leo_news_class(row.get("news_label_raw", "Flat"))}">{escape(str(row.get("news_label", tr_news_label("Flat"))))}</span></div>
+                <div class="abf-row-cell"><div class="leo-story">{escape(str(row.get("lead_story", t("abf_supply_no_story"))))}</div></div>
+            </div>
+            '''
+        )
+
+    render_html_block(
+        f'''
+        <div class="guide-shell leo-shell">
+            <div class="leo-kicker">{escape(t("abf_supply_topline"))}</div>
+            <div class="leo-title">{escape(t("abf_supply_section_title"))}</div>
+            <div class="leo-copy">{escape(t("abf_supply_section_copy"))}</div>
+            <div class="chip-row">
+                <span class="explorer-nav-chip">{escape(t("abf_supply_selection_note"))}</span>
+                <span class="explorer-nav-chip">{escape(t("abf_supply_ai_driver"))}</span>
+                <span class="explorer-nav-chip">{escape(f"{t('abf_supply_table_title')} · Top {len(top_rows)}")}</span>
+            </div>
+            <div class="leo-summary-grid">{cards_html}</div>
+            <div class="abf-table-shell">
+                <div class="abf-table">
+                    <div class="abf-table-head">{head_html}</div>
+                    {"".join(row_html_parts)}
+                </div>
+            </div>
+            <div class="leo-rank-note">{escape(t("abf_supply_rank_note"))}</div>
+        </div>
+        '''
+    )
+
+def build_supply_chain_universe(catalog: list[dict]) -> list[dict]:
+    universe: list[dict] = []
+    for item in catalog:
+        ticker = normalize_dashboard_ticker(item.get("ticker", ""))
+        if not ticker:
+            continue
+        register_runtime_symbol_metadata(ticker, name=item.get("name", ""), market="TW")
+        universe.append({**item, "ticker": ticker})
+    return universe
+
+
+def build_supply_chain_rank_rows(
+    catalog: list[dict],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for item in build_supply_chain_universe(catalog):
+        ticker = item["ticker"]
+        price_series, _ = get_taiwan_close_series(daily_data, ticker)
+        if price_series is None or price_series.empty:
+            continue
+        volume_series = get_series(daily_data, "Volume", ticker)
+        analysis = analyze_market_sentinel(price_series, volume_series, [], ticker)
+        price_snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, ticker)
+        latest_move = price_snapshot.get("latest_move", pd.NA)
+
+        rows.append(
+            {
+                **item,
+                "latest_price": price_snapshot.get("latest_price", pd.NA),
+                "latest_move": latest_move,
+                "daily_change": price_snapshot.get("daily_change", pd.NA),
+                "last_updated": price_snapshot.get("last_updated"),
+                "price_source": price_snapshot.get("price_source", "daily_close"),
+                "trend": analysis.get("trend", "N/A"),
+                "one_year_return": analysis.get("one_year_return", pd.NA),
+                "analysis_score": analysis.get("score", 0),
+                "positive_move": bool(pd.notna(latest_move) and float(latest_move) > 0),
+                "sort_key": (
+                    1 if pd.notna(latest_move) and float(latest_move) > 0 else 0,
+                    low_orbit_trend_rank(analysis.get("trend", "N/A")),
+                    float(latest_move) if pd.notna(latest_move) else -10**9,
+                    float(analysis.get("one_year_return")) if pd.notna(analysis.get("one_year_return", pd.NA)) else -10**9,
+                    float(analysis.get("score", 0)),
+                ),
+            }
+        )
+
+    rows.sort(key=lambda row: row["sort_key"], reverse=True)
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def enrich_supply_chain_top_rows(
+    rows: list[dict],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    *,
+    lens_meta: dict | None = None,
+    lead_story_fallback: str = "",
+) -> list[dict]:
+    enriched: list[dict] = []
+    for row in rows:
+        bundle = collect_ticker_context(daily_data, intraday_data, row["ticker"], news_limit=6, lens_meta=lens_meta)
+        if bundle is None:
+            enriched.append(dict(row))
+            continue
+
+        analysis = bundle.get("analysis", {})
+        news_items = bundle.get("news_items", [])
+        pulse = analysis.get("news_pulse", {})
+        lead_story = (news_items[0].get("title") if news_items else "") or lead_story_fallback
+        price_snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, row["ticker"])
+
+        merged = dict(row)
+        merged.update(
+            {
+                "latest_price": price_snapshot.get("latest_price", row.get("latest_price")),
+                "latest_move": price_snapshot.get("latest_move", row.get("latest_move")),
+                "daily_change": price_snapshot.get("daily_change", row.get("daily_change")),
+                "last_updated": price_snapshot.get("last_updated", row.get("last_updated")),
+                "price_source": price_snapshot.get("price_source", row.get("price_source", "daily_close")),
+                "trend": analysis.get("trend", row.get("trend", "N/A")),
+                "signal_raw": analysis.get("signal", "HOLD"),
+                "signal_label": tr_signal(analysis.get("signal", "HOLD")),
+                "news_label_raw": pulse.get("label", "Flat"),
+                "news_label": tr_news_label(pulse.get("label", "Flat")),
+                "news_score": pulse.get("score", 0.0),
+                "lead_story": lead_story,
+                "bundle": bundle,
+            }
+        )
+        enriched.append(merged)
+    return enriched
+
+
+def inject_supply_chain_focus_css() -> None:
+    render_html_block(
+        """
+        <style>
+        .sc-table-shell {
+            margin-top: 10px;
+            overflow: hidden;
+            border-radius: 20px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 98%, transparent) 100%);
+            box-shadow: 0 18px 36px rgba(3, 10, 20, 0.18);
+            overflow-x: auto;
+        }
+        .sc-table-head,
+        .sc-table-row {
+            display: grid;
+            gap: 0;
+            align-items: stretch;
+        }
+        .sc-table-head {
+            background: linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 16%, transparent) 0%, color-mix(in srgb, var(--brand, #818cf8) 12%, transparent) 100%);
+            border-bottom: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+        }
+        .sc-head-cell,
+        .sc-row-cell {
+            padding: 14px 14px;
+            border-right: 1px solid rgba(255,255,255,.05);
+        }
+        .sc-head-cell:last-child,
+        .sc-row-cell:last-child {
+            border-right: 0;
+        }
+        .sc-head-cell {
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+        }
+        .sc-table-row {
+            border-bottom: 1px solid rgba(255,255,255,.05);
+        }
+        .sc-table-row:last-child {
+            border-bottom: 0;
+        }
+        .sc-text {
+            font-size: 12.5px;
+            line-height: 1.62;
+            color: var(--muted, rgba(226,238,255,.82));
+        }
+        .sc-text-soft {
+            font-weight: 800;
+            color: var(--muted, rgba(226,238,255,.76));
+        }
+        .sc-text-strong {
+            font-weight: 800;
+            color: var(--ink, #eef7ff);
+        }
+        .sc-text-highlight {
+            font-size: 15px;
+            font-weight: 900;
+            color: var(--ink, #eef7ff);
+        }
+        </style>
+        """
+    )
+
+
+def format_supply_chain_last_sync(top_rows: list[dict]) -> str:
+    latest_timestamps = [row.get("last_updated") for row in top_rows if row.get("last_updated") is not None]
+    if not latest_timestamps:
+        return "—"
+
+    parsed_timestamps = pd.to_datetime(latest_timestamps, errors="coerce")
+    parsed_timestamps = [stamp for stamp in parsed_timestamps if pd.notna(stamp)]
+    if not parsed_timestamps:
+        return "—"
+
+    last_sync = max(parsed_timestamps)
+    try:
+        last_sync = pd.Timestamp(last_sync)
+        if last_sync.tzinfo is None:
+            last_sync = last_sync.tz_localize(TW_TZ)
+        else:
+            last_sync = last_sync.tz_convert(TW_TZ)
+        return last_sync.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(last_sync)
+
+
+def build_supply_chain_target_pe_cards(rows: list[dict], *, sample_size: int = 4) -> list[tuple[str, str, str]]:
+    target_candidates: list[dict] = []
+    pe_candidates: list[dict] = []
+
+    for row in rows[: max(int(sample_size or 0), 1)]:
+        bundle = row.get("bundle", {}) or {}
+        price_series = bundle.get("price_series")
+        news_items = bundle.get("news_items", []) or []
+        target_context = build_target_watch_context(row["ticker"], price_series, news_items, timeframe="6m")
+        upside_to_mean = coerce_float(target_context.get("upside_to_mean"))
+        mean_target = coerce_float(target_context.get("mean_target"))
+        if pd.notna(upside_to_mean) and pd.notna(mean_target):
+            target_candidates.append(
+                {
+                    "ticker": row["ticker"],
+                    "name": row.get("name", display_ticker_label(row["ticker"])),
+                    "upside": float(upside_to_mean),
+                    "mean_target": float(mean_target),
+                    "bias": str(target_context.get("bias", "")).strip() or "N/A",
+                }
+            )
+
+        valuation = (fetch_taiwan_official_dashboard_snapshot(row["ticker"]).get("valuation", {}) or {})
+        pe_value = _safe_float(valuation.get("pe"))
+        if pd.notna(pe_value):
+            pe_candidates.append(
+                {
+                    "ticker": row["ticker"],
+                    "name": row.get("name", display_ticker_label(row["ticker"])),
+                    "pe": float(pe_value),
+                }
+            )
+
+    if target_candidates:
+        best_target = max(target_candidates, key=lambda item: item["upside"])
+        target_card = (
+            "目標價焦點",
+            f"{best_target['upside']:+.1f}%",
+            f"{best_target['name']} · 均價目標 {format_local_price(best_target['mean_target'], best_target['ticker'])} · {best_target['bias']}",
+        )
+    else:
+        target_card = ("目標價焦點", "—", "目前前段名單缺少可用分析師目標價。")
+
+    if len(pe_candidates) >= 2:
+        low_pe = min(pe_candidates, key=lambda item: item["pe"])
+        high_pe = max(pe_candidates, key=lambda item: item["pe"])
+        pe_card = (
+            "本益比對照",
+            f"{low_pe['pe']:.1f}x → {high_pe['pe']:.1f}x",
+            f"低：{low_pe['name']} · 高：{high_pe['name']}",
+        )
+    elif pe_candidates:
+        only_pe = pe_candidates[0]
+        pe_card = (
+            "本益比對照",
+            f"{only_pe['pe']:.1f}x",
+            f"{only_pe['name']} · 官方 PE",
+        )
+    else:
+        pe_card = ("本益比對照", "—", "目前前段名單缺少可用官方 PE 資料。")
+
+    return [target_card, pe_card]
+
+
+def _clear_supply_chain_refresh_caches() -> None:
+    for cached_func in (
+        fetch_low_orbit_supply_chain_market_data,
+        fetch_daily_data,
+        fetch_intraday_data,
+        fetch_ticker_news,
+        fetch_analyst_target_snapshot,
+        fetch_taiwan_official_dashboard_snapshot,
+        fetch_twse_valuation_snapshot,
+        fetch_twse_stock_institutional_flow,
+        fetch_tpex_snapshot_bundle,
+        fetch_monthly_revenue_snapshot,
+        fetch_cbc_macro_snapshot,
+        fetch_taifex_put_call_snapshot,
+    ):
+        try:
+            cached_func.clear()
+        except Exception:
+            pass
+
+
+def _supply_chain_snapshot_store() -> dict:
+    empty_store = {"version": SUPPLY_CHAIN_SNAPSHOT_VERSION, "items": {}}
+    try:
+        if not SUPPLY_CHAIN_SNAPSHOT_PATH.exists():
+            return empty_store
+        payload = json.loads(SUPPLY_CHAIN_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return empty_store
+    if not isinstance(payload, dict):
+        return empty_store
+    items = payload.get("items")
+    if not isinstance(items, dict):
+        items = {}
+    return {
+        "version": int(payload.get("version", SUPPLY_CHAIN_SNAPSHOT_VERSION) or SUPPLY_CHAIN_SNAPSHOT_VERSION),
+        "items": items,
+    }
+
+
+def _write_supply_chain_snapshot_store(store: dict) -> None:
+    payload = {
+        "version": SUPPLY_CHAIN_SNAPSHOT_VERSION,
+        "items": dict((store or {}).get("items", {}) or {}),
+    }
+    try:
+        SUPPLY_CHAIN_SNAPSHOT_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _supply_chain_snapshot_key(config_key: str, period: str, interval: str) -> str:
+    return f"{config_key}::{period}::{interval}"
+
+
+def _supply_chain_snapshot_to_text(value: object, *, digits: int = 4) -> str | None:
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, (float, int)):
+        if pd.isna(value):
+            return None
+        if isinstance(value, float):
+            return f"{value:.{digits}f}"
+        return str(value)
+    text_value = str(value).strip()
+    if not text_value or text_value in {"—", "N/A", "nan", "NaT", "<NA>"}:
+        return None
+    return text_value
+
+
+def _supply_chain_snapshot_from_text(value: object) -> object:
+    text_value = str(value or "").strip()
+    if not text_value:
+        return pd.NA
+    try:
+        return float(text_value)
+    except Exception:
+        return text_value
+
+
+def _serialize_supply_chain_rows(rows: list[dict], columns: list[dict]) -> list[dict]:
+    text_keys = {str(column.get("key", "")).strip() for column in columns if str(column.get("kind", "")).strip().lower() == "text"}
+    base_keys = {
+        "rank",
+        "name",
+        "code",
+        "ticker",
+        "group",
+        "latest_price",
+        "latest_move",
+        "last_updated",
+        "price_source",
+        "trend",
+        "signal_raw",
+        "signal_label",
+        "news_label_raw",
+        "news_label",
+        "lead_story",
+    } | text_keys
+
+    serialized_rows: list[dict] = []
+    for row in rows:
+        item: dict[str, object] = {}
+        for key in base_keys:
+            if key not in row:
+                continue
+            value = row.get(key)
+            if key in {"latest_price", "latest_move"}:
+                item[key] = _supply_chain_snapshot_to_text(value)
+            elif key == "rank":
+                numeric = _safe_float(value)
+                item[key] = int(float(numeric)) if pd.notna(numeric) else 0
+            elif key == "last_updated":
+                item[key] = _supply_chain_snapshot_to_text(value)
+            else:
+                item[key] = str(value or "").strip()
+        serialized_rows.append(item)
+    return serialized_rows
+
+
+def _deserialize_supply_chain_rows(rows: list[dict]) -> list[dict]:
+    parsed_rows: list[dict] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["latest_price"] = _supply_chain_snapshot_from_text(item.get("latest_price"))
+        item["latest_move"] = _supply_chain_snapshot_from_text(item.get("latest_move"))
+        parsed_rows.append(item)
+    return parsed_rows
+
+
+def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta: dict | None = None) -> dict:
+    catalog = config["catalog"]
+    universe = build_supply_chain_universe(catalog)
+    tickers = tuple(item["ticker"] for item in universe)
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    lens_title = str((lens_meta or {}).get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS)
+
+    daily_data, intraday_data = fetch_low_orbit_supply_chain_market_data(tickers, period, interval)
+    rows = build_supply_chain_rank_rows(catalog, daily_data, intraday_data)
+    if not rows:
+        return {
+            "version": SUPPLY_CHAIN_SNAPSHOT_VERSION,
+            "config_key": config_key,
+            "period": period,
+            "interval": interval,
+            "lens_title": lens_title,
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "status": "empty",
+            "top_rows": [],
+            "summary_cards": [],
+            "last_sync_text": "—",
+        }
+
+    top_rows = enrich_supply_chain_top_rows(
+        rows[:10],
+        daily_data,
+        intraday_data,
+        lens_meta=lens_meta,
+        lead_story_fallback=config["lead_story_fallback"],
+    )
+    last_sync_text = format_supply_chain_last_sync(top_rows)
+    rising_count = sum(1 for row in rows if row.get("positive_move"))
+    bullish_news_count = sum(1 for row in top_rows if "bullish" in str(row.get("news_label_raw", "")).lower())
+    intraday_rows = sum(1 for row in top_rows if row.get("price_source") == "intraday_vs_prev_close")
+
+    labels = config["summary_labels"]
+    summary_cards = [
+        {"label": labels["total"], "value": str(len(universe)), "note": config["selection_note"]},
+        {"label": labels["rising"], "value": str(rising_count), "note": config["rank_note"]},
+        {"label": labels["bullish"], "value": str(bullish_news_count), "note": config["bullish_note"]},
+        {
+            "label": labels["last_sync"],
+            "value": last_sync_text,
+            "note": f"盤中採現價對前日收盤；非盤中採收盤價。盤中報價檔數 {intraday_rows}。",
+        },
+    ]
+    for label, value, note in build_supply_chain_target_pe_cards(
+        top_rows,
+        sample_size=int(config.get("target_pe_sample", 4) or 4),
+    ):
+        summary_cards.append({"label": label, "value": value, "note": note})
+
+    return {
+        "version": SUPPLY_CHAIN_SNAPSHOT_VERSION,
+        "config_key": config_key,
+        "period": period,
+        "interval": interval,
+        "lens_title": lens_title,
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "ready",
+        "top_rows": _serialize_supply_chain_rows(top_rows, config["columns"]),
+        "summary_cards": summary_cards,
+        "last_sync_text": last_sync_text,
+    }
+
+
+def peek_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = None) -> dict | None:
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    store = _supply_chain_snapshot_store()
+    snapshot = (store.get("items", {}) or {}).get(_supply_chain_snapshot_key(config_key, period, interval))
+    if not isinstance(snapshot, dict):
+        return None
+    return snapshot
+
+
+def get_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = None, *, force_refresh: bool = False) -> dict:
+    config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+    if not config:
+        return {}
+
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    snapshot_key = _supply_chain_snapshot_key(config_key, period, interval)
+    store = _supply_chain_snapshot_store()
+    existing = (store.get("items", {}) or {}).get(snapshot_key)
+    if force_refresh:
+        _clear_supply_chain_refresh_caches()
+    elif isinstance(existing, dict) and int(existing.get("version", 0) or 0) == SUPPLY_CHAIN_SNAPSHOT_VERSION:
+        return existing
+
+    snapshot = _build_supply_chain_focus_snapshot(config_key, config, lens_meta=lens_meta)
+    items = dict(store.get("items", {}) or {})
+    items[snapshot_key] = snapshot
+    store["items"] = items
+    _write_supply_chain_snapshot_store(store)
+    return snapshot
+
+
+def format_supply_chain_snapshot_fetched_at(value: object) -> str:
+    ts = _normalize_tw_timestamp(value)
+    if ts is None:
+        return "—"
+    return ts.strftime("%Y-%m-%d %H:%M")
+
+
+def _render_supply_chain_focus_cell_html(column: dict, row: dict, lead_story_fallback: str) -> str:
+    kind = str(column.get("kind", "text")).strip().lower()
+    if kind == "rank":
+        return f'<div class="sc-row-cell"><div class="leo-rank">#{int(row.get("rank", 0))}</div></div>'
+    if kind == "company":
+        return (
+            '<div class="sc-row-cell">'
+            '<div class="leo-company">'
+            f'<div class="leo-company-name">{escape(str(row.get("name", display_ticker_label(row.get("ticker", "")))))}</div>'
+            f'<div class="leo-company-code">{escape(str(row.get("code", ticker_base_code(row.get("ticker", "")))))} · {escape(str(row.get("ticker", "")).upper())}</div>'
+            "</div>"
+            "</div>"
+        )
+    if kind == "price":
+        return (
+            '<div class="sc-row-cell">'
+            f'<div class="leo-value">{escape(format_local_price(row.get("latest_price"), row.get("ticker")))}</div>'
+            '<div class="leo-meta-stack">'
+            f'<div class="leo-status-badge {low_orbit_data_status_class(row.get("price_source", "daily_close"))}">{escape(format_low_orbit_data_status(row.get("price_source", "daily_close")))}</div>'
+            f'<div class="leo-company-code">{escape(format_low_orbit_price_source(row.get("price_source", "daily_close")))}</div>'
+            f'<div class="leo-update">{escape(format_low_orbit_last_updated(row.get("last_updated")))}</div>'
+            "</div>"
+            "</div>"
+        )
+    if kind == "move":
+        latest_move = row.get("latest_move", pd.NA)
+        return f'<div class="sc-row-cell"><span class="leo-pill {_leo_move_class(latest_move)}">{escape(format_percent(latest_move))}</span></div>'
+    if kind == "trend":
+        return f'<div class="sc-row-cell"><span class="leo-pill flat">{escape(tr_term(row.get("trend", "N/A")))}</span></div>'
+    if kind == "signal":
+        return (
+            f'<div class="sc-row-cell"><span class="leo-pill {_leo_signal_class(row.get("signal_raw", "HOLD"))}">'
+            f'{escape(str(row.get("signal_label", tr_signal("HOLD"))))}</span></div>'
+        )
+    if kind == "news":
+        return (
+            f'<div class="sc-row-cell"><span class="leo-pill {_leo_news_class(row.get("news_label_raw", "Flat"))}">'
+            f'{escape(str(row.get("news_label", tr_news_label("Flat"))))}</span></div>'
+        )
+    if kind == "story":
+        lead_story = str(row.get("lead_story", lead_story_fallback or "—")).strip() or lead_story_fallback or "—"
+        return f'<div class="sc-row-cell"><div class="leo-story">{escape(lead_story)}</div></div>'
+
+    value = str(row.get(column.get("key", ""), "") or "").strip() or "—"
+    value_class = str(column.get("value_class", "sc-text")).strip() or "sc-text"
+    return f'<div class="sc-row-cell"><div class="{value_class}">{escape(value)}</div></div>'
+
+
+def render_supply_chain_focus_section(config_key: str, lens_meta: dict | None = None) -> None:
+    if get_language() != "zh_TW":
+        return
+
+    config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+    if not config:
+        return
+
+    inject_low_orbit_supply_chain_css()
+    inject_supply_chain_focus_css()
+
+    catalog = config["catalog"]
+    panel_open = render_dashboard_section_panel(
+        config["title"],
+        config["panel_section"],
+        item_count=len(catalog),
+        helper_base=config["copy"],
+        expanded=True,
+        panel_key=config["panel_key"],
+    )
+    if not panel_open:
+        return
+
+    universe = build_supply_chain_universe(catalog)
+    tickers = tuple(item["ticker"] for item in universe)
+    period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
+    interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    daily_data, intraday_data = fetch_low_orbit_supply_chain_market_data(tickers, period, interval)
+    rows = build_supply_chain_rank_rows(catalog, daily_data, intraday_data)
+
+    if not rows:
+        st.info(config["empty_note"])
+        return
+
+    top_rows = enrich_supply_chain_top_rows(
+        rows[:10],
+        daily_data,
+        intraday_data,
+        lens_meta=lens_meta,
+        lead_story_fallback=config["lead_story_fallback"],
+    )
+    last_sync_text = format_supply_chain_last_sync(top_rows)
+    rising_count = sum(1 for row in rows if row.get("positive_move"))
+    bullish_news_count = sum(1 for row in top_rows if "bullish" in str(row.get("news_label_raw", "")).lower())
+    intraday_rows = sum(1 for row in top_rows if row.get("price_source") == "intraday_vs_prev_close")
+
+    labels = config["summary_labels"]
+    summary_cards = [
+        (labels["total"], str(len(universe)), config["selection_note"]),
+        (labels["rising"], str(rising_count), config["rank_note"]),
+        (labels["bullish"], str(bullish_news_count), config["bullish_note"]),
+        (labels["last_sync"], last_sync_text, f"盤中採現價對前日收盤；非盤中採收盤價。盤中報價檔數 {intraday_rows}。"),
+    ]
+    summary_cards.extend(build_supply_chain_target_pe_cards(top_rows, sample_size=int(config.get("target_pe_sample", 4) or 4)))
+    cards_html = "".join(
+        f'''
+        <div class="leo-summary-card">
+            <div class="leo-summary-label">{escape(label)}</div>
+            <div class="leo-summary-value">{escape(value)}</div>
+            <div class="leo-summary-note">{escape(note)}</div>
+        </div>
+        '''
+        for label, value, note in summary_cards
+    )
+
+    head_html = "".join(f'<div class="sc-head-cell">{escape(str(column.get("label", "")))}</div>' for column in config["columns"])
+    row_html_parts = []
+    for row in top_rows:
+        cells = "".join(_render_supply_chain_focus_cell_html(column, row, config["lead_story_fallback"]) for column in config["columns"])
+        row_html_parts.append(f'<div class="sc-table-row" style="grid-template-columns:{config["grid_template"]};">{cells}</div>')
+
+    chips = [config["selection_note"]]
+    driver_note = str(config.get("driver_note", "") or "").strip()
+    if driver_note:
+        chips.append(driver_note)
+    chips.append(f'{config["table_title"]} · Top {len(top_rows)}')
+    chip_html = "".join(f'<span class="explorer-nav-chip">{escape(chip)}</span>' for chip in chips if str(chip).strip())
+
+    render_html_block(
+        f'''
+        <div class="guide-shell leo-shell">
+            <div class="leo-kicker">{escape(config["topline"])}</div>
+            <div class="leo-title">{escape(config["title"])}</div>
+            <div class="leo-copy">{escape(config["copy"])}</div>
+            <div class="chip-row">{chip_html}</div>
+            <div class="leo-summary-grid">{cards_html}</div>
+            <div class="sc-table-shell">
+                <div class="sc-table" style="min-width:{config["min_width"]};">
+                    <div class="sc-table-head" style="grid-template-columns:{config["grid_template"]};">{head_html}</div>
+                    {"".join(row_html_parts)}
+                </div>
+            </div>
+            <div class="leo-rank-note">{escape(config["rank_note"])}</div>
+        </div>
+        '''
+    )
+
+
+def render_low_orbit_supply_chain_section(lens_meta: dict | None = None) -> None:
+    render_supply_chain_focus_section("low-orbit", lens_meta=lens_meta)
+
+
+def render_abf_supply_chain_section(lens_meta: dict | None = None) -> None:
+    render_supply_chain_focus_section("abf", lens_meta=lens_meta)
+
+
+def render_memory_supply_chain_section(lens_meta: dict | None = None) -> None:
+    render_supply_chain_focus_section("memory", lens_meta=lens_meta)
+
+
+def render_packaging_test_supply_chain_section(lens_meta: dict | None = None) -> None:
+    render_supply_chain_focus_section("packaging-test", lens_meta=lens_meta)
+
+
+def render_robotics_supply_chain_section(lens_meta: dict | None = None) -> None:
+    render_supply_chain_focus_section("robotics", lens_meta=lens_meta)
+
+
+def render_thematic_supply_chain_sections(lens_meta: dict | None = None) -> None:
+    if get_language() != "zh_TW":
+        return
+    for config_key in SUPPLY_CHAIN_FOCUS_ORDER:
+        render_supply_chain_focus_section(config_key, lens_meta=lens_meta)
+
+
 def render_general_market_dashboard_layout(
     daily_data: pd.DataFrame,
     intraday_data: pd.DataFrame | None,
@@ -1349,7 +2692,7 @@ def render_general_market_dashboard_layout(
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
-            render_low_orbit_supply_chain_section(lens_meta=lens_meta)
+            render_thematic_supply_chain_sections(lens_meta=lens_meta)
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -1372,7 +2715,7 @@ def render_general_market_dashboard_layout(
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
-            render_low_orbit_supply_chain_section(lens_meta=lens_meta)
+            render_thematic_supply_chain_sections(lens_meta=lens_meta)
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -1387,7 +2730,7 @@ def render_general_market_dashboard_layout(
         render_global_market_indicator(global_indicator)
         if show_taiwan_macro:
             render_taiwan_market_macro_strip(force_show=True)
-        render_low_orbit_supply_chain_section(lens_meta=lens_meta)
+        render_thematic_supply_chain_sections(lens_meta=lens_meta)
         overview_tab, compare_tab, workspace_tab = st.tabs(
             [
                 t("layout_research_flow_tab"),
@@ -1573,6 +2916,10 @@ TAIWAN_WATCHLIST_GROUPS = [
     "Taiwan Financials",
     "Taiwan Shipping & Cyclicals",
     "Taiwan ETFs",
+    "ABF 載板四雄",
+    "記憶體供應鏈",
+    "封裝測試產業鏈",
+    "機器人供應鏈",
 ]
 
 WATCHLIST_PRESETS = {
@@ -1592,6 +2939,22 @@ WATCHLIST_PRESETS = {
     "Taiwan Financials": ["2881.TW", "2882.TW", "2891.TW", "2886.TW", "2884.TW", "2885.TW"],
     "Taiwan Shipping & Cyclicals": ["2603.TW", "2609.TW", "2615.TW", "1301.TW", "2002.TW"],
     "Taiwan ETFs": ["0050.TW", "0056.TW", "00878.TW", "006208.TW"],
+    "ABF 載板四雄": ["3037.TW", "8046.TW", "3189.TW", "4958.TW"],
+    "記憶體供應鏈": [
+        "2408.TW", "2344.TW", "2337.TW", "3260.TWO", "2451.TW", "5289.TWO", "8271.TW", "4967.TW",
+        "5386.TWO", "3702.TW", "3036.TW", "8112.TW", "3033.TW", "8299.TWO", "5351.TWO", "6239.TW",
+        "8110.TW", "8131.TW", "6531.TW", "3006.TW", "2360.TW", "3030.TW", "3055.TW",
+    ],
+    "封裝測試產業鏈": [
+        "3711.TW", "6239.TW", "2449.TW", "3264.TWO", "6257.TW", "8150.TW", "6147.TWO", "6223.TWO",
+        "6683.TWO", "6217.TWO", "6510.TWO", "6515.TW", "2360.TW", "3030.TW", "3563.TW", "5443.TWO",
+        "3131.TWO", "3583.TW", "3374.TWO", "6271.TW", "6451.TW",
+    ],
+    "機器人供應鏈": [
+        "2359.TW", "8234.TWO", "7750.TW", "4576.TW", "2308.TW", "2395.TW", "6166.TW", "2357.TW",
+        "2409.TW", "3481.TW", "4938.TW", "6414.TW", "4585.TW", "1597.TW", "2049.TW", "1503.TW",
+        "2377.TW", "5371.TWO", "3231.TW", "6125.TWO", "2464.TW", "8374.TW", "4566.TW",
+    ],
 }
 
 MARKET_SCOPE_OPTIONS = {
@@ -2035,6 +3398,8 @@ TRANSLATIONS = {
 
 TRANSLATIONS["English"].update(LEO_TRANSLATIONS_EN)
 TRANSLATIONS["繁體中文"].update(LEO_TRANSLATIONS_ZH)
+TRANSLATIONS["English"].update(ABF_TRANSLATIONS_EN)
+TRANSLATIONS["繁體中文"].update(ABF_TRANSLATIONS_ZH)
 TRANSLATIONS["English"].update({
     "global_market_indicator": "Global Market Indicator",
     "global_market_copy": "A cross-market reference layer for the active lens. Use this to see whether U.S. and Taiwan benchmark trends are broadly supportive, mixed, or under pressure before drilling further into individual names.",
@@ -3798,12 +5163,14 @@ def build_symbol_search_text(symbol: str) -> str:
     normalized_symbol = str(symbol or "").upper().strip()
     meta = TAIWAN_TICKER_METADATA.get(normalized_symbol, {})
     runtime_meta = get_runtime_symbol_metadata(normalized_symbol)
+    fallback_name = SUPPLY_CHAIN_RUNTIME_NAME_MAP.get(normalized_symbol, "")
     parts = [
         normalized_symbol,
         ticker_base_code(normalized_symbol),
         meta.get("zh", ""),
         meta.get("en", ""),
         runtime_meta.get("name", ""),
+        fallback_name,
         runtime_meta.get("exchange", ""),
     ]
     parts.extend(meta.get("aliases", []))
@@ -3959,6 +5326,7 @@ def display_ticker_label(ticker: str) -> str:
     ticker_upper = str(ticker).upper()
     meta = TAIWAN_TICKER_METADATA.get(ticker_upper)
     runtime_meta = get_runtime_symbol_metadata(ticker_upper)
+    fallback_name = SUPPLY_CHAIN_RUNTIME_NAME_MAP.get(ticker_upper, "")
 
     if meta:
         company = meta["zh"] if get_lang() == "繁體中文" else meta["en"]
@@ -3969,6 +5337,10 @@ def display_ticker_label(ticker: str) -> str:
         if is_taiwan_ticker(ticker_upper):
             return f"{ticker_base_code(ticker_upper)} {runtime_name}"
         return f"{ticker_upper} {runtime_name}"
+    if fallback_name:
+        if is_taiwan_ticker(ticker_upper):
+            return f"{ticker_base_code(ticker_upper)} {fallback_name}"
+        return f"{ticker_upper} {fallback_name}"
 
     if is_taiwan_ticker(ticker_upper):
         base = ticker_base_code(ticker_upper)
@@ -11205,6 +12577,91 @@ def compute_planner_action_recommendation(summary: dict) -> dict:
             ),
             "pills": [
                 "順勢執行" if lang_zh else "Trend-follow",
+                "分批加碼" if lang_zh else "Add in tranches",
+                "保留最後一段火力" if lang_zh else "Keep final tranche",
+            ],
+        }
+
+    if expected_value < 0 or risk_reward_ratio < 0.95 or suggested_position_pct <= 35:
+        return {
+            "class": "planner-decision-action planner-decision-action-bad",
+            "title": "建議減碼 / 收斂風險" if lang_zh else "Suggested action: Reduce risk",
+            "copy": (
+                "目前風報比或期望值不夠有利，較好的做法是縮小倉位、把停損收緊，或先降低曝險等待更乾淨的訊號。"
+                if lang_zh else
+                "The setup is not paying enough for the risk right now. A better move is to reduce size, tighten stops, or cut exposure until the signal improves."
+            ),
+            "pills": [
+                "降低倉位" if lang_zh else "Cut size",
+                "提高現金比重" if lang_zh else "Raise cash",
+                "等待重置" if lang_zh else "Wait for reset",
+            ],
+        }
+
+    return {
+        "class": "planner-decision-action planner-decision-action-warn",
+        "title": "建議等待 / 分批布局" if lang_zh else "Suggested action: Wait / Build gradually",
+        "copy": (
+            "這是一個可以觀察並逐步佈局的狀態。先用前兩段小倉測試，等價格與新聞催化更一致後，再決定是否完成最後一段。"
+            if lang_zh else
+            "This is a selective setup. Start with smaller early tranches and only complete the final leg if price action and catalysts align more cleanly."
+        ),
+        "pills": [
+            "先小倉試單" if lang_zh else "Probe small",
+            "等催化確認" if lang_zh else "Wait for catalyst",
+            "保留調整空間" if lang_zh else "Keep flexibility",
+        ],
+    }
+
+def render_planner_decision_board(summary: dict, symbol: str, entry_weights: list[int], take_profit_weights: list[int], win_rate_mode: str):
+    if not summary:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    risk_reward_ratio = float(summary.get("risk_reward_ratio", 0.0) or 0.0)
+    assumed_win_rate = float(summary.get("assumed_win_rate", 0.0) or 0.0)
+    expected_value = float(summary.get("expected_value", 0.0) or 0.0)
+    suggested_position_pct = float(summary.get("suggested_position_pct", 0.0) or 0.0)
+    recommended_capital = float(summary.get("recommended_capital", 0.0) or 0.0)
+    acceptable_loss_amount = float(summary.get("acceptable_loss_amount", 0.0) or 0.0)
+
+    if expected_value >= 0 and risk_reward_ratio >= 1.8:
+        stance_text = "可積極執行" if lang_zh else "Constructive setup"
+        stance_class = "planner-decision-chip planner-decision-chip-good"
+    elif expected_value >= 0 and risk_reward_ratio >= 1.1:
+        stance_text = "可選擇性執行" if lang_zh else "Selective setup"
+        stance_class = "planner-decision-chip planner-decision-chip-warn"
+    else:
+        stance_text = "先收斂風險" if lang_zh else "Tighten risk first"
+        stance_class = "planner-decision-chip planner-decision-chip-bad"
+
+    expected_chip_class = "planner-decision-chip planner-decision-chip-good" if expected_value >= 0 else "planner-decision-chip planner-decision-chip-bad"
+    expected_chip_text = (
+        f"期望值 {symbol}{expected_value:,.0f}"
+        if lang_zh
+        else f"Expected value {symbol}{expected_value:,.0f}"
+    )
+
+    action = compute_planner_action_recommendation(summary)
+    action_pills = "".join(
+        f'<div class="planner-decision-action-pill">{escape(str(pill))}</div>'
+        for pill in action.get("pills", [])
+    )
+
+    board_html = f'''
+    <div class="planner-decision-shell">
+        <div class="planner-decision-head">
+            <div>
+                <div class="section-header" style="margin:0; color:#eef4ff;">{escape("進階決策面板" if lang_zh else "Advanced decision board")}</div>
+                <div class="guide-copy">{escape("把風報比、勝率假設、期望值與建議倉位集中成一個更接近實戰的執行面板。" if lang_zh else "A compact execution board that pulls risk/reward, hit-rate, expectancy, and suggested sizing into one practical decision layer.")}</div>
+            </div>
+            <div class="planner-decision-chip-row">
+                <div class="{stance_class}">{escape(stance_text)}</div>
+                <div class="{expected_chip_class}">{escape(expected_chip_text)}</div>
+            </div>
+        </div>
+        <div class="planner-decision-grid">
+            <div class="pla              "順勢執行" if lang_zh else "Trend-follow",
                 "分批加碼" if lang_zh else "Add in tranches",
                 "保留最後一段火力" if lang_zh else "Keep final tranche",
             ],
@@ -20601,101 +22058,4 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         f"""
         <div class="guide-shell etf-tracker-shell">
             <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
-            <div class="guide-title">{escape(left_label)} × {escape(right_label)}</div>
-            <div class="guide-copy">{escape(update_note)} {'這裡會重新比對中英文持股名稱與台股代號，列出共同持股、權重差距、各自獨有持股，以及共同/不同數量。' if lang_zh else 'This section matches holdings by Taiwan symbol and normalized Chinese/English names, then lists common holdings, weight gaps, unique positions, and overlap counts.'}</div>
-            <div class="chip-row">{''.join(chips)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
-    right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
-
-    common_keys = set(left_map) & set(right_map)
-    left_unique_keys = set(left_map) - set(right_map)
-    right_unique_keys = set(right_map) - set(left_map)
-
-    overlap_weight_left = sum(float(left_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
-    overlap_weight_right = sum(float(right_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
-
-    _active_etf_compare_summary_cards(
-        left_label,
-        right_label,
-        len(common_keys),
-        len(left_unique_keys),
-        len(right_unique_keys),
-        overlap_weight_left,
-        overlap_weight_right,
-        lang_zh,
-    )
-
-    overlap_rows = []
-    for key in sorted(
-        common_keys,
-        key=lambda row_key: abs(float(left_map[row_key].get("weight", 0.0) or 0.0) - float(right_map[row_key].get("weight", 0.0) or 0.0)),
-        reverse=True,
-    ):
-        left_weight = float(left_map[key].get("weight", 0.0) or 0.0)
-        right_weight = float(right_map[key].get("weight", 0.0) or 0.0)
-        delta = left_weight - right_weight
-        display_name = left_map[key].get("name") or right_map[key].get("name") or key
-        name_cell = build_holding_name_cell(str(display_name))
-        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
-        overlap_rows.append([
-            name_cell,
-            f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
-            f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
-            f'<div class="{delta_class}">{delta:+.2f}%</div>',
-        ])
-
-    left_only_rows = []
-    for key in sorted(left_unique_keys, key=lambda row_key: float(left_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
-        item = left_map[key]
-        left_only_rows.append([
-            build_holding_name_cell(str(item.get("name", key))),
-            f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
-        ])
-
-    right_only_rows = []
-    for key in sorted(right_unique_keys, key=lambda row_key: float(right_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
-        item = right_map[key]
-        right_only_rows.append([
-            build_holding_name_cell(str(item.get("name", key))),
-            f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
-        ])
-
-    st.markdown(f"### {'共同持股與權重差距' if lang_zh else 'Common holdings and weight gap'}")
-    render_active_etf_tracker_table(
-        [
-            "持股 / 公司" if lang_zh else "Holding / company",
-            left_label,
-            right_label,
-            "權重差 A-B" if lang_zh else "Weight gap A-B",
-        ],
-        overlap_rows[:25],
-        "目前尚無共同持股可供比較。若你確定兩檔有共同持股，通常是 Yahoo 持股名稱格式不同；本版已用台股代號與中英文名稱做加強比對。"
-        if lang_zh
-        else "No overlapping holdings are currently available for comparison.",
-    )
-
-    unique_cols = st.columns(2, gap="large")
-    with unique_cols[0]:
-        st.markdown(f"### {escape(left_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
-        render_active_etf_tracker_table(
-            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
-            left_only_rows,
-            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
-        )
-    with unique_cols[1]:
-        st.markdown(f"### {escape(right_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
-        render_active_etf_tracker_table(
-            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
-            right_only_rows,
-            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
-        )
-
-
-
-if __name__ == "__main__":
-    generate_dashboard()
+            <div class="
