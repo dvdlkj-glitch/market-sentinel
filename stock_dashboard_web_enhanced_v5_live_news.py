@@ -387,6 +387,127 @@ def inject_standard_step_navigator_css(state_key: str) -> None:
     )
 
 
+def inject_lightweight_option_selector_css(state_key: str) -> None:
+    selector_key = f"{state_key}__selector"
+    render_html_block(
+        f"""
+        <style>
+        .st-key-{selector_key} {{
+            margin: 0.15rem 0 0.45rem 0;
+        }}
+        .st-key-{selector_key} [role="radiogroup"] {{
+            display: flex !important;
+            flex-wrap: wrap;
+            gap: 0.72rem;
+            align-items: stretch;
+            width: 100%;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] {{
+            margin: 0 !important;
+            flex: 0 1 auto;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] > div:first-child {{
+            display: none !important;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"] > div:last-child {{
+            width: auto;
+            min-width: 132px;
+            min-height: 3rem;
+            padding: 0.78rem 1.18rem;
+            border-radius: 999px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 34%, transparent);
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 92%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 99%, transparent) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.03),
+                0 12px 24px rgba(3, 10, 20, 0.10);
+            color: var(--ink, #e8f3ff) !important;
+            font-size: 0.95rem;
+            font-weight: 780;
+            letter-spacing: 0.01em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            white-space: nowrap;
+            transition:
+                transform 140ms ease,
+                border-color 140ms ease,
+                box-shadow 140ms ease,
+                background 140ms ease,
+                color 140ms ease;
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"]:hover > div:last-child {{
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 68%, transparent);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 16px 32px rgba(56, 189, 248, 0.14);
+        }}
+        .st-key-{selector_key} label[data-baseweb="radio"][aria-checked="true"] > div:last-child {{
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 26%, var(--card, rgba(8,16,28,0.92))) 0%, color-mix(in srgb, var(--brand, #818cf8) 18%, var(--card, rgba(8,16,28,0.92))) 58%, color-mix(in srgb, #67e8f9 10%, var(--card, rgba(8,16,28,0.92))) 100%);
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 92%, transparent);
+            box-shadow:
+                0 0 0 1px color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent),
+                0 18px 36px rgba(56, 189, 248, 0.20),
+                inset 0 1px 0 rgba(255,255,255,0.08);
+            color: #f7fcff !important;
+        }}
+        @media (max-width: 720px) {{
+            .st-key-{selector_key} [role="radiogroup"] {{
+                gap: 0.58rem;
+            }}
+            .st-key-{selector_key} label[data-baseweb="radio"] {{
+                flex: 1 1 calc(50% - 0.58rem);
+                min-width: 0;
+            }}
+            .st-key-{selector_key} label[data-baseweb="radio"] > div:last-child {{
+                width: 100%;
+                min-width: 0;
+                white-space: normal;
+                line-height: 1.25;
+            }}
+        }}
+        </style>
+        """
+    )
+
+
+def render_lightweight_option_selector(
+    options: list,
+    state_key: str,
+    *,
+    format_func=None,
+    helper_text: str = "",
+    widget_label: str = "",
+):
+    if not options:
+        return None
+
+    current_value = st.session_state.get(state_key, options[0])
+    if current_value not in options:
+        current_value = options[0]
+    st.session_state[state_key] = current_value
+
+    inject_lightweight_option_selector_css(state_key)
+
+    selector_key = f"{state_key}__selector"
+    selected_value = st.radio(
+        widget_label or state_key,
+        options=options,
+        index=options.index(current_value),
+        format_func=format_func,
+        horizontal=True,
+        key=selector_key,
+        label_visibility="collapsed",
+    )
+    st.session_state[state_key] = selected_value
+    if helper_text:
+        st.caption(helper_text)
+    return selected_value
+
+
 def render_standard_step_navigator(
     option_keys: list[str],
     state_key: str,
@@ -507,10 +628,20 @@ def render_ticker_workspace_tabs(
 ) -> None:
     if not tickers:
         return
-    tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
-    for tab, ticker in zip(tabs, tickers):
-        with tab:
-            render_ticker_page(daily_data, intraday_data, ticker, lens_meta=lens_meta, selected_count=len(tickers))
+    lang_zh = get_lang() == "繁體中文"
+    selected_ticker = render_lightweight_option_selector(
+        tickers,
+        "dashboard_workspace_focus_ticker",
+        format_func=display_ticker_label,
+        helper_text=(
+            "工作台改成一次只載入一檔，切換會比整排 tabs 更順。"
+            if lang_zh else
+            "The workspace now loads one ticker at a time so switching stays responsive."
+        ),
+        widget_label="ticker-workspaces-selector",
+    )
+    if selected_ticker:
+        render_ticker_page(daily_data, intraday_data, selected_ticker, lens_meta=lens_meta, selected_count=len(tickers))
 
 
 
@@ -2792,6 +2923,7 @@ def render_general_market_dashboard_layout(
     global_reference_data = fetch_global_reference_data(lens_meta["period"], lens_meta["interval"])
     global_reference_quotes = fetch_live_reference_quotes(tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES))
     global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
+    lang_zh = get_lang() == "繁體中文"
 
     render_dashboard_layout_intro(layout_mode, "General Market", tickers)
     render_layout_flow_cards(layout_mode, "General Market")
@@ -2823,15 +2955,24 @@ def render_general_market_dashboard_layout(
         else:
             render_standard_workspace_picker(daily_data, intraday_data, tickers, lens_meta=lens_meta)
     elif layout_mode == "Advanced":
-        overview_tab, planning_tab, compare_tab, workspace_tab = st.tabs(
-            [
-                t("layout_overview_tab"),
-                t("layout_planning_tab"),
-                t("layout_compare_tab"),
-                t("layout_workspace_tab"),
-            ]
+        advanced_sections = [
+            "layout_overview_tab",
+            "layout_planning_tab",
+            "layout_compare_tab",
+            "layout_workspace_tab",
+        ]
+        current_section = render_lightweight_option_selector(
+            advanced_sections,
+            "dashboard_advanced_general_section",
+            format_func=standard_layout_section_label,
+            helper_text=(
+                "這裡改成只載入你目前打開的站點，切換 Compare / Workspace 會順很多。"
+                if lang_zh else
+                "Only the active station is loaded now, so switching between Compare and Workspace stays much smoother."
+            ),
+            widget_label="dashboard-advanced-general-station",
         )
-        with overview_tab:
+        if current_section == "layout_overview_tab":
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
@@ -2839,34 +2980,43 @@ def render_general_market_dashboard_layout(
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
-        with planning_tab:
+        elif current_section == "layout_planning_tab":
             render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
             render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
-        with compare_tab:
+        elif current_section == "layout_compare_tab":
             render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
-        with workspace_tab:
+        else:
             render_ticker_workspace_tabs(daily_data, intraday_data, tickers, lens_meta=lens_meta)
     else:
         render_global_market_indicator(global_indicator)
         if show_taiwan_macro:
             render_taiwan_market_macro_strip(force_show=True)
         render_thematic_supply_chain_sections(lens_meta=lens_meta)
-        overview_tab, compare_tab, workspace_tab = st.tabs(
-            [
-                t("layout_research_flow_tab"),
-                t("layout_comparison_desk_tab"),
-                t("layout_ticker_desks_tab"),
-            ]
+        expert_sections = [
+            "layout_research_flow_tab",
+            "layout_comparison_desk_tab",
+            "layout_ticker_desks_tab",
+        ]
+        current_section = render_lightweight_option_selector(
+            expert_sections,
+            "dashboard_expert_general_section",
+            format_func=standard_layout_section_label,
+            helper_text=(
+                "Expert 模式現在也只渲染目前站點，避免比較區與工作台一起卡住。"
+                if lang_zh else
+                "Expert mode now renders only the active station so comparison and workspaces do not stall each other."
+            ),
+            widget_label="dashboard-expert-general-station",
         )
-        with overview_tab:
+        if current_section == "layout_research_flow_tab":
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
             render_global_scenario_planning_stack(daily_data, intraday_data, tickers, lens_meta=lens_meta)
             render_precomparison_target_and_brief_groups(daily_data, intraday_data, tickers, lens_meta=lens_meta)
-        with compare_tab:
+        elif current_section == "layout_comparison_desk_tab":
             render_comparison_section(daily_data, intraday_data, tickers, lens_meta=lens_meta)
-        with workspace_tab:
+        else:
             render_ticker_workspace_tabs(daily_data, intraday_data, tickers, lens_meta=lens_meta)
 
     render_html_block(f'<div class="footer-note">{t("footer_note")}</div>')
@@ -2929,13 +3079,24 @@ def render_single_bundle_workspace_picker(bundles: list[dict], lens_meta: dict |
 def render_bundle_workspace_tabs(bundles: list[dict], lens_meta: dict | None = None) -> None:
     if not bundles:
         return
+    lang_zh = get_language() == "zh_TW"
     tickers = [bundle["ticker"] for bundle in bundles]
-    tabs = st.tabs([display_ticker_label(ticker) for ticker in tickers])
-    for tab, ticker in zip(tabs, tickers):
-        with tab:
-            bundle = next((row for row in bundles if row["ticker"] == ticker), None)
-            if bundle is not None:
-                render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(tickers))
+    selected_ticker = render_lightweight_option_selector(
+        tickers,
+        "active_etf_workspace_focus_ticker",
+        format_func=display_ticker_label,
+        helper_text=(
+            "工作台一次只載入一檔主動式 ETF，避免切換時整排頁面同時重算。"
+            if lang_zh else
+            "Only one active ETF workspace is loaded at a time, so switching does not recalculate the whole strip."
+        ),
+        widget_label="active-etf-workspaces-selector",
+    )
+    if not selected_ticker:
+        return
+    bundle = next((row for row in bundles if row["ticker"] == selected_ticker), None)
+    if bundle is not None:
+        render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(tickers))
 
 
 def _safe_secret(name: str, default: str = "") -> str:
@@ -15013,6 +15174,440 @@ def _official_card_html(label: str, value: str, sub: str = "") -> str:
     )
 
 
+def _format_taiwan_lot_text(value: object, lang_zh: bool, signed: bool = False) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    lots = numeric / 1000.0
+    abs_lots = abs(lots)
+    if abs_lots >= 100:
+        text = f"{abs_lots:,.0f}"
+    else:
+        text = f"{abs_lots:,.1f}".rstrip("0").rstrip(".")
+    if signed:
+        sign = "+" if lots > 0 else "-" if lots < 0 else ""
+        text = f"{sign}{text}"
+    return f"{text} 張" if lang_zh else f"{text} lots"
+
+
+def _format_signed_percent_text(value: object, digits: int = 2) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    return f"{numeric:+.{digits}f}%"
+
+
+def _official_story_box_html(title: str, headline: str, detail: str) -> str:
+    return (
+        '<div class="benchmark-box">'
+        f'<div class="benchmark-label">{escape(title)}</div>'
+        f'<div style="margin-top:8px;font-size:1.02rem;font-weight:700;line-height:1.45;color:var(--text-primary);">{escape(headline)}</div>'
+        f'<div class="benchmark-sub" style="margin-top:8px;white-space:normal;line-height:1.65;">{escape(detail)}</div>'
+        '</div>'
+    )
+
+
+def _official_actor_label(actor_key: str, lang_zh: bool) -> str:
+    zh_map = {
+        "foreign": "外資",
+        "trust": "投信",
+        "dealer": "自營商",
+    }
+    en_map = {
+        "foreign": "Foreign",
+        "trust": "Trust",
+        "dealer": "Dealer",
+    }
+    return (zh_map if lang_zh else en_map).get(actor_key, actor_key)
+
+
+def _official_flow_story(ticker_label: str, foreign_net: object, trust_net: object, dealer_net: object, lang_zh: bool) -> tuple[str, str]:
+    flows = {
+        "foreign": _safe_float(foreign_net),
+        "trust": _safe_float(trust_net),
+        "dealer": _safe_float(dealer_net),
+    }
+    valid_flows = {key: value for key, value in flows.items() if not pd.isna(value)}
+    foreign_value = flows["foreign"]
+    if pd.isna(foreign_value) and not valid_flows:
+        if lang_zh:
+            return (
+                "法人買賣超資料暫缺",
+                f"{ticker_label} 目前缺少官方法人買賣超，先不要只憑感覺判斷強弱，較適合等資料補齊後再看。",
+            )
+        return (
+            "Institutional flow data is missing",
+            f"Official institutional flow for {ticker_label} is unavailable right now, so avoid drawing a strong read from this section alone.",
+        )
+
+    positive_count = sum(1 for value in valid_flows.values() if value > 0)
+    negative_count = sum(1 for value in valid_flows.values() if value < 0)
+    dominant_actor = max(valid_flows, key=lambda key: abs(valid_flows[key])) if valid_flows else "foreign"
+    dominant_value = valid_flows.get(dominant_actor, float("nan"))
+    dominant_lots = _format_taiwan_lot_text(dominant_value, lang_zh)
+
+    if pd.isna(foreign_value):
+        headline = "外資資料暫缺，先看其餘法人方向" if lang_zh else "Foreign flow is missing, so read the other institutions first"
+        lead_text = (
+            f"目前以{_official_actor_label(dominant_actor, lang_zh)}的動作最明顯，方向約 {dominant_lots}。"
+            if lang_zh else
+            f"The clearest move so far comes from {_official_actor_label(dominant_actor, lang_zh)} at about {dominant_lots}."
+        )
+    elif foreign_value > 0:
+        headline = "外資偏買，短線籌碼加分" if lang_zh else "Foreign investors are net buyers, which helps short-term positioning"
+        lead_text = (
+            f"外資今天對 {ticker_label} 買超約 {_format_taiwan_lot_text(foreign_value, lang_zh)}，代表短線資金態度偏友善。"
+            if lang_zh else
+            f"Foreign investors bought about {_format_taiwan_lot_text(foreign_value, lang_zh)} of {ticker_label} today, a friendlier short-term signal."
+        )
+    elif foreign_value < 0:
+        headline = "外資偏賣，短線籌碼扣分" if lang_zh else "Foreign investors are net sellers, which is a short-term headwind"
+        lead_text = (
+            f"外資今天對 {ticker_label} 賣超約 {_format_taiwan_lot_text(foreign_value, lang_zh)}，代表短線資金先站在保守那一邊。"
+            if lang_zh else
+            f"Foreign investors sold about {_format_taiwan_lot_text(foreign_value, lang_zh)} of {ticker_label} today, which points to a more cautious short-term tone."
+        )
+    else:
+        headline = "外資近乎中性，短線方向未明" if lang_zh else "Foreign flow is roughly flat, so the short-term read is still neutral"
+        lead_text = (
+            f"外資今天對 {ticker_label} 幾乎沒有明顯偏向，代表這筆資料本身還不能當成明確買賣訊號。"
+            if lang_zh else
+            f"Foreign flow for {ticker_label} is close to flat today, so this datapoint alone is not a strong buy or sell signal."
+        )
+
+    if valid_flows and positive_count == len(valid_flows):
+        consensus_text = (
+            "三大法人方向一致偏買，籌碼面相對整齊。"
+            if lang_zh else
+            "All reported institutional groups are net buyers, so positioning is relatively aligned."
+        )
+    elif valid_flows and negative_count == len(valid_flows):
+        consensus_text = (
+            "三大法人同步偏賣，短線賣壓通常會比較明顯。"
+            if lang_zh else
+            "All reported institutional groups are net sellers, which usually means heavier near-term pressure."
+        )
+    elif positive_count and negative_count:
+        consensus_text = (
+            "不同法人看法分歧，代表市場還在找共識，不適合把單日買賣超當成絕對答案。"
+            if lang_zh else
+            "Institutional views are split, so the market is still searching for consensus and one day of flow should not be treated as the answer."
+        )
+    else:
+        consensus_text = (
+            f"今天最主導的是{_official_actor_label(dominant_actor, lang_zh)}，方向約 {dominant_lots}。"
+            if lang_zh else
+            f"The biggest single driver today is {_official_actor_label(dominant_actor, lang_zh)} at about {dominant_lots}."
+        )
+
+    practical_text = (
+        "對新手來說，這一欄先看方向，再看是否連續兩到三天延續，不要只因為一天買超就追高，也不要只因一天賣超就完全否定公司。"
+        if lang_zh else
+        "For newer investors, read the direction first and then watch whether it persists for two or three sessions instead of reacting to a single day."
+    )
+    return headline, " ".join(part for part in (lead_text, consensus_text, practical_text) if part)
+
+
+def _official_revenue_story(ticker_label: str, yoy: object, mom: object, lang_zh: bool) -> tuple[str, str]:
+    yoy_value = _safe_float(yoy)
+    mom_value = _safe_float(mom)
+    yoy_text = _format_signed_percent_text(yoy)
+    mom_text = _format_signed_percent_text(mom)
+
+    if pd.isna(yoy_value) and pd.isna(mom_value):
+        if lang_zh:
+            return (
+                "月營收資料暫缺",
+                f"{ticker_label} 暫時沒有可解讀的月營收數字，這時不要只靠股價波動做基本面判斷。",
+            )
+        return (
+            "Monthly revenue data is missing",
+            f"Monthly revenue for {ticker_label} is unavailable right now, so avoid using price movement alone as a fundamental read.",
+        )
+
+    if not pd.isna(yoy_value) and yoy_value > 0 and not pd.isna(mom_value) and mom_value > 0:
+        headline = "營收雙增，基本面動能偏正向" if lang_zh else "Both YoY and MoM revenue are up, which supports the fundamental trend"
+        tone_text = (
+            f"YoY {yoy_text}、MoM {mom_text}，代表 {ticker_label} 跟去年同期、跟上個月相比都在成長。"
+            if lang_zh else
+            f"Revenue is {yoy_text} YoY and {mom_text} MoM, meaning {ticker_label} is growing against both last year and last month."
+        )
+    elif not pd.isna(yoy_value) and yoy_value > 0 and not pd.isna(mom_value) and mom_value < 0:
+        headline = "年增還在，但短線月增降溫" if lang_zh else "YoY growth is still there, but MoM momentum cooled"
+        tone_text = (
+            f"YoY {yoy_text} 代表長一點的趨勢仍有撐，但 MoM {mom_text} 表示最近一個月開始降溫。"
+            if lang_zh else
+            f"YoY growth at {yoy_text} keeps the longer trend intact, while MoM at {mom_text} suggests the latest month cooled."
+        )
+    elif not pd.isna(yoy_value) and yoy_value < 0 and not pd.isna(mom_value) and mom_value > 0:
+        headline = "短線月增回升，但年增仍偏弱" if lang_zh else "MoM improved, but YoY is still soft"
+        tone_text = (
+            f"MoM {mom_text} 表示最近一個月有回溫，不過 YoY {yoy_text} 仍提醒 {ticker_label} 的年對年基礎還沒有完全轉強。"
+            if lang_zh else
+            f"MoM at {mom_text} shows a short-term rebound, but YoY at {yoy_text} says the year-on-year base is still not fully strong for {ticker_label}."
+        )
+    elif not pd.isna(yoy_value) and yoy_value < 0 and not pd.isna(mom_value) and mom_value < 0:
+        headline = "營收雙弱，基本面要更保守" if lang_zh else "Both YoY and MoM revenue are weak, so fundamentals need more caution"
+        tone_text = (
+            f"YoY {yoy_text}、MoM {mom_text}，代表 {ticker_label} 的營收動能同時弱於去年同期與上個月。"
+            if lang_zh else
+            f"Revenue is {yoy_text} YoY and {mom_text} MoM, showing weaker momentum versus both last year and last month."
+        )
+    else:
+        headline = "營收訊號偏中性，還需要再觀察" if lang_zh else "Revenue signals are mixed, so more confirmation is needed"
+        tone_text = (
+            f"目前看到的營收讀數是 YoY {yoy_text}、MoM {mom_text}，方向還不夠一致。"
+            if lang_zh else
+            f"The current revenue reads are YoY {yoy_text} and MoM {mom_text}, which are not aligned enough yet."
+        )
+
+    practical_text = (
+        "月營收比較像公司基本面溫度計，適合拿來確認趨勢，不適合直接拿來預測明天一定漲或一定跌。"
+        if lang_zh else
+        "Monthly revenue is more of a temperature check on fundamentals than a promise about tomorrow's price move."
+    )
+    return headline, " ".join(part for part in (tone_text, practical_text) if part)
+
+
+def _official_valuation_story(pe: object, pb: object, cash_yield: object, lang_zh: bool) -> tuple[str, str, bool, bool]:
+    pe_value = _safe_float(pe)
+    pb_value = _safe_float(pb)
+    yield_value = _safe_float(cash_yield)
+
+    notes: list[str] = []
+    score = 0.0
+    valuation_rich = False
+    valuation_supportive = False
+
+    if not pd.isna(pe_value):
+        if pe_value <= 0:
+            notes.append(
+                f"PE {pe_value:.2f} 不適合直接拿來估值，通常要回頭確認獲利是否失真或處於轉折期。"
+                if lang_zh else
+                f"PE at {pe_value:.2f} is not a clean valuation read, so earnings quality needs a closer look."
+            )
+            score -= 0.4
+        elif pe_value <= 15:
+            notes.append(
+                f"PE {pe_value:.2f} 不算高，估值壓力相對小。"
+                if lang_zh else
+                f"PE at {pe_value:.2f} is not especially high, so valuation pressure is lighter."
+            )
+            score += 1.0
+        elif pe_value >= 25:
+            notes.append(
+                f"PE {pe_value:.2f} 偏高，市場已經先反映不少期待。"
+                if lang_zh else
+                f"PE at {pe_value:.2f} is elevated, so the market is already pricing in a fair amount of optimism."
+            )
+            score -= 1.0
+            valuation_rich = True
+        else:
+            notes.append(
+                f"PE {pe_value:.2f} 大致落在中性區。"
+                if lang_zh else
+                f"PE at {pe_value:.2f} sits in a more neutral range."
+            )
+
+    if not pd.isna(pb_value):
+        if 0 < pb_value <= 1.5:
+            notes.append(
+                f"PB {pb_value:.2f} 偏低，資產價格相對有支撐。"
+                if lang_zh else
+                f"PB at {pb_value:.2f} is on the lower side, which gives asset valuation more support."
+            )
+            score += 0.3
+        elif pb_value >= 3.5:
+            notes.append(
+                f"PB {pb_value:.2f} 偏高，代表市場願意給較高溢價。"
+                if lang_zh else
+                f"PB at {pb_value:.2f} is high, meaning the market is paying a larger premium."
+            )
+            score -= 0.4
+            valuation_rich = True
+
+    if not pd.isna(yield_value):
+        if yield_value >= 4:
+            notes.append(
+                f"殖利率 {yield_value:.2f}% 對保守型投資人比較友善。"
+                if lang_zh else
+                f"Yield at {yield_value:.2f}% is more supportive for conservative investors."
+            )
+            score += 0.5
+        elif 0 < yield_value < 2:
+            notes.append(
+                f"殖利率 {yield_value:.2f}% 偏低，股價容錯率通常較小。"
+                if lang_zh else
+                f"Yield at {yield_value:.2f}% is low, which often means less margin for error in the price."
+            )
+            score -= 0.3
+            valuation_rich = True
+
+    if score >= 0.8:
+        headline = "估值相對友善" if lang_zh else "Valuation looks relatively supportive"
+        valuation_supportive = True
+    elif score <= -0.8:
+        headline = "估值偏貴，追價要更小心" if lang_zh else "Valuation looks rich, so chasing needs more caution"
+    elif notes:
+        headline = "估值大致中性" if lang_zh else "Valuation looks broadly neutral"
+    else:
+        headline = "估值資料有限，先別只看本益比" if lang_zh else "Valuation data is limited, so do not rely on PE alone"
+
+    detail = " ".join(notes) if notes else (
+        "這檔目前缺少完整估值資料，最好搭配產業位置與獲利趨勢一起看。"
+        if lang_zh else
+        "Valuation data is incomplete here, so it should be read together with sector position and earnings trend."
+    )
+    if lang_zh:
+        detail += " 估值要和同產業比較才更有意義，所以這一欄適合拿來提醒風險，不適合單獨當買點。"
+    else:
+        detail += " Valuation is most useful when compared with peers, so this is better as a risk reminder than a standalone buy signal."
+    return headline, detail, valuation_rich, valuation_supportive
+
+
+def _official_buy_angle_story(
+    ticker_label: str,
+    foreign_net: object,
+    yoy: object,
+    mom: object,
+    valuation_rich: bool,
+    valuation_supportive: bool,
+    lang_zh: bool,
+) -> tuple[str, str]:
+    foreign_value = _safe_float(foreign_net)
+    yoy_value = _safe_float(yoy)
+    mom_value = _safe_float(mom)
+
+    foreign_positive = not pd.isna(foreign_value) and foreign_value > 0
+    foreign_negative = not pd.isna(foreign_value) and foreign_value < 0
+    revenue_positive = not pd.isna(yoy_value) and yoy_value > 0 and (pd.isna(mom_value) or mom_value >= 0)
+    revenue_negative = not pd.isna(yoy_value) and yoy_value < 0 and (pd.isna(mom_value) or mom_value <= 0)
+
+    if foreign_negative and revenue_negative:
+        if lang_zh:
+            return (
+                "偏保守：先觀察，不建議急著接",
+                f"{ticker_label} 目前同時面臨外資賣壓與營收偏弱，對不熟悉風險控管的人來說，先等止賣或下一期營收回穩會比較穩健。",
+            )
+        return (
+            "More cautious: wait rather than rush in",
+            f"{ticker_label} is dealing with both foreign selling and soft revenue, so waiting for selling pressure to ease or the next revenue release to stabilize is usually safer.",
+        )
+
+    if foreign_negative and revenue_positive:
+        if lang_zh:
+            return (
+                "基本面不差，但先等賣壓緩和",
+                f"{ticker_label} 的公司面不算差，可是短線籌碼還在被外資調節。若真的想布局，通常比較適合等連續賣超收斂或拉回後再分批。",
+            )
+        return (
+            "Fundamentals are holding up, but wait for selling pressure to cool",
+            f"{ticker_label} is holding up fundamentally, but foreign investors are still selling. If you want exposure, a pullback or a slowdown in selling is usually a cleaner entry.",
+        )
+
+    if foreign_positive and revenue_negative:
+        if lang_zh:
+            return (
+                "有資金撐盤，但基本面還要再確認",
+                f"{ticker_label} 目前比較像資金先行，不一定代表公司獲利已同步改善。這種情況對新手來說，不要只因買超就追價。",
+            )
+        return (
+            "Money is stepping in, but fundamentals still need work",
+            f"{ticker_label} looks more like a flow-led move for now, which does not necessarily mean earnings have already improved. Newer investors should avoid chasing just because institutions bought.",
+        )
+
+    if foreign_positive and revenue_positive and valuation_rich:
+        if lang_zh:
+            return (
+                "結構偏正向，但估值不低",
+                f"{ticker_label} 同時有外資支持和營收動能，不過估值已不便宜。比較好的做法通常是等拉回、分批，而不是看到強就一次追高。",
+            )
+        return (
+            "The setup is constructive, but valuation is not cheap",
+            f"{ticker_label} has both foreign support and revenue momentum, but valuation is already rich. Waiting for a pullback and scaling in is usually healthier than chasing strength.",
+        )
+
+    if foreign_positive and revenue_positive and valuation_supportive:
+        if lang_zh:
+            return (
+                "結構偏正向，可列入分批觀察",
+                f"{ticker_label} 的資金面、基本面與估值都沒有明顯拖後腿。若技術面沒有過熱，這種型態比較接近可以分批觀察的候選名單。",
+            )
+        return (
+            "Constructive setup and worth watching for staged entry",
+            f"{ticker_label} is not being held back by capital flow, fundamentals, or valuation right now. If the chart is not overstretched, this is closer to a staged-entry candidate.",
+        )
+
+    if valuation_rich:
+        if lang_zh:
+            return (
+                "中性偏觀察：好公司也要注意買價",
+                f"{ticker_label} 就算題材不錯，若估值已經偏高，報酬往往更依賴未來驚喜。對大多數投資人來說，等價格更舒服通常比硬追更重要。",
+            )
+        return (
+            "Neutral-to-watch: even good companies need the right price",
+            f"Even if {ticker_label} has a good story, rich valuation means returns depend more on future upside surprises. For most investors, price discipline matters more than speed.",
+        )
+
+    if lang_zh:
+        return (
+            "中性：先看下一個確認訊號",
+            f"{ticker_label} 目前官方資料沒有形成很一致的買點，比較適合再看後續外資方向、下一期營收，或股價是否出現止跌訊號。",
+        )
+    return (
+        "Neutral: wait for the next confirmation signal",
+        f"The official data for {ticker_label} does not yet form a strong entry case, so watching the next round of foreign flow, revenue, or price stabilization makes sense.",
+    )
+
+
+def _official_status_pill_html(text: str, tone: str = "flat") -> str:
+    tone_class = {
+        "up": "etf-tracker-status-up",
+        "down": "etf-tracker-status-down",
+        "flat": "etf-tracker-status-flat",
+    }.get(str(tone or "flat").lower(), "etf-tracker-status-flat")
+    return f'<span class="etf-tracker-status-pill {tone_class}">{escape(text)}</span>'
+
+
+def _official_source_story_html(
+    source: str,
+    dataset: str,
+    stamp: str,
+    headline: str,
+    detail: str = "",
+    note: str = "",
+    *,
+    pill_text: str = "",
+    tone: str = "flat",
+) -> str:
+    pill_html = _official_status_pill_html(pill_text, tone) if pill_text else ""
+    stamp_html = f'<div class="benchmark-sub" style="margin-top:4px;">{escape(stamp)}</div>' if stamp else ""
+    detail_html = f'<div class="benchmark-sub" style="margin-top:8px;white-space:normal;line-height:1.6;">{escape(detail)}</div>' if detail else ""
+    note_html = (
+        f'<div class="benchmark-sub" style="margin-top:2px;white-space:normal;line-height:1.68;color:rgba(248, 241, 229, 0.78);">{escape(note)}</div>'
+        if note else ""
+    )
+    return (
+        '<div class="benchmark-box" style="padding:16px 16px 14px 16px; display:flex; flex-direction:column; gap:12px; min-height:220px;">'
+        '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">'
+        '<div>'
+        f'<div class="benchmark-label" style="margin:0;">{escape(source)}</div>'
+        f'<div style="margin-top:6px; font-size:18px; font-weight:850; line-height:1.32; color:#fff8ee;">{escape(dataset)}</div>'
+        f'{stamp_html}'
+        '</div>'
+        f'{pill_html}'
+        '</div>'
+        '<div style="padding:12px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.08); '
+        'background:linear-gradient(135deg, rgba(12, 24, 43, 0.72) 0%, rgba(255,255,255,0.03) 100%);">'
+        '<div class="benchmark-label" style="font-size:10px; color:rgba(248, 241, 229, 0.52);">Highlight</div>'
+        f'<div style="margin-top:7px; font-size:17px; font-weight:820; line-height:1.48; color:#fffaf0; white-space:normal;">{escape(headline)}</div>'
+        f'{detail_html}'
+        '</div>'
+        f'{note_html}'
+        '</div>'
+    )
+
+
 def render_taiwan_market_macro_strip(force_show: bool = False) -> None:
     selected = st.session_state.get("dashboard_selected_tickers", []) or []
     selected += st.session_state.get("dashboard_active_etf_tickers", []) or []
@@ -15116,10 +15711,14 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     errors = {key: str(value).strip() for key, value in (snapshot.get("errors", {}) or {}).items() if str(value).strip()}
 
     cards = []
+    ticker_label = display_ticker_label(ticker)
 
     pe_value = _safe_number_text(valuation.get("pe"), digits=2)
     yield_value = _safe_percent_text(valuation.get("yield"))
     pb_value = _safe_number_text(valuation.get("pb"), digits=2)
+    pe_num = _safe_float(valuation.get("pe"))
+    pb_num = _safe_float(valuation.get("pb"))
+    yield_num = _safe_float(valuation.get("yield"))
 
     if any(value != "—" for value in (pe_value, yield_value, pb_value)):
         cards.extend(
@@ -15133,6 +15732,9 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     foreign_net = _safe_number_text(flow.get("foreign_net"), digits=0)
     trust_net = _safe_number_text(flow.get("trust_net"), digits=0)
     dealer_net = _safe_number_text(flow.get("dealer_net"), digits=0)
+    foreign_net_num = _safe_float(flow.get("foreign_net"))
+    trust_net_num = _safe_float(flow.get("trust_net"))
+    dealer_net_num = _safe_float(flow.get("dealer_net"))
 
     cards.extend(
         [
@@ -15145,6 +15747,8 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     revenue_value = _safe_number_text(revenue.get("revenue"), digits=0)
     yoy_value = _safe_percent_text(revenue.get("yoy"))
     mom_value = _safe_percent_text(revenue.get("mom"))
+    yoy_num = _safe_float(revenue.get("yoy"))
+    mom_num = _safe_float(revenue.get("mom"))
 
     if revenue_value != "—" or yoy_value != "—" or mom_value != "—":
         cards.extend(
@@ -15181,7 +15785,7 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
         f"""
         <div class="guide-shell" style="margin-top:12px;">
             <div class="section-header">{'Taiwan official data layer' if not lang_zh else '台股官方資料層'}</div>
-            <div class="guide-title">{escape(display_ticker_label(ticker))}</div>
+            <div class="guide-title">{escape(ticker_label)}</div>
             <div class="guide-copy">{'Official TWSE/TPEx valuation, institutional flow, monthly revenue, CBC macro, and TAIFEX sentiment in one place.' if not lang_zh else '把證交所／櫃買估值、三大法人、月營收、央行總經與期交所情緒整合在同一區。'}</div>
             <div class="benchmark-grid">
                 {''.join(cards)}
@@ -15190,35 +15794,212 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
         """
     )
 
-    rows = [
-        [
-            _active_etf_plain_cell("TWSE / TPEx"),
-            _active_etf_story_cell("3-inst flow" if not lang_zh else "三大法人買賣超", str(flow.get("source", ""))),
-            _active_etf_plain_cell(
-                f"外資 {foreign_net} / 投信 {trust_net} / 自營商 {dealer_net}"
-                if lang_zh
-                else f"Foreign {foreign_net} / Trust {trust_net} / Dealer {dealer_net}"
-            ),
-        ],
-        [
-            _active_etf_plain_cell("MOPS / OpenAPI"),
-            _active_etf_story_cell("Monthly revenue" if not lang_zh else "月營收", str(revenue.get("period", ""))),
-            _active_etf_plain_cell(
-                f"營收 {revenue_value} / YoY {yoy_value} / MoM {mom_value}"
-                if lang_zh
-                else f"Revenue {revenue_value} / YoY {yoy_value} / MoM {mom_value}"
-            ),
-        ],
-        [
-            _active_etf_plain_cell("CBC + TAIFEX"),
-            _active_etf_story_cell("Macro / derivatives" if not lang_zh else "總經 / 衍生品", str(rate.get("date") or fx.get("date") or pcr.get("date") or "")),
-            _active_etf_plain_cell(f"FX {fx_value} / Rate {rate_value} / PCR {pcr_value}"),
-        ],
+    flow_headline, flow_detail = _official_flow_story(
+        ticker_label,
+        foreign_net_num,
+        trust_net_num,
+        dealer_net_num,
+        lang_zh,
+    )
+    revenue_headline, revenue_detail = _official_revenue_story(
+        ticker_label,
+        yoy_num,
+        mom_num,
+        lang_zh,
+    )
+    valuation_headline, valuation_detail, valuation_rich, valuation_supportive = _official_valuation_story(
+        pe_num,
+        pb_num,
+        yield_num,
+        lang_zh,
+    )
+    action_headline, action_detail = _official_buy_angle_story(
+        ticker_label,
+        foreign_net_num,
+        yoy_num,
+        mom_num,
+        valuation_rich,
+        valuation_supportive,
+        lang_zh,
+    )
+
+    flow_lot_text = _format_taiwan_lot_text(foreign_net_num, lang_zh)
+    trust_lot_text = _format_taiwan_lot_text(trust_net_num, lang_zh)
+    dealer_lot_text = _format_taiwan_lot_text(dealer_net_num, lang_zh)
+    if not pd.isna(foreign_net_num) and foreign_net_num > 0:
+        flow_card_pill = "外資偏買" if lang_zh else "Net buying"
+        flow_card_tone = "up"
+        flow_card_headline = (
+            f"外資買超 {flow_lot_text}"
+            if lang_zh else
+            f"Foreign bought {flow_lot_text}"
+        )
+        flow_card_note = (
+            "短線籌碼較友善，接著看是否能連續幾天延續。"
+            if lang_zh else
+            "Short-term positioning looks friendlier; the next question is whether it can persist."
+        )
+    elif not pd.isna(foreign_net_num) and foreign_net_num < 0:
+        flow_card_pill = "外資偏賣" if lang_zh else "Net selling"
+        flow_card_tone = "down"
+        flow_card_headline = (
+            f"外資賣超 {flow_lot_text}"
+            if lang_zh else
+            f"Foreign sold {flow_lot_text}"
+        )
+        flow_card_note = (
+            "短線籌碼偏保守，先別只因股價回檔就急著接。"
+            if lang_zh else
+            "Short-term flow is cautious, so a pullback alone is not enough reason to rush in."
+        )
+    else:
+        flow_card_pill = "法人分歧" if lang_zh else "Mixed flow"
+        flow_card_tone = "flat"
+        flow_card_headline = (
+            "外資方向不明，先看後續延續"
+            if lang_zh else
+            "Foreign direction is still unclear, so wait for follow-through"
+        )
+        flow_card_note = (
+            "單日買賣超還不足以定義方向，先搭配後續兩到三天一起看。"
+            if lang_zh else
+            "One day of flow is not enough to define the trend; watch the next two or three sessions as well."
+        )
+    flow_card_detail = (
+        f"投信 {trust_lot_text} · 自營商 {dealer_lot_text}"
+        if lang_zh else
+        f"Trust {trust_lot_text} · Dealer {dealer_lot_text}"
+    )
+
+    if not pd.isna(yoy_num) and yoy_num > 0 and not pd.isna(mom_num) and mom_num > 0:
+        revenue_card_pill = "營收雙增" if lang_zh else "Revenue up"
+        revenue_card_tone = "up"
+        revenue_card_note = (
+            "年增和月增同時轉強，代表基本面溫度偏暖。"
+            if lang_zh else
+            "Both the yearly and monthly comparison are improving, which keeps the fundamental tone warmer."
+        )
+    elif not pd.isna(yoy_num) and yoy_num < 0 and not pd.isna(mom_num) and mom_num < 0:
+        revenue_card_pill = "營收雙弱" if lang_zh else "Revenue soft"
+        revenue_card_tone = "down"
+        revenue_card_note = (
+            "雙弱代表基本面偏保守，追價容錯率會比較低。"
+            if lang_zh else
+            "Both readings are weak, so the fundamental cushion is thinner."
+        )
+    else:
+        revenue_card_pill = "營收觀察" if lang_zh else "Revenue watch"
+        revenue_card_tone = "flat"
+        revenue_card_note = (
+            "這組數字偏向趨勢確認，不是直接預告明天股價。"
+            if lang_zh else
+            "This is more of a trend check than a prediction for tomorrow's price."
+        )
+    revenue_card_headline = (
+        f"YoY {yoy_value} · MoM {mom_value}"
+        if not lang_zh else
+        f"YoY {yoy_value} · MoM {mom_value}"
+    )
+    revenue_card_detail = (
+        f"月營收 {revenue_value} · {revenue.get('period', '')}"
+        if lang_zh else
+        f"Revenue {revenue_value} · {revenue.get('period', '')}"
+    )
+
+    macro_card_pill = "市場背景" if lang_zh else "Backdrop"
+    macro_card_tone = "flat"
+    macro_card_headline = (
+        f"PCR {pcr_value} · FX {fx_value}"
+        if lang_zh else
+        f"PCR {pcr_value} · FX {fx_value}"
+    )
+    macro_card_detail = (
+        f"Rate {rate_value} · {str(rate.get('date') or fx.get('date') or pcr.get('date') or '').strip()}"
+    )
+    macro_card_note = (
+        "這一張比較像市場風險氣氛背景，適合輔助，不適合單獨拿來決定這檔股票的買點。"
+        if lang_zh else
+        "This card is more about market backdrop and risk tone, so it should support the read rather than decide the stock on its own."
+    )
+
+    source_cards = [
+        _official_source_story_html(
+            "TWSE / TPEx",
+            "三大法人買賣超" if lang_zh else "3-inst flow",
+            str(flow.get("source", "")),
+            flow_card_headline,
+            flow_card_detail,
+            flow_card_note,
+            pill_text=flow_card_pill,
+            tone=flow_card_tone,
+        ),
+        _official_source_story_html(
+            "MOPS / OpenAPI",
+            "月營收" if lang_zh else "Monthly revenue",
+            str(revenue.get("period", "")),
+            revenue_card_headline,
+            revenue_card_detail,
+            revenue_card_note,
+            pill_text=revenue_card_pill,
+            tone=revenue_card_tone,
+        ),
+        _official_source_story_html(
+            "CBC + TAIFEX",
+            "總經 / 衍生品" if lang_zh else "Macro / derivatives",
+            str(rate.get("date") or fx.get("date") or pcr.get("date") or ""),
+            macro_card_headline,
+            macro_card_detail,
+            macro_card_note,
+            pill_text=macro_card_pill,
+            tone=macro_card_tone,
+        ),
     ]
-    render_active_etf_tracker_table(
-        ["來源" if lang_zh else "Source", "資料項" if lang_zh else "Dataset", "重點" if lang_zh else "Highlights"],
-        rows,
-        "目前尚無官方補強資料。" if lang_zh else "No official supplemental data is available.",
+    render_html_block(
+        f"""
+        <div class="guide-shell" style="margin-top:12px;">
+            <div class="section-header">{'Official source digest' if not lang_zh else '官方來源速覽'}</div>
+            <div class="guide-title">{'Read the raw official feeds more naturally' if not lang_zh else '把原始官方資料變得更好讀'}</div>
+            <div class="guide-copy">
+                {escape(
+                    (
+                        "Each card keeps the original source, the exact dataset, and the key number, but presents it in a more readable flow before the plain-language interpretation."
+                        if not lang_zh else
+                        "每張卡片都保留原始來源、資料集與核心數字，但先用比較像研究摘要的方式排好，讓你在看白話判讀前先抓到重點。"
+                    )
+                )}
+            </div>
+            <div class="benchmark-grid">
+                {''.join(source_cards)}
+            </div>
+        </div>
+        """
+    )
+
+    explain_cards = [
+        _official_story_box_html("外資 / 法人" if lang_zh else "Institutions", flow_headline, flow_detail),
+        _official_story_box_html("營收 / 基本面" if lang_zh else "Revenue / fundamentals", revenue_headline, revenue_detail),
+        _official_story_box_html("估值" if lang_zh else "Valuation", valuation_headline, valuation_detail),
+        _official_story_box_html("買進角度" if lang_zh else "Entry angle", action_headline, action_detail),
+    ]
+    render_html_block(
+        f"""
+        <div class="guide-shell" style="margin-top:12px;">
+            <div class="section-header">{'How to read this' if not lang_zh else '白話判讀'}</div>
+            <div class="guide-title">{escape(action_headline)}</div>
+            <div class="guide-copy">
+                {escape(
+                    (
+                        f"這是根據 {ticker_label} 目前的官方法人、營收與估值資料做的入門判讀；它適合幫你看懂『現在偏強還是偏保守』，但不應取代部位控管與價格紀律。"
+                        if lang_zh else
+                        f"This is a beginner-friendly read of {ticker_label} based on official flow, revenue, and valuation data. It helps frame whether the setup looks constructive or cautious, but it should not replace position sizing or price discipline."
+                    )
+                )}
+            </div>
+            <div class="benchmark-grid">
+                {''.join(explain_cards)}
+            </div>
+        </div>
+        """
     )
 
     visible_values = [
@@ -16633,30 +17414,48 @@ def render_active_etf_lab_dashboard(
         else:
             render_single_bundle_workspace_picker(bundles, lens_meta=lens_meta)
     elif layout_mode == "Advanced":
-        brief_tab, compare_tab, workspace_tab = st.tabs(
-            [
-                t("layout_brief_tab"),
-                t("layout_compare_tab"),
-                t("layout_workspace_tab"),
-            ]
+        advanced_sections = [
+            "layout_brief_tab",
+            "layout_compare_tab",
+            "layout_workspace_tab",
+        ]
+        current_section = render_lightweight_option_selector(
+            advanced_sections,
+            "dashboard_advanced_etf_section",
+            format_func=standard_layout_section_label,
+            helper_text=(
+                "這裡只載入目前的 ETF 站點，Compare 和 Workspace 不會再一起重算。"
+                if lang_zh else
+                "Only the active ETF station is loaded now, so Compare and Workspace no longer recalculate together."
+            ),
+            widget_label="dashboard-advanced-etf-station",
         )
-        with brief_tab:
+        if current_section == "layout_brief_tab":
             _render_etf_briefing()
-        with compare_tab:
+        elif current_section == "layout_compare_tab":
             _render_etf_pair_compare()
-        with workspace_tab:
+        else:
             render_bundle_workspace_tabs(bundles, lens_meta=lens_meta)
     else:
         _render_etf_briefing()
-        compare_tab, workspace_tab = st.tabs(
-            [
-                t("layout_comparison_desk_tab"),
-                t("layout_etf_workspaces_tab"),
-            ]
+        expert_sections = [
+            "layout_comparison_desk_tab",
+            "layout_etf_workspaces_tab",
+        ]
+        current_section = render_lightweight_option_selector(
+            expert_sections,
+            "dashboard_expert_etf_section",
+            format_func=standard_layout_section_label,
+            helper_text=(
+                "工作台改成單站點載入，避免 ETF 比較區拖慢切換。"
+                if lang_zh else
+                "Only one ETF station is rendered at a time now, so the comparison desk will not slow workspace switching."
+            ),
+            widget_label="dashboard-expert-etf-station",
         )
-        with compare_tab:
+        if current_section == "layout_comparison_desk_tab":
             _render_etf_pair_compare()
-        with workspace_tab:
+        else:
             render_bundle_workspace_tabs(bundles, lens_meta=lens_meta)
 
 
