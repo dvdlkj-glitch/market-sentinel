@@ -2735,6 +2735,68 @@ TRANSLATIONS["繁體中文"].update({
     "bias_mixed": "中性混合",
 })
 
+TRANSLATIONS["English"].update({
+    "profile_layer": "Business & fundamental snapshot",
+    "profile_layer_copy": "Adds business classification, valuation markers, trading context, and a 52-week range read before the deeper chart work.",
+    "profile_summary": "Business summary",
+    "profile_source": "Source: Yahoo Finance profile metadata",
+    "profile_data_unavailable": "Profile metadata is unavailable for this ticker right now.",
+    "profile_no_summary": "No long-form business summary was returned for this ticker.",
+    "sector": "Sector",
+    "industry": "Industry",
+    "fund_family": "Fund family",
+    "fund_category": "Fund category",
+    "market_cap": "Market cap",
+    "assets": "Assets",
+    "expense_ratio": "Expense ratio",
+    "pe_trailing_forward": "P/E (TTM / FWD)",
+    "price_to_book": "Price / book",
+    "dividend_yield": "Dividend yield",
+    "beta": "Beta",
+    "avg_volume": "Avg volume",
+    "next_earnings": "Next earnings",
+    "ex_dividend": "Ex-dividend",
+    "employees": "Employees",
+    "profit_margin": "Profit margin",
+    "operating_margin": "Operating margin",
+    "roe": "ROE",
+    "range_position_52w": "52W range position",
+    "range_position_high": "Near high",
+    "range_position_mid": "Mid-range",
+    "range_position_low": "Near low",
+})
+
+TRANSLATIONS["繁體中文"].update({
+    "profile_layer": "基本面輪廓",
+    "profile_layer_copy": "在深入看圖表前，先補上公司 / 基金分類、估值指標、交易脈絡與 52 週區間位置。",
+    "profile_summary": "業務 / 基金簡介",
+    "profile_source": "資料來源：Yahoo Finance 基本資料",
+    "profile_data_unavailable": "目前暫時抓不到這檔標的的基本資料。",
+    "profile_no_summary": "目前這檔標的沒有回傳長文簡介。",
+    "sector": "產業",
+    "industry": "細分產業",
+    "fund_family": "基金家族",
+    "fund_category": "基金類別",
+    "market_cap": "市值",
+    "assets": "資產規模",
+    "expense_ratio": "內扣費用率",
+    "pe_trailing_forward": "本益比（TTM / 預估）",
+    "price_to_book": "股價淨值比",
+    "dividend_yield": "殖利率",
+    "beta": "Beta",
+    "avg_volume": "平均成交量",
+    "next_earnings": "下次財報",
+    "ex_dividend": "除息日",
+    "employees": "員工人數",
+    "profit_margin": "淨利率",
+    "operating_margin": "營業利率",
+    "roe": "股東權益報酬率",
+    "range_position_52w": "52 週區間位置",
+    "range_position_high": "靠近區間高端",
+    "range_position_mid": "區間中段",
+    "range_position_low": "靠近區間低端",
+})
+
 def get_lang() -> str:
     return st.session_state.get("dashboard_language", "English")
 
@@ -2767,6 +2829,8 @@ def planner_status_text(section: str, item_count: int | None = None) -> str:
         return "目標價追蹤" if lang_zh else "Target tracking"
     if section == "brief":
         return "決策摘要" if lang_zh else "Decision brief"
+    if section == "profile":
+        return "基本輪廓" if lang_zh else "Business snapshot"
     if section == "alert":
         return "鏡頭警示" if lang_zh else "Lens alerts"
     if section == "trend":
@@ -2800,7 +2864,7 @@ def planner_expander_badges(section: str, item_count: int | None = None) -> str:
         }.get(mode_label, mode_label)
 
     count_label = ""
-    if section in {"comparison", "scenario", "target", "brief"} and count > 0:
+    if section in {"comparison", "scenario", "target", "brief", "profile"} and count > 0:
         count_label = f"{count} 檔" if lang_zh else f"{count} tickers"
 
     section_cls = {
@@ -2808,6 +2872,7 @@ def planner_expander_badges(section: str, item_count: int | None = None) -> str:
         "comparison": "is-comparison",
         "target": "is-target",
         "brief": "is-brief",
+        "profile": "is-brief",
         "alert": "is-alert",
         "trend": "is-trend",
     }.get(section, "")
@@ -2854,6 +2919,13 @@ def planner_auto_expand(section: str, item_count: int | None = None) -> bool:
         if "Fold" in mode:
             return single
         return single
+
+    if section == "profile":
+        if mode == "Desktop":
+            return single or count <= 3
+        if mode == "iPad":
+            return single
+        return False
 
     if section == "comparison":
         if count < 2:
@@ -2909,6 +2981,8 @@ def planner_expander_helper(base_text: str, section: str, item_count: int | None
         scope_text = f"目前追蹤 {count} 檔的目標價區間與修正脈動。" if lang_zh else f"Tracking target bands and revision tone across {count} tickers."
     elif section == "brief":
         scope_text = f"目前整理 {count} 檔的決策重點與執行摘要。" if lang_zh else f"Summarizing the decision points and execution brief for {count} tickers."
+    elif section == "profile":
+        scope_text = "補上公司 / 基金性質、估值與 52 週區間脈絡。" if lang_zh else "Adds company or fund context, valuation markers, and a 52-week range read."
     elif section == "alert":
         scope_text = "聚焦鏡頭多空狀態與當前警示。" if lang_zh else "Focuses on lens-state risk and current alerts."
     elif section == "trend":
@@ -13693,7 +13767,387 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
              if lang_zh else
              "This usually means a fetch or field-parsing failure, not necessarily that official post-close data is unavailable. Try Refresh live data once, then check the diagnostics above if it is still blank.")
         )
+def _profile_quote_type_label(raw_value: str) -> str:
+    lang_zh = get_language() == "zh_TW"
+    normalized = re.sub(r"[^A-Z]", "", str(raw_value or "").upper())
+    zh_labels = {
+        "EQUITY": "股票",
+        "ETF": "ETF",
+        "MUTUALFUND": "基金",
+        "INDEX": "指數",
+        "CRYPTOCURRENCY": "加密資產",
+        "CURRENCY": "匯率",
+        "MONEYMARKET": "貨幣型基金",
+    }
+    en_labels = {
+        "EQUITY": "Equity",
+        "ETF": "ETF",
+        "MUTUALFUND": "Mutual fund",
+        "INDEX": "Index",
+        "CRYPTOCURRENCY": "Crypto",
+        "CURRENCY": "Currency",
+        "MONEYMARKET": "Money market",
+    }
+    if lang_zh:
+        return zh_labels.get(normalized, str(raw_value or "").strip() or "資產")
+    return en_labels.get(normalized, str(raw_value or "").strip().title() or "Asset")
 
+
+def _profile_currency_prefix(currency: str) -> str:
+    mapping = {
+        "USD": "$",
+        "TWD": "NT$",
+        "HKD": "HK$",
+        "JPY": "JPY ",
+        "EUR": "EUR ",
+    }
+    normalized = str(currency or "").upper().strip()
+    if not normalized:
+        return ""
+    return mapping.get(normalized, f"{normalized} ")
+
+
+def _format_profile_compact_number(value: object, digits: int = 1, currency: str = "") -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    absolute = abs(float(numeric))
+    suffix = ""
+    scaled = float(numeric)
+    for threshold, label in (
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+        (1_000, "K"),
+    ):
+        if absolute >= threshold:
+            scaled = float(numeric) / threshold
+            suffix = label
+            break
+    prefix = _profile_currency_prefix(currency)
+    return f"{prefix}{scaled:,.{digits}f}{suffix}"
+
+
+def _format_profile_ratio(value: object, digits: int = 2) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    if abs(float(numeric)) <= 1.5:
+        numeric = float(numeric) * 100.0
+    return f"{float(numeric):.{digits}f}%"
+
+
+def _format_profile_date(value: object) -> str:
+    if value is None or value is pd.NA:
+        return "—"
+    if isinstance(value, np.ndarray):
+        return _format_profile_date(value.tolist())
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            rendered = _format_profile_date(item)
+            if rendered != "—":
+                return rendered
+        return "—"
+
+    numeric = _safe_float(value)
+    try:
+        if not pd.isna(numeric) and abs(float(numeric)) >= 10_000:
+            unit = "ms" if abs(float(numeric)) >= 1_000_000_000_000 else "s"
+            ts = pd.to_datetime(int(float(numeric)), unit=unit, utc=True)
+        else:
+            ts = pd.to_datetime(value, utc=True)
+        if pd.isna(ts):
+            return "—"
+        if isinstance(ts, pd.DatetimeIndex):
+            if len(ts) == 0:
+                return "—"
+            ts = ts[0]
+        return ts.date().isoformat()
+    except Exception:
+        text_value = re.sub(r"\s+", " ", str(value or "")).strip()
+        return text_value or "—"
+
+
+def _trim_profile_summary(text: str, limit: int = 420) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def _profile_range_position(current_price: object, low_value: object, high_value: object) -> tuple[float, str] | None:
+    current = _safe_float(current_price)
+    low = _safe_float(low_value)
+    high = _safe_float(high_value)
+    if pd.isna(current) or pd.isna(low) or pd.isna(high) or float(high) <= float(low):
+        return None
+    pct = (float(current) - float(low)) / (float(high) - float(low))
+    pct = float(np.clip(pct, 0.0, 1.0))
+    if pct >= 0.7:
+        stance = t("range_position_high")
+    elif pct <= 0.3:
+        stance = t("range_position_low")
+    else:
+        stance = t("range_position_mid")
+    return pct * 100.0, stance
+
+
+def _format_profile_pe_pair(trailing_value: object, forward_value: object) -> str:
+    trailing = _safe_number_text(trailing_value, digits=1)
+    forward = _safe_number_text(forward_value, digits=1)
+    if trailing == "—" and forward == "—":
+        return "—"
+    return f"{trailing} / {forward}"
+
+
+def _append_profile_card(cards: list[str], label: str, value: str, sub: str = "") -> None:
+    value_text = str(value or "").strip()
+    if not value_text or value_text == "—":
+        return
+    cards.append(_official_card_html(label, value_text, sub))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_asset_profile_snapshot(ticker: str) -> dict:
+    snapshot = {
+        "ticker": str(ticker or "").upper().strip(),
+        "quote_type": "",
+        "short_name": "",
+        "long_name": "",
+        "exchange": "",
+        "currency": "",
+        "sector": "",
+        "industry": "",
+        "fund_family": "",
+        "category": "",
+        "summary": "",
+        "employees": pd.NA,
+        "market_cap": pd.NA,
+        "total_assets": pd.NA,
+        "expense_ratio": pd.NA,
+        "trailing_pe": pd.NA,
+        "forward_pe": pd.NA,
+        "price_to_book": pd.NA,
+        "dividend_yield": pd.NA,
+        "beta": pd.NA,
+        "average_volume": pd.NA,
+        "profit_margin": pd.NA,
+        "operating_margin": pd.NA,
+        "roe": pd.NA,
+        "earnings_date": None,
+        "ex_dividend_date": None,
+        "fifty_two_week_low": pd.NA,
+        "fifty_two_week_high": pd.NA,
+        "error": "",
+    }
+    errors: list[str] = []
+    try:
+        tk = yf.Ticker(snapshot["ticker"])
+    except Exception as exc:
+        snapshot["error"] = str(exc)
+        return snapshot
+
+    info: dict = {}
+    try:
+        info = getattr(tk, "info", {}) or {}
+    except Exception as exc:
+        errors.append(str(exc))
+    if hasattr(info, "to_dict"):
+        info = info.to_dict()
+    if not isinstance(info, dict):
+        info = {}
+    if not info:
+        try:
+            info = tk.get_info() or {}
+        except Exception as exc:
+            errors.append(str(exc))
+            info = {}
+        if hasattr(info, "to_dict"):
+            info = info.to_dict()
+        if not isinstance(info, dict):
+            info = {}
+
+    try:
+        fast_info = getattr(tk, "fast_info", {}) or {}
+    except Exception:
+        fast_info = {}
+
+    def _pick(*keys: str):
+        for key in keys:
+            for payload in (info, fast_info if hasattr(fast_info, "get") else {}):
+                if not hasattr(payload, "get"):
+                    continue
+                value = payload.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if isinstance(value, (list, tuple, set, dict)) and len(value) == 0:
+                    continue
+                return value
+        return None
+
+    snapshot.update(
+        {
+            "quote_type": str(_pick("quoteType", "quote_type") or "").strip(),
+            "short_name": str(_pick("shortName") or "").strip(),
+            "long_name": str(_pick("longName") or "").strip(),
+            "exchange": str(_pick("fullExchangeName", "exchange") or "").strip(),
+            "currency": str(_pick("currency") or ("TWD" if is_taiwan_ticker(snapshot["ticker"]) else "USD")).upper().strip(),
+            "sector": str(_pick("sector", "sectorDisp") or "").strip(),
+            "industry": str(_pick("industry", "industryDisp") or "").strip(),
+            "fund_family": str(_pick("fundFamily", "family") or "").strip(),
+            "category": str(_pick("category", "categoryName") or "").strip(),
+            "summary": str(_pick("longBusinessSummary", "description") or "").strip(),
+            "employees": coerce_float(_pick("fullTimeEmployees")),
+            "market_cap": coerce_float(_pick("marketCap")),
+            "total_assets": coerce_float(_pick("totalAssets", "netAssets")),
+            "expense_ratio": coerce_float(_pick("annualReportExpenseRatio", "expenseRatio")),
+            "trailing_pe": coerce_float(_pick("trailingPE")),
+            "forward_pe": coerce_float(_pick("forwardPE")),
+            "price_to_book": coerce_float(_pick("priceToBook")),
+            "dividend_yield": coerce_float(_pick("dividendYield", "trailingAnnualDividendYield", "yield")),
+            "beta": coerce_float(_pick("beta3Year", "beta")),
+            "average_volume": coerce_float(_pick("averageVolume", "averageVolume10days", "volume")),
+            "profit_margin": coerce_float(_pick("profitMargins")),
+            "operating_margin": coerce_float(_pick("operatingMargins")),
+            "roe": coerce_float(_pick("returnOnEquity")),
+            "earnings_date": _pick("earningsDate", "earningsTimestamp", "earningsTimestampStart", "nextEarningsDate"),
+            "ex_dividend_date": _pick("exDividendDate"),
+            "fifty_two_week_low": coerce_float(_pick("fiftyTwoWeekLow", "yearLow")),
+            "fifty_two_week_high": coerce_float(_pick("fiftyTwoWeekHigh", "yearHigh")),
+        }
+    )
+
+    visible_fields = (
+        snapshot["summary"],
+        snapshot["sector"],
+        snapshot["industry"],
+        snapshot["fund_family"],
+        snapshot["category"],
+        snapshot["market_cap"],
+        snapshot["total_assets"],
+        snapshot["average_volume"],
+    )
+    if errors and not any(str(value).strip() not in {"", "nan", "<NA>"} for value in visible_fields):
+        snapshot["error"] = errors[-1]
+    return snapshot
+
+
+def render_asset_profile_section(bundle: dict, selected_count: int = 1) -> None:
+    ticker = str(bundle.get("ticker", "")).upper().strip()
+    if not ticker:
+        return
+
+    panel_label = f"{display_ticker_label(ticker)} {t('profile_layer')}"
+    is_open = render_dashboard_section_panel(
+        planner_expander_label(panel_label, "profile", selected_count),
+        "profile",
+        item_count=selected_count,
+        helper_base=t("profile_layer_copy"),
+        expanded=planner_auto_expand("profile", selected_count),
+        panel_key=f"profile::{ticker}",
+    )
+    if not is_open:
+        return
+
+    snapshot = fetch_asset_profile_snapshot(ticker)
+    quote_type_key = re.sub(r"[^A-Z]", "", str(snapshot.get("quote_type") or "").upper())
+    quote_type_label = _profile_quote_type_label(snapshot.get("quote_type", ""))
+    exchange_label = str(snapshot.get("exchange") or "").strip()
+    currency_label = str(snapshot.get("currency") or "").strip()
+    is_fund = quote_type_key in {"ETF", "MUTUALFUND", "MONEYMARKET"} or is_taiwan_active_etf(ticker)
+    display_name = (
+        str(snapshot.get("long_name") or "").strip()
+        or str(snapshot.get("short_name") or "").strip()
+        or display_ticker_label(ticker)
+    )
+
+    chips = [quote_type_label]
+    if exchange_label:
+        chips.append(exchange_label)
+    if currency_label:
+        chips.append(currency_label)
+    focus_chip = str(snapshot.get("fund_family") if is_fund else snapshot.get("sector") or "").strip()
+    if focus_chip:
+        chips.append(focus_chip)
+    chip_html = "".join(
+        f'<span class="explorer-nav-chip">{escape(item)}</span>'
+        for item in chips
+        if str(item).strip()
+    )
+
+    cards: list[str] = []
+    if is_fund:
+        _append_profile_card(cards, t("fund_family"), str(snapshot.get("fund_family") or "").strip(), quote_type_label)
+        _append_profile_card(cards, t("fund_category"), str(snapshot.get("category") or "").strip(), exchange_label)
+        assets_value = snapshot.get("total_assets")
+        if pd.isna(_safe_float(assets_value)):
+            assets_value = snapshot.get("market_cap")
+        _append_profile_card(cards, t("assets"), _format_profile_compact_number(assets_value, digits=1, currency=currency_label), currency_label)
+        _append_profile_card(cards, t("expense_ratio"), _format_profile_ratio(snapshot.get("expense_ratio"), digits=2), t("profile_source"))
+        _append_profile_card(cards, t("dividend_yield"), _format_profile_ratio(snapshot.get("dividend_yield"), digits=2), t("profile_source"))
+        _append_profile_card(cards, t("beta"), _safe_number_text(snapshot.get("beta"), digits=2), exchange_label or t("profile_source"))
+        _append_profile_card(cards, t("avg_volume"), _format_profile_compact_number(snapshot.get("average_volume"), digits=1), exchange_label)
+        _append_profile_card(cards, t("ex_dividend"), _format_profile_date(snapshot.get("ex_dividend_date")), t("profile_source"))
+    else:
+        _append_profile_card(cards, t("sector"), str(snapshot.get("sector") or "").strip(), quote_type_label)
+        _append_profile_card(cards, t("industry"), str(snapshot.get("industry") or "").strip(), exchange_label)
+        _append_profile_card(cards, t("market_cap"), _format_profile_compact_number(snapshot.get("market_cap"), digits=1, currency=currency_label), currency_label)
+        _append_profile_card(cards, t("pe_trailing_forward"), _format_profile_pe_pair(snapshot.get("trailing_pe"), snapshot.get("forward_pe")), "TTM / FWD")
+        _append_profile_card(cards, t("price_to_book"), _safe_number_text(snapshot.get("price_to_book"), digits=2), t("profile_source"))
+        _append_profile_card(cards, t("dividend_yield"), _format_profile_ratio(snapshot.get("dividend_yield"), digits=2), t("profile_source"))
+        _append_profile_card(cards, t("beta"), _safe_number_text(snapshot.get("beta"), digits=2), exchange_label or t("profile_source"))
+        _append_profile_card(cards, t("avg_volume"), _format_profile_compact_number(snapshot.get("average_volume"), digits=1), exchange_label)
+        _append_profile_card(cards, t("next_earnings"), _format_profile_date(snapshot.get("earnings_date")), t("profile_source"))
+        _append_profile_card(cards, t("employees"), _format_profile_compact_number(snapshot.get("employees"), digits=1), t("profile_source"))
+        _append_profile_card(cards, t("profit_margin"), _format_profile_ratio(snapshot.get("profit_margin"), digits=1), t("profile_source"))
+        _append_profile_card(cards, t("operating_margin"), _format_profile_ratio(snapshot.get("operating_margin"), digits=1), t("profile_source"))
+        _append_profile_card(cards, t("roe"), _format_profile_ratio(snapshot.get("roe"), digits=1), t("profile_source"))
+
+    range_position = _profile_range_position(
+        (bundle.get("analysis", {}) or {}).get("last_price", pd.NA),
+        snapshot.get("fifty_two_week_low"),
+        snapshot.get("fifty_two_week_high"),
+    )
+    if range_position is not None:
+        pct_value, stance_text = range_position
+        range_band = f"{format_local_price(snapshot.get('fifty_two_week_low'), ticker)} → {format_local_price(snapshot.get('fifty_two_week_high'), ticker)}"
+        _append_profile_card(cards, t("range_position_52w"), f"{pct_value:.0f}%", f"{stance_text} · {range_band}")
+
+    summary_text = _trim_profile_summary(snapshot.get("summary", ""))
+    if not summary_text:
+        fallback_bits = []
+        for field_name in ("fund_family", "category", "sector", "industry"):
+            value = str(snapshot.get(field_name) or "").strip()
+            if value:
+                fallback_bits.append(value)
+        summary_text = " · ".join(fallback_bits) or t("profile_no_summary")
+
+    if not cards and summary_text == t("profile_no_summary"):
+        st.info(snapshot.get("error") or t("profile_data_unavailable"))
+        return
+
+    render_html_block(
+        f"""
+        <div class="guide-shell" style="margin-top:12px;">
+            <div class="section-header">{t("profile_layer")}</div>
+            <div class="guide-title">{escape(display_name)}</div>
+            <div class="guide-copy">{escape(t("profile_layer_copy"))}</div>
+            <div class="chip-row">{chip_html}</div>
+            <div class="benchmark-grid">
+                {''.join(cards)}
+            </div>
+            <div class="guide-copy" style="margin-top:14px;"><strong>{escape(t("profile_summary"))}</strong> {escape(summary_text)}</div>
+            <div class="guide-copy" style="margin-top:8px;">{escape(t("profile_source"))}</div>
+        </div>
+        """
+    )
+
+    if snapshot.get("error") and cards:
+        st.caption(snapshot["error"])
 
 
 def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selected_count: int = 1):
@@ -13712,6 +14166,7 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
 
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
+    render_asset_profile_section(bundle, selected_count=selected_count)
 
     if is_taiwan_ticker(ticker):
         benchmark = build_taiwan_benchmark_context(ticker, bundle["price_series"], lens_meta=lens_meta)
