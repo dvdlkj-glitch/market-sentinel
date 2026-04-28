@@ -1088,6 +1088,7 @@ SUPPLY_CHAIN_FOCUS_CONFIGS = {
 }
 
 SUPPLY_CHAIN_FOCUS_ORDER = ["low-orbit", "abf", "memory", "packaging-test", "robotics"]
+SUPPLY_CHAIN_PANEL_STATE_VERSION = 1
 SUPPLY_CHAIN_SNAPSHOT_VERSION = 1
 SUPPLY_CHAIN_SNAPSHOT_PATH = Path(__file__).with_name("supply_chain_focus_snapshots.json")
 
@@ -1684,7 +1685,7 @@ def render_low_orbit_supply_chain_section(lens_meta: dict | None = None) -> None
         "low-orbit",
         item_count=len(LOW_ORBIT_SUPPLY_CHAIN_CATALOG),
         helper_base=t("leo_satellite_section_copy"),
-        expanded=True,
+        expanded=False,
         panel_key="low-orbit-supply-chain",
     )
     if not panel_open:
@@ -1988,7 +1989,7 @@ def render_abf_supply_chain_section(lens_meta: dict | None = None) -> None:
         "abf-supply",
         item_count=len(ABF_SUPPLY_CHAIN_CATALOG),
         helper_base=t("abf_supply_section_copy"),
-        expanded=True,
+        expanded=False,
         panel_key="abf-supply-chain",
     )
     if not panel_open:
@@ -2535,6 +2536,10 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
             "top_rows": [],
             "summary_cards": [],
             "last_sync_text": "—",
+            "rising_count": 0,
+            "leader_name": "",
+            "leader_ticker": "",
+            "leader_move": "",
         }
 
     top_rows = enrich_supply_chain_top_rows(
@@ -2577,6 +2582,10 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
         "top_rows": _serialize_supply_chain_rows(top_rows, config["columns"]),
         "summary_cards": summary_cards,
         "last_sync_text": last_sync_text,
+        "rising_count": rising_count,
+        "leader_name": str((top_rows[0] or {}).get("name") or ""),
+        "leader_ticker": str((top_rows[0] or {}).get("ticker") or ""),
+        "leader_move": _supply_chain_snapshot_to_text((top_rows[0] or {}).get("latest_move")),
     }
 
 
@@ -2620,6 +2629,79 @@ def format_supply_chain_snapshot_fetched_at(value: object) -> str:
     if ts is None:
         return "—"
     return ts.strftime("%Y-%m-%d %H:%M")
+
+
+def _coerce_snapshot_int(value: object, default: int = 0) -> int:
+    numeric = _safe_float(value, default=float("nan"))
+    if pd.isna(numeric):
+        return default
+    return int(round(numeric))
+
+
+def _extract_supply_chain_preview(snapshot: dict | None) -> dict:
+    if not isinstance(snapshot, dict):
+        return {}
+
+    fetched_at_text = format_supply_chain_snapshot_fetched_at(snapshot.get("fetched_at"))
+    rising_count = snapshot.get("rising_count")
+    if rising_count is None:
+        summary_cards = snapshot.get("summary_cards", []) or []
+        if len(summary_cards) > 1 and isinstance(summary_cards[1], dict):
+            rising_count = summary_cards[1].get("value")
+    rising_count_value = _coerce_snapshot_int(rising_count, default=0)
+
+    top_rows = _deserialize_supply_chain_rows(snapshot.get("top_rows", []) or [])
+    leader = top_rows[0] if top_rows else {}
+    leader_name = str(leader.get("name") or display_ticker_label(leader.get("ticker", "")) or "—").strip() or "—"
+    leader_move = leader.get("latest_move", pd.NA)
+    if isinstance(leader_move, str):
+        leader_move = _supply_chain_snapshot_from_text(leader_move)
+
+    return {
+        "fetched_at_text": fetched_at_text,
+        "rising_count": rising_count_value,
+        "leader_name": leader_name,
+        "leader_move": leader_move,
+        "last_sync_text": str(snapshot.get("last_sync_text") or "—"),
+    }
+
+
+def build_supply_chain_panel_preview_html(snapshot: dict | None) -> str:
+    lang_zh = get_language() == "zh_TW"
+    preview = _extract_supply_chain_preview(snapshot)
+    if not preview:
+        items = [
+            ("快照" if lang_zh else "Snapshot", "尚未建立" if lang_zh else "Not built", "flat"),
+            ("提示" if lang_zh else "Hint", "首次展開或按刷新後建立" if lang_zh else "Builds after first open or refresh", "flat"),
+        ]
+    else:
+        leader_move = preview.get("leader_move", pd.NA)
+        if pd.notna(leader_move):
+            leader_tone = "up" if float(leader_move) > 0 else "down" if float(leader_move) < 0 else "flat"
+            leader_value = f"{preview['leader_name']} {format_percent(leader_move)}"
+        else:
+            leader_tone = "flat"
+            leader_value = preview["leader_name"]
+
+        rising_count_value = int(preview.get("rising_count", 0) or 0)
+        rising_tone = "up" if rising_count_value > 0 else "flat"
+        items = [
+            ("快照" if lang_zh else "Snapshot", str(preview.get("fetched_at_text") or "—"), "flat"),
+            ("上漲家數" if lang_zh else "Risers", str(rising_count_value), rising_tone),
+            ("最強一檔" if lang_zh else "Leader", leader_value, leader_tone),
+        ]
+
+    chips = []
+    for label, value, tone in items:
+        chips.append(
+            f'''
+            <div class="planner-panel-preview-chip tone-{escape(str(tone))}">
+                <div class="planner-panel-preview-label">{escape(str(label))}</div>
+                <div class="planner-panel-preview-value">{escape(str(value))}</div>
+            </div>
+            '''
+        )
+    return f'<div class="planner-panel-preview-row">{"".join(chips)}</div>'
 
 
 def _render_supply_chain_focus_cell_html(column: dict, row: dict, lead_story_fallback: str) -> str:
@@ -2687,7 +2769,7 @@ def render_supply_chain_focus_section(config_key: str, lens_meta: dict | None = 
         config["panel_section"],
         item_count=len(catalog),
         helper_base=config["copy"],
-        expanded=True,
+        expanded=False,
         panel_key=config["panel_key"],
     )
     if not panel_open:
@@ -2791,6 +2873,7 @@ def render_robotics_supply_chain_section(lens_meta: dict | None = None) -> None:
 def render_thematic_supply_chain_sections(lens_meta: dict | None = None) -> None:
     if get_language() != "zh_TW":
         return
+    ensure_supply_chain_panels_default_closed()
     for config_key in SUPPLY_CHAIN_FOCUS_ORDER:
         render_supply_chain_focus_section(config_key, lens_meta=lens_meta)
 
@@ -2807,13 +2890,16 @@ def render_supply_chain_focus_section(config_key: str, lens_meta: dict | None = 
     inject_supply_chain_focus_css()
 
     catalog = config["catalog"]
+    cached_snapshot = peek_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta)
+    collapsed_preview_html = build_supply_chain_panel_preview_html(cached_snapshot)
     panel_open = render_dashboard_section_panel(
         config["title"],
         config["panel_section"],
         item_count=len(catalog),
         helper_base=config["copy"],
-        expanded=True,
+        expanded=False,
         panel_key=config["panel_key"],
+        collapsed_preview_html=collapsed_preview_html,
     )
     if not panel_open:
         return
@@ -2826,7 +2912,6 @@ def render_supply_chain_focus_section(config_key: str, lens_meta: dict | None = 
             use_container_width=True,
         )
 
-    cached_snapshot = peek_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta)
     snapshot_missing = not isinstance(cached_snapshot, dict)
     if refresh_clicked:
         with st.spinner(f"正在更新 {config['title']} 快照…"):
@@ -4644,6 +4729,21 @@ def planner_panel_state_key(section: str, panel_key: str | None = None) -> str:
     return f"planner_panel_open::{section}::{normalized or section}"
 
 
+def ensure_supply_chain_panels_default_closed() -> None:
+    version_key = "supply_chain_panel_state_version"
+    if st.session_state.get(version_key) == SUPPLY_CHAIN_PANEL_STATE_VERSION:
+        return
+
+    for config_key in SUPPLY_CHAIN_FOCUS_ORDER:
+        config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+        if not config:
+            continue
+        state_key = planner_panel_state_key(config["panel_section"], config["panel_key"])
+        st.session_state[state_key] = False
+
+    st.session_state[version_key] = SUPPLY_CHAIN_PANEL_STATE_VERSION
+
+
 def planner_panel_state_text(is_open: bool) -> str:
     if get_language() == "zh_TW":
         return "目前顯示中" if is_open else "目前已隱藏"
@@ -4658,6 +4758,7 @@ def render_dashboard_section_panel(
     helper_base: str = "",
     expanded: bool = False,
     panel_key: str | None = None,
+    collapsed_preview_html: str = "",
 ) -> bool:
     state_key = planner_panel_state_key(section, panel_key)
     if state_key not in st.session_state:
@@ -4677,6 +4778,7 @@ def render_dashboard_section_panel(
                     <div class="planner-panel-heading">{escape(label)}</div>
                     <div class="planner-panel-state-pill">{escape(planner_panel_state_text(bool(is_open)))}</div>
                 </div>
+                {collapsed_preview_html if (collapsed_preview_html and not is_open) else ""}
             </div>
             """
         )
@@ -9069,6 +9171,52 @@ def inject_css():
             white-space: nowrap;
         }
 
+        .planner-panel-preview-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .planner-panel-preview-chip {
+            min-width: 0;
+            flex: 1 1 180px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.07);
+            background: linear-gradient(135deg, rgba(11, 24, 43, 0.62) 0%, rgba(255,255,255,0.03) 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+
+        .planner-panel-preview-chip.tone-up {
+            border-color: rgba(52, 211, 153, 0.18);
+            background: linear-gradient(135deg, rgba(17, 55, 45, 0.56) 0%, rgba(255,255,255,0.03) 100%);
+        }
+
+        .planner-panel-preview-chip.tone-down {
+            border-color: rgba(248, 113, 113, 0.18);
+            background: linear-gradient(135deg, rgba(60, 26, 32, 0.56) 0%, rgba(255,255,255,0.03) 100%);
+        }
+
+        .planner-panel-preview-label {
+            color: rgba(184, 223, 255, 0.74);
+            font-size: 10.5px;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .planner-panel-preview-value {
+            color: #f8f1e5;
+            font-size: 14px;
+            font-weight: 850;
+            line-height: 1.4;
+            margin-top: 6px;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
         .planner-stack-spacer {
             height: 18px;
         }
@@ -12335,103 +12483,599 @@ def render_opportunity_radar(bundles: list[dict], lens_meta: dict | None = None)
 
 
 
-def render_comparison_overview_cards(bundles: list[dict], lens_meta: dict | None = None):
-    if not bundles:
-        return
+def inject_comparison_digest_css():
+    st.markdown(
+        """
+        <style>
+        .compare-digest-shell, .compare-strip-shell, .compare-focus-shell {
+            position: relative;
+            overflow: hidden;
+            margin-top: 18px;
+            padding: 18px;
+            border-radius: 24px;
+            border: 1px solid rgba(82, 195, 255, 0.12);
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.10) 0%, rgba(56, 189, 248, 0) 34%),
+                linear-gradient(180deg, rgba(9, 16, 31, 0.98) 0%, rgba(5, 10, 22, 0.99) 100%);
+            box-shadow:
+                0 24px 48px rgba(3, 9, 24, 0.32),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        }
+        .compare-digest-head, .compare-strip-head, .compare-focus-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        .compare-digest-title, .compare-strip-title, .compare-focus-title {
+            font-size: 24px;
+            font-weight: 900;
+            line-height: 1.08;
+            color: #f8fbff;
+            margin-top: 4px;
+        }
+        .compare-digest-copy, .compare-strip-copy, .compare-focus-copy {
+            margin-top: 8px;
+            font-size: 13px;
+            line-height: 1.68;
+            color: rgba(226, 236, 255, 0.74);
+            max-width: 900px;
+        }
+        .compare-digest-count, .compare-focus-price {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(82, 195, 255, 0.18);
+            background: rgba(9, 18, 37, 0.72);
+            color: #e8f8ff;
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .compare-focus-price {
+            font-size: 18px;
+            letter-spacing: normal;
+            text-transform: none;
+            border-color: rgba(255, 201, 107, 0.16);
+            background: rgba(17, 25, 43, 0.84);
+        }
+        .compare-digest-grid {
+            display: grid;
+            grid-template-columns: repeat(12, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 16px;
+        }
+        .compare-digest-card {
+            grid-column: span 3;
+            position: relative;
+            overflow: hidden;
+            min-height: 100%;
+            padding: 16px;
+            border-radius: 22px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background:
+                radial-gradient(circle at top left, rgba(255, 203, 112, 0.08) 0%, rgba(255, 203, 112, 0) 28%),
+                linear-gradient(180deg, rgba(16, 24, 44, 0.94) 0%, rgba(9, 14, 29, 0.98) 100%);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.20);
+        }
+        .compare-digest-card.is-wide {
+            grid-column: span 6;
+        }
+        .compare-digest-card.is-spotlight {
+            border-color: rgba(82, 195, 255, 0.22);
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0) 36%),
+                linear-gradient(180deg, rgba(16, 29, 52, 0.98) 0%, rgba(9, 15, 30, 0.99) 100%);
+            box-shadow:
+                0 22px 44px rgba(5, 20, 46, 0.34),
+                0 0 0 1px rgba(56, 189, 248, 0.10);
+        }
+        .compare-digest-rank {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            color: rgba(245, 249, 255, 0.82);
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .compare-digest-chip-row, .compare-focus-band {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .compare-digest-soft-pill, .compare-focus-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 7px 11px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            color: rgba(235, 243, 255, 0.84);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+        }
+        .compare-digest-name {
+            margin-top: 14px;
+            font-size: 22px;
+            font-weight: 900;
+            line-height: 1.08;
+            color: #ffffff;
+        }
+        .compare-digest-card.is-wide .compare-digest-name {
+            font-size: 28px;
+        }
+        .compare-digest-price {
+            margin-top: 8px;
+            font-size: 22px;
+            font-weight: 900;
+            color: #fff5de;
+        }
+        .compare-digest-thesis {
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.68;
+            color: rgba(231, 239, 255, 0.78);
+            min-height: 44px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .compare-digest-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .compare-digest-metric {
+            padding: 10px 10px 9px 10px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.035);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .compare-digest-metric-label, .compare-strip-label, .compare-focus-label, .compare-focus-next-label {
+            font-size: 10.5px;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgba(208, 223, 255, 0.58);
+        }
+        .compare-digest-metric-value, .compare-strip-value, .compare-focus-value {
+            margin-top: 5px;
+            font-size: 18px;
+            font-weight: 900;
+            color: #ffffff;
+            line-height: 1.08;
+        }
+        .compare-digest-footer {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 14px;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            color: rgba(226, 236, 255, 0.72);
+            font-size: 12px;
+            line-height: 1.55;
+        }
+        .compare-strip-head {
+            margin-bottom: 10px;
+        }
+        .compare-strip-rows {
+            display: grid;
+            gap: 12px;
+            margin-top: 14px;
+        }
+        .compare-strip-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1.45fr) minmax(128px, 0.82fr) repeat(3, minmax(96px, 0.66fr)) minmax(0, 1.5fr);
+            gap: 12px;
+            align-items: stretch;
+            padding: 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            background: rgba(255, 255, 255, 0.022);
+            transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+        }
+        .compare-strip-row:hover {
+            border-color: rgba(82, 195, 255, 0.18);
+            transform: translateY(-1px);
+            box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
+        }
+        .compare-strip-row.is-active {
+            border-color: rgba(82, 195, 255, 0.30);
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.09) 0%, rgba(56, 189, 248, 0) 30%),
+                rgba(255, 255, 255, 0.032);
+            box-shadow: 0 18px 38px rgba(6, 26, 52, 0.28);
+        }
+        .compare-strip-main {
+            min-width: 0;
+        }
+        .compare-strip-ticker {
+            font-size: 16px;
+            font-weight: 900;
+            line-height: 1.15;
+            color: #ffffff;
+        }
+        .compare-strip-trend, .compare-strip-sub, .compare-focus-sub, .compare-focus-next-copy {
+            margin-top: 6px;
+            font-size: 12.5px;
+            line-height: 1.62;
+            color: rgba(226, 236, 255, 0.74);
+        }
+        .compare-strip-signal {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            justify-content: center;
+        }
+        .compare-strip-stat, .compare-focus-card {
+            padding: 12px 12px 11px 12px;
+            border-radius: 18px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(255, 255, 255, 0.028);
+        }
+        .compare-strip-read {
+            font-size: 13px;
+            line-height: 1.68;
+            color: rgba(236, 243, 255, 0.80);
+            display: flex;
+            align-items: center;
+            min-width: 0;
+        }
+        .compare-focus-shell {
+            margin-top: 16px;
+        }
+        .compare-focus-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+        .compare-focus-value {
+            font-size: 20px;
+            color: #fff9ef;
+        }
+        .compare-focus-card.is-risk .compare-focus-value {
+            color: #ffd9d0;
+        }
+        .compare-focus-next {
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .compare-digest-note {
+            margin-top: 10px;
+            font-size: 12.5px;
+            line-height: 1.6;
+            color: rgba(226, 236, 255, 0.70);
+        }
+        @media (max-width: 1180px) {
+            .compare-digest-card,
+            .compare-digest-card.is-wide,
+            .compare-digest-card.is-spotlight {
+                grid-column: span 6;
+            }
+            .compare-strip-row {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .compare-strip-read {
+                grid-column: 1 / -1;
+            }
+        }
+        @media (max-width: 820px) {
+            .compare-digest-grid {
+                grid-template-columns: 1fr;
+            }
+            .compare-digest-card,
+            .compare-digest-card.is-wide,
+            .compare-digest-card.is-spotlight {
+                grid-column: span 1;
+            }
+            .compare-digest-metrics,
+            .compare-focus-grid,
+            .compare-strip-row {
+                grid-template-columns: 1fr;
+            }
+            .compare-digest-title, .compare-strip-title, .compare-focus-title {
+                font-size: 22px;
+            }
+            .compare-focus-price {
+                width: 100%;
+                justify-content: flex-start;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if len(bundles) <= 4:
-        card_cols = st.columns(len(bundles))
-        for col, bundle in zip(card_cols, bundles):
-            analysis = bundle["analysis"]
-            intraday = bundle["intraday"]
-            signal = analysis["signal"]
-            signal_class_name = signal_css_class(signal)
-            pulse = analysis["news_pulse"]["label"]
-            with col:
-                st.markdown(
-                    f"""
-                    <div class="compare-card">
-                        <div class="compare-card-kicker">{t("side_by_side_profile")}</div>
-                        <div style="margin-top:10px;"><span class="crypto-signal {signal_class_name}">{escape(tr_signal(signal))}</span></div>
-                        <div class="compare-card-title">{escape(display_ticker_label(bundle['ticker']))}</div>
-                        <div class="compare-card-price">{format_price(analysis['last_price'])}</div>
-                        <div class="compare-card-grid">
-                            <div class="compare-stat">
-                                <div class="compare-stat-label">{t("trend_1y")}</div>
-                                <div class="compare-stat-value">{format_percent(analysis['one_year_return'])}</div>
-                            </div>
-                            <div class="compare-stat">
-                                <div class="compare-stat-label">{t("confidence")}</div>
-                                <div class="compare-stat-value">{escape(tr_confidence(analysis["confidence"]))}</div>
-                            </div>
-                            <div class="compare-stat">
-                                <div class="compare-stat-label">{t("lens_score")}</div>
-                                <div class="compare-stat-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
-                            </div>
-                            <div class="compare-stat">
-                                <div class="compare-stat-label">RSI 14</div>
-                                <div class="compare-stat-value">{"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
-                            </div>
-                        </div>
-                        <div class="compare-card-meta">
-                            {t('intraday')} <strong>{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</strong> · {t('news_pulse')} <strong>{escape(tr_news_label(pulse))}</strong>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        return
 
-    sorted_bundles = sorted(
-        bundles,
-        key=lambda bundle: (
-            compute_lens_winner_fields(bundle, lens_meta)["lens_score"],
-            bundle["analysis"]["one_year_return"] if pd.notna(bundle["analysis"]["one_year_return"]) else -10**9,
+def _comparison_signal_priority(signal: str) -> int:
+    return {"BUY": 3, "HOLD": 2, "SELL": 1}.get(str(signal or "").upper(), 0)
+
+
+def _comparison_sort_number(value: object, default: float = -10**9) -> float:
+    number = coerce_float(value)
+    return default if pd.isna(number) else float(number)
+
+
+def _comparison_rsi_context(rsi14: object) -> str:
+    value = coerce_float(rsi14)
+    if pd.isna(value):
+        return ""
+    if get_language() == "zh_TW":
+        if value >= 75:
+            return "RSI 偏熱"
+        if value >= 62:
+            return "RSI 偏強"
+        if value <= 35:
+            return "RSI 偏弱"
+        if value <= 42:
+            return "RSI 偏軟"
+        return ""
+    if value >= 75:
+        return "RSI stretched"
+    if value >= 62:
+        return "RSI strong"
+    if value <= 35:
+        return "RSI washed out"
+    if value <= 42:
+        return "RSI soft"
+    return ""
+
+
+def _comparison_digest_thesis(item: dict) -> str:
+    brief = item["brief"]
+    dominant = tr_term(brief.get("dominant", "Macro"))
+    setup = tr_setup(brief.get("setup", "Balanced"))
+    news_label = tr_news_label(brief.get("news_label", "News tilt: mixed"))
+    rsi_note = _comparison_rsi_context(item["analysis"].get("rsi14", pd.NA))
+    parts = [dominant, setup, news_label]
+    if rsi_note:
+        parts.append(rsi_note)
+    if get_language() == "zh_TW":
+        parts[0] = f"{parts[0]}主導"
+    return " · ".join(str(part) for part in parts if str(part).strip())
+
+
+def build_comparison_digest_items(bundles: list[dict], lens_meta: dict | None = None) -> list[dict]:
+    digest_items: list[dict] = []
+    for bundle in bundles:
+        analysis = bundle["analysis"]
+        intraday = bundle["intraday"]
+        brief = build_decision_brief(analysis, intraday, bundle.get("news_items", []))
+        lens_fields = compute_lens_winner_fields(bundle, lens_meta)
+        item = {
+            "bundle": bundle,
+            "ticker": bundle["ticker"],
+            "analysis": analysis,
+            "intraday": intraday,
+            "brief": brief,
+            "signal": analysis.get("signal", "HOLD"),
+            "signal_class": signal_css_class(analysis.get("signal", "HOLD")),
+            "lens_score": lens_fields["lens_score"],
+            "news_score": float(analysis.get("news_pulse", {}).get("score", 0.0) or 0.0),
+            "one_year_return": analysis.get("one_year_return", pd.NA),
+            "intraday_change": intraday.get("change_pct", pd.NA),
+            "intraday_available": bool(intraday.get("available")),
+        }
+        item["thesis"] = _comparison_digest_thesis(item)
+        digest_items.append(item)
+
+    digest_items.sort(
+        key=lambda item: (
+            _comparison_signal_priority(item["signal"]),
+            item["lens_score"],
+            item["news_score"],
+            _comparison_sort_number(item["intraday_change"]),
+            _comparison_sort_number(item["one_year_return"]),
         ),
         reverse=True,
     )
+    for rank, item in enumerate(digest_items, start=1):
+        item["rank"] = rank
+    return digest_items
 
-    card_html_parts: list[str] = []
-    for rank, bundle in enumerate(sorted_bundles, start=1):
-        analysis = bundle["analysis"]
-        intraday = bundle["intraday"]
-        pulse = tr_news_label(analysis["news_pulse"]["label"])
-        signal_class_name = signal_css_class(analysis["signal"])
-        card_html_parts.append(
+
+def render_comparison_overview_cards(digest_items: list[dict]):
+    if not digest_items:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    top_items = digest_items[:4]
+    total_names = len(digest_items)
+    cards_html: list[str] = []
+    for idx, item in enumerate(top_items):
+        analysis = item["analysis"]
+        intraday_text = format_percent(item["intraday_change"]) if item["intraday_available"] else "N/A"
+        rsi14 = analysis.get("rsi14", pd.NA)
+        rsi_text = "N/A" if pd.isna(rsi14) else f"{rsi14:.2f}"
+        card_classes = "compare-digest-card"
+        if len(top_items) == 2 or (len(top_items) == 3 and idx == 0):
+            card_classes += " is-wide"
+        if idx == 0:
+            card_classes += " is-spotlight"
+        cards_html.append(
             "".join(
                 [
-                    '<div class="compare-mosaic-card">',
-                    f'<div class="compare-mosaic-rank">#{rank}</div>',
-                    f'<div style="margin-top:12px;"><span class="crypto-signal {signal_class_name}">{escape(tr_signal(analysis["signal"]))}</span></div>',
-                    f'<div class="compare-mosaic-title">{escape(display_ticker_label(bundle["ticker"]))}</div>',
-                    f'<div class="compare-mosaic-price">{format_price(analysis["last_price"])}</div>',
-                    '<div class="compare-mosaic-grid">',
-                    f'<div><div class="compare-mosaic-stat-label">{t("trend_1y")}</div><div class="compare-mosaic-stat-value">{format_percent(analysis["one_year_return"])}</div></div>',
-                    f'<div><div class="compare-mosaic-stat-label">{t("confidence")}</div><div class="compare-mosaic-stat-value">{escape(tr_confidence(analysis["confidence"]))}</div></div>',
-                    f'<div><div class="compare-mosaic-stat-label">{t("lens_score")}</div><div class="compare-mosaic-stat-value">{compute_lens_winner_fields(bundle, lens_meta)["lens_score"]:+d}</div></div>',
-                    f'<div><div class="compare-mosaic-stat-label">RSI 14</div><div class="compare-mosaic-stat-value">{"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis["rsi14"]:.2f}"}</div></div>',
+                    f'<div class="{card_classes}">',
+                    f'<div class="compare-digest-rank">{"Top 1" if idx == 0 else f"#{item["rank"]:02d}"}</div>',
+                    '<div class="compare-digest-chip-row">',
+                    f'<span class="crypto-signal {item["signal_class"]}">{escape(tr_signal(item["signal"]))}</span>',
+                    f'<span class="compare-digest-soft-pill">{escape(tr_confidence(item["brief"]["confidence"]))}</span>',
                     '</div>',
-                    f'<div class="compare-mosaic-meta">{t("intraday")} <strong>{format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A"}</strong> · {t("news_pulse")} <strong>{escape(pulse)}</strong></div>',
+                    f'<div class="compare-digest-name">{escape(display_ticker_label(item["ticker"]))}</div>',
+                    f'<div class="compare-digest-price">{format_price(analysis.get("last_price", pd.NA))}</div>',
+                    f'<div class="compare-digest-thesis">{escape(item["thesis"])}</div>',
+                    '<div class="compare-digest-metrics">',
+                    f'<div class="compare-digest-metric"><div class="compare-digest-metric-label">{t("lens_score")}</div><div class="compare-digest-metric-value">{item["lens_score"]:+d}</div></div>',
+                    f'<div class="compare-digest-metric"><div class="compare-digest-metric-label">{t("trend_1y")}</div><div class="compare-digest-metric-value">{format_percent(item["one_year_return"])}</div></div>',
+                    f'<div class="compare-digest-metric"><div class="compare-digest-metric-label">RSI 14</div><div class="compare-digest-metric-value">{rsi_text}</div></div>',
+                    '</div>',
+                    '<div class="compare-digest-footer">',
+                    f'<span>{t("intraday")} <strong>{intraday_text}</strong></span>',
+                    f'<span>{t("news_backing")} <strong>{escape(tr_news_label(item["brief"]["news_label"]))}</strong></span>',
+                    '</div>',
                     '</div>',
                 ]
             )
         )
 
-    layout_note = (
-        "已選超過 4 檔，自動切換為網格化比較，避免卡片互相擠壓。"
-        if get_language() == "zh_TW"
-        else "More than four names selected, so the comparison switches to a ranked mosaic layout to preserve readability."
+    digest_note = (
+        f"已選 {total_names} 檔，這裡先濃縮成最值得先看的 {len(top_items)} 檔；其餘標的放在下方的 Compare strip。"
+        if lang_zh
+        else f"{total_names} names are selected, so this layer compresses the view into the top {len(top_items)} names before the full compare strip below."
     )
     render_html_block(
         "".join(
             [
-                '<div class="compare-mosaic">',
-                "".join(card_html_parts),
+                '<div class="compare-digest-shell">',
+                '<div class="compare-digest-head">',
+                '<div>',
+                f'<div class="section-header" style="margin:0; color:#77deff;">{"Top Picks" if lang_zh else "Top picks"}</div>',
+                f'<div class="compare-digest-title">{"先看最值得研究的幾檔" if lang_zh else "Start with the names worth researching first"}</div>',
+                f'<div class="compare-digest-copy">{"先看主訊號與一句原因，再往下切到完整比較與單檔深看，畫面會更乾淨。" if lang_zh else "Read the main stance and one-line reason first, then move into the strip and single-name focus view."}</div>',
                 '</div>',
-                f'<div class="compare-layout-note">{escape(layout_note)}</div>',
+                f'<div class="compare-digest-count">{len(top_items)} / {total_names}</div>',
+                '</div>',
+                f'<div class="compare-digest-grid">{"".join(cards_html)}</div>',
+                f'<div class="compare-digest-note">{escape(digest_note)}</div>',
+                '</div>',
             ]
         )
     )
+
+
+def render_comparison_focus_detail(digest_items: list[dict]):
+    if not digest_items:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    focus_options = [item["ticker"] for item in digest_items]
+    helper_text = (
+        "先用這排切換想深看的標的；下方 Compare strip 會同步高亮目前選中的股票。"
+        if lang_zh
+        else "Use these pills to choose the name you want to inspect next. The compare strip highlights the same selection."
+    )
+    selected_ticker = render_lightweight_option_selector(
+        focus_options,
+        "comparison_focus_ticker",
+        format_func=display_ticker_label,
+        helper_text=helper_text,
+        widget_label="comparison_focus_ticker",
+    )
+    selected_item = next((item for item in digest_items if item["ticker"] == selected_ticker), digest_items[0])
+
+    row_html_parts: list[str] = []
+    for item in digest_items:
+        analysis = item["analysis"]
+        active_class = " is-active" if item["ticker"] == selected_item["ticker"] else ""
+        row_html_parts.append(
+            "".join(
+                [
+                    f'<div class="compare-strip-row{active_class}">',
+                    '<div class="compare-strip-main">',
+                    f'<div class="compare-strip-ticker">{escape(display_ticker_label(item["ticker"]))}</div>',
+                    f'<div class="compare-strip-trend">{escape(tr_term(analysis.get("trend", "Mixed trend")))} · {escape(tr_confidence(item["brief"]["confidence"]))}</div>',
+                    '</div>',
+                    '<div class="compare-strip-signal">',
+                    f'<span class="compare-table-chip {item["signal_class"]}">{escape(tr_signal(item["signal"]))}</span>',
+                    f'<div class="compare-strip-sub">{escape(tr_setup(item["brief"]["setup"]))}</div>',
+                    '</div>',
+                    f'<div class="compare-strip-stat"><div class="compare-strip-label">{t("lens_score")}</div><div class="compare-strip-value">{item["lens_score"]:+d}</div></div>',
+                    f'<div class="compare-strip-stat"><div class="compare-strip-label">{t("intraday")}</div><div class="compare-strip-value">{format_percent(item["intraday_change"]) if item["intraday_available"] else "N/A"}</div></div>',
+                    f'<div class="compare-strip-stat"><div class="compare-strip-label">{t("news_backing")}</div><div class="compare-strip-value">{escape(tr_news_label(item["brief"]["news_label"]))}</div></div>',
+                    f'<div class="compare-strip-read">{escape(item["thesis"])}</div>',
+                    '</div>',
+                ]
+            )
+        )
+
+    render_html_block(
+        "".join(
+            [
+                '<div class="compare-strip-shell">',
+                '<div class="compare-strip-head">',
+                '<div>',
+                f'<div class="section-header" style="margin:0; color:#77deff;">{"Compare Strip" if lang_zh else "Compare strip"}</div>',
+                f'<div class="compare-strip-title">{"快速掃描整組比較" if lang_zh else "Scan the full line-up quickly"}</div>',
+                f'<div class="compare-strip-copy">{"這裡只保留最該先看的欄位：訊號、鏡頭分數、盤中節奏、新聞傾向，以及一句話摘要。" if lang_zh else "This strip keeps only the fields that matter first: stance, lens score, intraday pressure, news tilt, and a one-line thesis."}</div>',
+                '</div>',
+                '</div>',
+                f'<div class="compare-strip-rows">{"".join(row_html_parts)}</div>',
+                '</div>',
+            ]
+        )
+    )
+
+    focus_analysis = selected_item["analysis"]
+    focus_brief = selected_item["brief"]
+    focus_intraday_text = (
+        format_percent(selected_item["intraday_change"]) if selected_item["intraday_available"] else "N/A"
+    )
+    focus_html = "".join(
+        [
+            '<div class="compare-focus-shell">',
+            '<div class="compare-focus-head">',
+            '<div>',
+            f'<div class="section-header" style="margin:0; color:#f5ead8;">{t("decision_brief")}</div>',
+            f'<div class="compare-focus-title">{escape(display_ticker_label(selected_item["ticker"]))} · {"單檔深看" if lang_zh else "focus detail"}</div>',
+            f'<div class="compare-focus-copy">{escape(selected_item["thesis"])}</div>',
+            '</div>',
+            f'<div class="compare-focus-price">{format_price(focus_analysis.get("last_price", pd.NA))}</div>',
+            '</div>',
+            '<div class="compare-focus-band">',
+            f'<span class="crypto-signal {selected_item["signal_class"]}">{escape(tr_signal(selected_item["signal"]))}</span>',
+            f'<span class="compare-focus-pill">{t("lens_score")} {selected_item["lens_score"]:+d}</span>',
+            f'<span class="compare-focus-pill">{t("intraday")} {focus_intraday_text}</span>',
+            f'<span class="compare-focus-pill">{t("news_backing")} {escape(tr_news_label(focus_brief["news_label"]))}</span>',
+            '</div>',
+            '<div class="compare-focus-grid">',
+            '<div class="compare-focus-card">',
+            f'<div class="compare-focus-label">{t("current_stance")}</div>',
+            f'<div class="compare-focus-value">{escape(tr_signal(focus_brief["stance"]))}</div>',
+            f'<div class="compare-focus-sub">{escape(tr_confidence(focus_brief["confidence"]))} · {t("intraday")} {focus_intraday_text}</div>',
+            '</div>',
+            '<div class="compare-focus-card">',
+            f'<div class="compare-focus-label">{t("dominant_catalyst")}</div>',
+            f'<div class="compare-focus-value">{escape(tr_term(focus_brief["dominant"]))}</div>',
+            f'<div class="compare-focus-sub">{escape(tr_setup(focus_brief["setup"]))} · {escape(tr_news_label(focus_brief["news_label"]))}</div>',
+            '</div>',
+            '<div class="compare-focus-card">',
+            f'<div class="compare-focus-label">{t("best_execution_style")}</div>',
+            f'<div class="compare-focus-value">{escape(tr_setup(focus_brief["setup"]))}</div>',
+            f'<div class="compare-focus-sub">{escape(tr_term(focus_brief["execution"]))}</div>',
+            '</div>',
+            '<div class="compare-focus-card is-risk">',
+            f'<div class="compare-focus-label">{t("main_risk_flag")}</div>',
+            f'<div class="compare-focus-value">{escape(tr_term(focus_analysis.get("rsi_status", focus_brief["risk_flag"])))}</div>',
+            f'<div class="compare-focus-sub">{escape(tr_term(focus_brief["risk_flag"]))}</div>',
+            '</div>',
+            '</div>',
+            '<div class="compare-focus-next">',
+            f'<div class="compare-focus-next-label">{"下一步" if lang_zh else "Next step"}</div>',
+            f'<div class="compare-focus-next-copy">{escape(tr_term(focus_brief["action"]))}</div>',
+            '</div>',
+            '</div>',
+        ]
+    )
+    render_html_block(focus_html)
 
 
 
@@ -14218,6 +14862,7 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
         if len(active_etf_bundles) == 2:
             render_active_etf_pair_comparison(active_etf_bundles[0]["ticker"], active_etf_bundles[1]["ticker"])
 
+        inject_comparison_digest_css()
         render_winner_card(bundles, lens_meta=lens_meta)
         render_opportunity_radar(bundles, lens_meta=lens_meta)
 
@@ -14260,67 +14905,9 @@ def render_comparison_section(daily_data: pd.DataFrame, intraday_data: pd.DataFr
             unsafe_allow_html=True,
         )
 
-        render_comparison_overview_cards(bundles, lens_meta=lens_meta)
-
-        row_html_parts: list[str] = []
-
-        for bundle in bundles:
-            analysis = bundle["analysis"]
-            intraday = bundle["intraday"]
-            signal = analysis["signal"]
-            signal_class_name = signal_css_class(signal)
-            row_html_parts.append(textwrap.dedent(f"""<div class="compare-table-row">
-        <div class="compare-table-cell">
-            <div class="compare-table-ticker">{escape(display_ticker_label(bundle['ticker']))}</div>
-            <div class="compare-table-sub">{escape(tr_term(analysis["trend"]))}</div>
-        </div>
-        <div class="compare-table-cell">
-            <div class="compare-table-sub">{t("last_price")}</div>
-            <div class="compare-table-value">{format_price(analysis['last_price'])}</div>
-        </div>
-        <div class="compare-table-cell">
-            <div class="compare-table-sub">{t("trend_1y")}</div>
-            <div class="compare-table-value">{format_percent(analysis['one_year_return'])}</div>
-        </div>
-        <div class="compare-table-cell">
-            <div class="compare-table-sub">{t("signal")}</div>
-            <div><span class="compare-table-chip {signal_class_name}">{escape(tr_signal(signal))}</span></div>
-            <div class="compare-table-note">{escape(tr_confidence(analysis["confidence"]))}</div>
-        </div>
-        <div class="compare-table-cell">
-            <div class="compare-table-sub">{t("lens_score")}</div>
-            <div class="compare-table-value">{compute_lens_winner_fields(bundle, lens_meta)['lens_score']:+d}</div>
-            <div class="compare-table-note">RSI {"N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}"}</div>
-        </div>
-        <div class="compare-table-cell">
-            <div class="compare-table-sub">{t("intraday")}</div>
-            <div class="compare-table-value">{format_percent(intraday['change_pct']) if intraday.get('available') else 'N/A'}</div>
-            <div class="compare-table-note">{escape(analysis['rsi_status'])}</div>
-        </div>
-        <div class="compare-table-cell">
-            <div class="compare-table-sub">{t("news_backing")}</div>
-            <div class="compare-table-value">{escape(tr_news_label(analysis['news_pulse']['label']))}</div>
-            <div class="compare-table-note">{analysis['news_pulse']['score']:+.1f}</div>
-        </div>
-        </div>""").strip())
-
-        table_html = f"""
-        <div class="compare-table-shell">
-            <div class="compare-table-head">
-                <div>{t("ticker")}</div>
-                <div>{t("last_price")}</div>
-                <div>{t("trend_1y")}</div>
-                <div>{t("signal")}</div>
-                <div>{t("lens_score")}</div>
-                <div>{t("intraday")}</div>
-                <div>{t("news_backing")}</div>
-            </div>
-            <div class="compare-table-body">
-                {''.join(row_html_parts)}
-            </div>
-        </div>
-        """
-        render_html_block(table_html)
+        digest_items = build_comparison_digest_items(bundles, lens_meta=lens_meta)
+        render_comparison_overview_cards(digest_items)
+        render_comparison_focus_detail(digest_items)
 
 def render_target_watch_section(ticker: str, context: dict):
     if not context:
