@@ -18401,7 +18401,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         )
         return
 
-    timestamp_text = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
+    timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
     update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
 
     chips = [
@@ -18552,7 +18552,7 @@ def render_active_etf_lab_dashboard(
                 bundles_cache = [bundle for bundle in bundles_cache if bundle is not None]
         return bundles_cache
 
-    timestamp_text = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
+    timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
     chips = [
         _tracker_status_chip(t("active_etf_dashboard_kicker"), "info"),
         _tracker_status_chip((f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
