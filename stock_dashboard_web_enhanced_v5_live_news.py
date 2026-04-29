@@ -18651,7 +18651,7 @@ def _active_etf_holdings_map(items: list[dict], max_items: int = 20) -> dict[str
     return mapped
 
 
-def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> None:
+def render_active_etf_pair_comparison_legacy(left_ticker: str, right_ticker: str) -> None:
     lang_zh = get_language() == "zh_TW"
     inject_active_etf_tracker_css()
 
@@ -25038,7 +25038,7 @@ def _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapsh
     }
 
 
-def _build_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str) -> dict:
+def _build_active_etf_pair_compare_snapshot_legacy(left_ticker: str, right_ticker: str) -> dict:
     snapshot = None if force_refresh else peek_active_etf_pair_snapshot(left_ticker, right_ticker)
     if snapshot is None:
         snapshot = get_active_etf_pair_compare_snapshot(left_ticker, right_ticker, force_refresh=force_refresh)
@@ -25265,7 +25265,7 @@ def _build_active_etf_pair_compare_snapshot_safe(
     }
 
 
-def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *, force_refresh: bool = False) -> dict:
+def get_active_etf_pair_compare_snapshot_legacy(left_ticker: str, right_ticker: str, *, force_refresh: bool = False) -> dict:
     if not force_refresh:
         ready_snapshot = peek_active_etf_pair_snapshot(left_ticker, right_ticker)
         if _active_etf_lab_snapshot_ready(ready_snapshot):
@@ -25289,7 +25289,7 @@ def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *,
     return snapshot
 
 
-def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force_refresh: bool = False) -> None:
+def render_active_etf_pair_comparison_legacy_v2(left_ticker: str, right_ticker: str, force_refresh: bool = False) -> None:
     """Render ETF A/B holdings comparison with overlap, strategy, news, and foreign-flow context."""
     lang_zh = get_language() == "zh_TW"
     inject_active_etf_tracker_css()
