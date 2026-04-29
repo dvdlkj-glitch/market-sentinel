@@ -3321,7 +3321,12 @@ def _safe_secret(name: str, default: str = "") -> str:
 
 SUPABASE_URL = _safe_secret("SUPABASE_URL", os.environ.get("SUPABASE_URL", "")).rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = _safe_secret("SUPABASE_PUBLISHABLE_KEY", os.environ.get("SUPABASE_PUBLISHABLE_KEY", ""))
+SUPABASE_SERVICE_ROLE_KEY = _safe_secret("SUPABASE_SERVICE_ROLE_KEY", os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""))
 SUPABASE_PROFILE_TABLE = _safe_secret("SUPABASE_PROFILE_TABLE", os.environ.get("SUPABASE_PROFILE_TABLE", "dashboard_profiles")) or "dashboard_profiles"
+SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE = _safe_secret(
+    "SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE",
+    os.environ.get("SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE", "active_etf_snapshots"),
+) or "active_etf_snapshots"
 AUTH_MIN_PASSWORD_LENGTH = 8
 
 ACTIVE_ETF_TRACKER_SNAPSHOT_DB = Path(".dashboard_cache") / "active_etf_tracker.sqlite3"
@@ -3365,6 +3370,104 @@ def _write_active_etf_lab_snapshot_store(store: dict) -> None:
         )
     except Exception:
         pass
+
+
+def _active_etf_snapshot_as_of_date(snapshot: dict | None) -> str:
+    ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
+    if ts is None:
+        return _snapshot_today_string()
+    return ts.date().isoformat()
+
+
+def _supabase_active_etf_read_request(path: str) -> tuple[int, dict | list | str]:
+    if _supabase_is_configured():
+        status, payload = _supabase_request("GET", path)
+        if 200 <= status < 300:
+            return status, payload
+    if _supabase_service_is_configured():
+        return _supabase_service_request("GET", path)
+    return 0, {"message": "Supabase is not configured."}
+
+
+def _active_etf_supabase_row_from_snapshot(snapshot: dict) -> dict:
+    return {
+        "ticker": str(snapshot.get("ticker", "")).upper().strip(),
+        "as_of_date": _active_etf_snapshot_as_of_date(snapshot),
+        "fetched_at": str(snapshot.get("fetched_at") or pd.Timestamp.now(tz=TW_TZ).isoformat()),
+        "period": str(snapshot.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+        "interval": str(snapshot.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+        "lens_title": str(snapshot.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+        "status": str(snapshot.get("status", "ready") or "ready"),
+        "snapshot_payload": _active_etf_lab_snapshot_safe(snapshot),
+    }
+
+
+def _active_etf_supabase_snapshot_from_row(row: dict | None) -> dict | None:
+    if not isinstance(row, dict):
+        return None
+    payload = row.get("snapshot_payload", {})
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    snapshot = dict(payload)
+    snapshot.setdefault("ticker", str(row.get("ticker", "") or "").upper().strip())
+    snapshot.setdefault("period", str(row.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD))
+    snapshot.setdefault("interval", str(row.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL))
+    snapshot.setdefault("lens_title", str(row.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS))
+    snapshot.setdefault("status", str(row.get("status", "ready") or "ready"))
+    snapshot.setdefault("fetched_at", str(row.get("fetched_at", "") or ""))
+    return snapshot
+
+
+def _load_supabase_active_etf_snapshot(
+    ticker: str,
+    lens_meta: dict | None = None,
+    *,
+    allow_any_lens: bool = False,
+) -> dict | None:
+    ticker_upper = str(ticker or "").upper().strip()
+    if not ticker_upper:
+        return None
+    select_query = quote_plus("ticker,as_of_date,fetched_at,period,interval,lens_title,status,snapshot_payload")
+    filters = [f"ticker=eq.{quote_plus(ticker_upper)}"]
+    if lens_meta is not None and not allow_any_lens:
+        filters.extend(
+            [
+                f"period=eq.{quote_plus(str((lens_meta or {}).get('period', DEFAULT_PERIOD) or DEFAULT_PERIOD))}",
+                f"interval=eq.{quote_plus(str((lens_meta or {}).get('interval', DEFAULT_INTERVAL) or DEFAULT_INTERVAL))}",
+                f"lens_title=eq.{quote_plus(str((lens_meta or {}).get('title', DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS))}",
+            ]
+        )
+    path = (
+        f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+        f"?select={select_query}&{'&'.join(filters)}&order=as_of_date.desc,fetched_at.desc&limit=1"
+    )
+    status, payload = _supabase_active_etf_read_request(path)
+    if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
+        return None
+    return _active_etf_supabase_snapshot_from_row(payload[0])
+
+
+def _upsert_supabase_active_etf_snapshot(snapshot: dict) -> bool:
+    ticker = str((snapshot or {}).get("ticker", "") or "").upper().strip()
+    if not ticker or not _supabase_service_is_configured():
+        return False
+    row = _active_etf_supabase_row_from_snapshot(snapshot)
+    path = (
+        f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+        f"?on_conflict={quote_plus('ticker,as_of_date,period,interval,lens_title')}"
+    )
+    status, _ = _supabase_service_request(
+        "POST",
+        path,
+        payload=[row],
+        extra_headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+    )
+    return 200 <= status < 300
 
 
 def _active_etf_lab_snapshot_safe(value):
@@ -3497,6 +3600,12 @@ def format_active_etf_snapshot_fetched_at(value: object) -> str:
 
 
 def peek_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = None) -> dict | None:
+    remote_snapshot = _load_supabase_active_etf_snapshot(ticker, lens_meta=lens_meta)
+    if _active_etf_lab_snapshot_ready(remote_snapshot):
+        return remote_snapshot
+    fallback_remote_snapshot = _load_supabase_active_etf_snapshot(ticker, allow_any_lens=True)
+    if _active_etf_lab_snapshot_ready(fallback_remote_snapshot):
+        return fallback_remote_snapshot
     store = _active_etf_lab_snapshot_store()
     snapshot = (store.get("items", {}) or {}).get(_active_etf_workspace_snapshot_key(ticker, lens_meta))
     if not _active_etf_lab_snapshot_ready(snapshot):
@@ -3505,6 +3614,12 @@ def peek_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = Non
 
 
 def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
+    left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
+    right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
+    if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
+        synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
+        if _active_etf_lab_snapshot_ready(synthesized):
+            return synthesized
     store = _active_etf_lab_snapshot_store()
     snapshot = (store.get("items", {}) or {}).get(_active_etf_pair_snapshot_key(left_ticker, right_ticker))
     if not _active_etf_lab_snapshot_ready(snapshot):
@@ -3594,6 +3709,22 @@ def _build_active_etf_workspace_snapshot(
             "status": "missing",
             "bundle": {},
         }
+    holdings_payload = fetch_active_etf_holdings_snapshot(ticker, max_items=40)
+    etf_flow_payload = fetch_twse_etf_institutional_flow(ticker)
+    holdings_items = list((holdings_payload or {}).get("items", []) or [])
+    holdings_map = _active_etf_holdings_compare_map(holdings_items, max_items=40) if holdings_items else {}
+    signal_cache: dict[str, dict] = {}
+    lookthrough_payload = _active_etf_build_lookthrough_snapshot(holdings_map, signal_cache=signal_cache) if holdings_map else {}
+    strategy_profile = _active_etf_strategy_profile(holdings_map) if holdings_map else {}
+    underlying_signals = {}
+    for symbol, signal in dict(signal_cache or {}).items():
+        if not str(symbol).strip():
+            continue
+        underlying_signals[str(symbol).upper().strip()] = {
+            "news_score": _active_etf_lab_snapshot_safe(signal.get("news_score")),
+            "foreign_net": _active_etf_lab_snapshot_safe(signal.get("foreign_net")),
+            "dominant_catalyst": str(signal.get("dominant_catalyst", "Macro") or "Macro"),
+        }
     return {
         "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
         "kind": "workspace",
@@ -3604,7 +3735,33 @@ def _build_active_etf_workspace_snapshot(
         "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
         "status": "ready",
         "bundle": _serialize_active_etf_bundle(bundle),
+        "holdings_payload": _active_etf_lab_snapshot_safe(holdings_payload),
+        "etf_flow_payload": _active_etf_lab_snapshot_safe(etf_flow_payload),
+        "strategy_profile": _active_etf_lab_snapshot_safe(strategy_profile),
+        "lookthrough_payload": _active_etf_clean_lookthrough_snapshot(lookthrough_payload) if lookthrough_payload else {},
+        "underlying_signals": underlying_signals,
     }
+
+
+def _persist_active_etf_workspace_snapshot(snapshot: dict) -> dict:
+    ticker = str((snapshot or {}).get("ticker", "") or "").upper().strip()
+    if not ticker:
+        return snapshot
+    snapshot_key = _active_etf_workspace_snapshot_key(
+        ticker,
+        {
+            "period": str(snapshot.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+            "interval": str(snapshot.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+            "title": str(snapshot.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+        },
+    )
+    store = _active_etf_lab_snapshot_store()
+    items = dict(store.get("items", {}) or {})
+    items[snapshot_key] = snapshot
+    store["items"] = items
+    _write_active_etf_lab_snapshot_store(store)
+    _upsert_supabase_active_etf_snapshot(snapshot)
+    return snapshot
 
 
 def get_active_etf_workspace_bundle_snapshot(
@@ -3619,6 +3776,7 @@ def get_active_etf_workspace_bundle_snapshot(
     store = _active_etf_lab_snapshot_store()
     existing = (store.get("items", {}) or {}).get(snapshot_key)
     if not force_refresh and _active_etf_lab_snapshot_ready(existing):
+        _upsert_supabase_active_etf_snapshot(existing)
         return existing
     if force_refresh:
         _clear_active_etf_lab_refresh_caches()
@@ -3629,11 +3787,7 @@ def get_active_etf_workspace_bundle_snapshot(
         lens_meta=lens_meta,
         force_market_refresh=force_refresh,
     )
-    items = dict(store.get("items", {}) or {})
-    items[snapshot_key] = snapshot
-    store["items"] = items
-    _write_active_etf_lab_snapshot_store(store)
-    return snapshot
+    return _persist_active_etf_workspace_snapshot(snapshot)
 
 
 def load_active_etf_workspace_bundle(
@@ -3655,6 +3809,65 @@ def load_active_etf_workspace_bundle(
         )
     bundle = _deserialize_active_etf_bundle(snapshot.get("bundle"))
     return bundle, snapshot
+
+
+def parse_active_etf_snapshot_tickers(raw_value: str | None = None) -> list[str]:
+    source_value = str(raw_value or os.environ.get("ACTIVE_ETF_SNAPSHOT_TICKERS", "")).strip()
+    if source_value:
+        tokens = re.split(r"[\s,;|]+", source_value)
+        parsed = [normalize_dashboard_ticker(token) for token in tokens if str(token).strip()]
+        return [ticker for ticker in dedupe_keep_order(parsed) if is_taiwan_active_etf(ticker)]
+    return [ticker for ticker in dedupe_keep_order(ACTIVE_ETF_QUICK_PICK_SYMBOLS) if is_taiwan_active_etf(ticker)]
+
+
+def prefetch_active_etf_snapshots_job(
+    tickers: list[str] | None = None,
+    *,
+    lens_meta: dict | None = None,
+    period: str | None = None,
+    interval: str | None = None,
+) -> dict:
+    selected_tickers = [
+        ticker for ticker in dedupe_keep_order(tickers or parse_active_etf_snapshot_tickers())
+        if is_taiwan_active_etf(ticker)
+    ]
+    if not selected_tickers:
+        return {"status": "skipped", "reason": "No active ETF tickers configured.", "tickers": []}
+
+    if lens_meta is None:
+        resolved_period = str(period or DEFAULT_PERIOD or "1y")
+        resolved_interval = str(interval or DEFAULT_INTERVAL or "1d")
+        lens_meta = {
+            "period": resolved_period,
+            "interval": resolved_interval,
+            "title": DEFAULT_TREND_LENS,
+        }
+
+    _clear_active_etf_lab_refresh_caches()
+    daily_data = fetch_daily_data(selected_tickers, str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD), str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL))
+    intraday_data = fetch_intraday_data(selected_tickers)
+
+    built_rows: list[dict] = []
+    for ticker in selected_tickers:
+        snapshot = _build_active_etf_workspace_snapshot(daily_data, intraday_data, ticker, lens_meta=lens_meta, force_market_refresh=False)
+        _persist_active_etf_workspace_snapshot(snapshot)
+        built_rows.append(
+            {
+                "ticker": ticker,
+                "status": str(snapshot.get("status", "missing") or "missing"),
+                "fetched_at": str(snapshot.get("fetched_at", "") or ""),
+            }
+        )
+
+    return {
+        "status": "ok",
+        "tickers": selected_tickers,
+        "rows": built_rows,
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "lens_title": str(lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+        "period": str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+        "interval": str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+    }
 
 
 
@@ -6401,6 +6614,61 @@ def _supabase_request(
         return 0, {"message": f"Supabase connection error: {exc.reason}"}
     except Exception as exc:
         return 0, {"message": f"Supabase request failed: {exc}"}
+
+
+def _supabase_service_is_configured() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)
+
+
+def _supabase_service_headers(*, extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _supabase_service_request(
+    method: str,
+    path: str,
+    *,
+    payload: dict | list | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> tuple[int, dict | list | str]:
+    if not _supabase_service_is_configured():
+        return 0, {"message": "Supabase service role is not configured."}
+    url = f"{SUPABASE_URL}{path}"
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers=_supabase_service_headers(extra=extra_headers),
+        method=method.upper(),
+    )
+    try:
+        raw_bytes, status_code = _read_request_bytes(request, timeout=30)
+        raw = raw_bytes.decode("utf-8")
+        if not raw:
+            return status_code, {}
+        try:
+            return status_code, json.loads(raw)
+        except Exception:
+            return status_code, raw
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = raw or str(exc)
+        return exc.code, payload
+    except URLError as exc:
+        return 0, {"message": f"Supabase connection error: {exc.reason}"}
+    except Exception as exc:
+        return 0, {"message": f"Supabase service request failed: {exc}"}
 
 
 def _auth_response_error(payload: dict | list | str, fallback: str) -> str:
@@ -24583,6 +24851,193 @@ def _active_etf_clean_lookthrough_snapshot(payload: dict) -> dict:
     }
 
 
+def _active_etf_takeaway_lines(
+    left_label: str,
+    right_label: str,
+    left_profile: dict,
+    right_profile: dict,
+    left_lookthrough: dict,
+    right_lookthrough: dict,
+    *,
+    lang_zh: bool,
+) -> list[str]:
+    concentration_gap = float(left_profile.get("top5_share", 0.0) or 0.0) - float(right_profile.get("top5_share", 0.0) or 0.0)
+    news_gap = float(left_lookthrough.get("weighted_news_score", 0.0) or 0.0) - float(right_lookthrough.get("weighted_news_score", 0.0) or 0.0)
+    foreign_gap = float(left_lookthrough.get("foreign_balance_weight", 0.0) or 0.0) - float(right_lookthrough.get("foreign_balance_weight", 0.0) or 0.0)
+
+    takeaway_lines: list[str] = []
+    if abs(concentration_gap) >= 4:
+        leader = left_label if concentration_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} çš„å‰äº”å¤§æŒè‚¡å æ¯”æ›´é«˜ï¼Œç­–ç•¥æ›´é›†ä¸­ï¼Œè¼ƒé©åˆæƒ³æ˜Žç¢ºæŠ¼æ³¨å°‘æ•¸ä¸»è»¸çš„ä½¿ç”¨è€…ã€‚"
+            if lang_zh else
+            f"{leader} runs a more concentrated top-5 basket, which is better if you want a cleaner high-conviction expression."
+        )
+    else:
+        takeaway_lines.append(
+            "å…©æª”å‰äº”å¤§æ¿ƒåº¦æŽ¥è¿‘ï¼ŒçœŸæ­£å·®ç•°æ›´æ‡‰è©²çœ‹å„è‡ªç¨æœ‰æŒè‚¡èˆ‡æ¬Šé‡å·®ã€‚"
+            if lang_zh else
+            "The top-5 concentration is close, so the real difference comes from unique holdings and weight gaps."
+        )
+    if abs(news_gap) >= 0.35:
+        leader = left_label if news_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} çš„åº•å±¤æŒè‚¡æ–°èžåŠ æ¬Šåˆ†æ•¸æ›´å¼·ï¼Œè¿‘æœŸé¡Œæé †é¢¨è¼ƒæ˜Žé¡¯ã€‚"
+            if lang_zh else
+            f"{leader} has the stronger look-through news score, so its disclosed basket currently has the clearer headline tailwind."
+        )
+    else:
+        takeaway_lines.append(
+            "å…©æª”åº•å±¤æ–°èžåˆ†æ•¸æŽ¥è¿‘ï¼ŒçŸ­ç·šå‹è² æ›´å¯èƒ½ä¾†è‡ªæ¬Šé‡é…ç½®ï¼Œè€Œä¸æ˜¯å–®ç´”æ¶ˆæ¯é¢ã€‚"
+            if lang_zh else
+            "The look-through news scores are close, so short-term differentiation is more about portfolio construction than headlines alone."
+        )
+    if abs(foreign_gap) >= 5:
+        leader = left_label if foreign_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} çš„åº•å±¤æŒè‚¡å¤–è³‡åå¤šæ¬Šé‡æ›´é«˜ï¼Œå°æ–¼æƒ³ç¢ºèªå¸‚å ´è³‡é‡‘ç«™åœ¨å“ªä¸€é‚Šæœƒæ›´æœ‰åƒè€ƒåƒ¹å€¼ã€‚"
+            if lang_zh else
+            f"{leader} shows stronger foreign-buying weight across the underlying basket, which is useful when you want a cleaner read on market sponsorship."
+        )
+    return takeaway_lines[:3]
+
+
+def _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot: dict, right_snapshot: dict) -> dict:
+    lang_zh = get_language() == "zh_TW"
+    left_ticker = str((left_snapshot or {}).get("ticker", "") or "").upper().strip()
+    right_ticker = str((right_snapshot or {}).get("ticker", "") or "").upper().strip()
+    left_payload = dict((left_snapshot or {}).get("holdings_payload", {}) or {})
+    right_payload = dict((right_snapshot or {}).get("holdings_payload", {}) or {})
+    left_flow_payload = dict((left_snapshot or {}).get("etf_flow_payload", {}) or {})
+    right_flow_payload = dict((right_snapshot or {}).get("etf_flow_payload", {}) or {})
+    left_flow = dict(left_flow_payload.get("record", {}) or {})
+    right_flow = dict(right_flow_payload.get("record", {}) or {})
+    left_items = list(left_payload.get("items", []) or [])
+    right_items = list(right_payload.get("items", []) or [])
+    if not left_items and not right_items:
+        return {
+            "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+            "kind": "compare",
+            "left_ticker": left_ticker,
+            "right_ticker": right_ticker,
+            "fetched_at": "",
+            "status": "missing",
+        }
+
+    left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
+    right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
+    common_keys = set(left_map) & set(right_map)
+    left_unique_keys = set(left_map) - set(right_map)
+    right_unique_keys = set(right_map) - set(left_map)
+    overlap_weight_left = sum(float(left_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+    overlap_weight_right = sum(float(right_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+
+    merged_signal_cache: dict[str, dict] = {}
+    for source in ((left_snapshot or {}).get("underlying_signals", {}), (right_snapshot or {}).get("underlying_signals", {})):
+        for symbol, payload in dict(source or {}).items():
+            normalized = normalize_dashboard_ticker(str(symbol or ""))
+            if not normalized:
+                continue
+            merged_signal_cache[normalized] = {
+                "symbol": normalized,
+                "news_score": float((payload or {}).get("news_score", 0.0) or 0.0),
+                "foreign_net": _safe_float((payload or {}).get("foreign_net")),
+                "dominant_catalyst": str((payload or {}).get("dominant_catalyst", "Macro") or "Macro"),
+            }
+
+    left_profile = _active_etf_strategy_profile(left_map)
+    right_profile = _active_etf_strategy_profile(right_map)
+    left_lookthrough = dict((left_snapshot or {}).get("lookthrough_payload", {}) or {})
+    right_lookthrough = dict((right_snapshot or {}).get("lookthrough_payload", {}) or {})
+    if not left_lookthrough and left_map:
+        left_lookthrough = _active_etf_clean_lookthrough_snapshot(
+            _active_etf_build_lookthrough_snapshot(left_map, signal_cache=merged_signal_cache)
+        )
+    if not right_lookthrough and right_map:
+        right_lookthrough = _active_etf_clean_lookthrough_snapshot(
+            _active_etf_build_lookthrough_snapshot(right_map, signal_cache=merged_signal_cache)
+        )
+
+    left_label = display_ticker_label(left_ticker)
+    right_label = display_ticker_label(right_ticker)
+    takeaway_lines = _active_etf_takeaway_lines(
+        left_label,
+        right_label,
+        left_profile,
+        right_profile,
+        left_lookthrough,
+        right_lookthrough,
+        lang_zh=lang_zh,
+    )
+
+    focus_rows_data: list[dict] = []
+    focus_keys = sorted(
+        set(left_map) | set(right_map),
+        key=lambda row_key: float(left_map.get(row_key, {}).get("weight", 0.0) or 0.0) + float(right_map.get(row_key, {}).get("weight", 0.0) or 0.0),
+        reverse=True,
+    )[:12]
+    for key in focus_keys:
+        left_weight = float(left_map.get(key, {}).get("weight", 0.0) or 0.0)
+        right_weight = float(right_map.get(key, {}).get("weight", 0.0) or 0.0)
+        delta = left_weight - right_weight
+        row_item = left_map.get(key) or right_map.get(key) or {}
+        display_name = str(row_item.get("name") or key)
+        symbol = normalize_dashboard_ticker(str(row_item.get("symbol", "") or ""))
+        signal = dict(merged_signal_cache.get(symbol, {}) or {})
+        news_score = float(signal.get("news_score", 0.0) or 0.0)
+        news_label, _ = _active_etf_news_tone(news_score, lang_zh)
+        foreign_label, _ = _active_etf_foreign_tone(signal.get("foreign_net"), lang_zh)
+        foreign_lots = _format_taiwan_lot_text(signal.get("foreign_net"), lang_zh, signed=True) if signal else "â€”"
+        catalyst_label = tr_term(str(signal.get("dominant_catalyst", "Macro") or "Macro")) if signal else "â€”"
+        focus_rows_data.append(
+            {
+                "display_name": display_name,
+                "symbol": symbol,
+                "left_weight": left_weight,
+                "right_weight": right_weight,
+                "delta": delta,
+                "news_label": news_label,
+                "news_score": news_score,
+                "foreign_label": foreign_label,
+                "foreign_net": _active_etf_lab_snapshot_safe(signal.get("foreign_net")),
+                "foreign_lots": foreign_lots,
+                "dominant_catalyst": str(signal.get("dominant_catalyst", "Macro") or "Macro"),
+                "catalyst_label": catalyst_label,
+            }
+        )
+
+    fetched_values = [
+        _normalize_tw_timestamp((left_snapshot or {}).get("fetched_at")),
+        _normalize_tw_timestamp((right_snapshot or {}).get("fetched_at")),
+    ]
+    fetched_values = [item for item in fetched_values if item is not None]
+    fetched_at = max(fetched_values).isoformat() if fetched_values else pd.Timestamp.now(tz=TW_TZ).isoformat()
+
+    return {
+        "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+        "kind": "compare",
+        "left_ticker": left_ticker,
+        "right_ticker": right_ticker,
+        "fetched_at": fetched_at,
+        "status": "ready",
+        "left_payload": _active_etf_lab_snapshot_safe(left_payload),
+        "right_payload": _active_etf_lab_snapshot_safe(right_payload),
+        "left_flow": _active_etf_lab_snapshot_safe(left_flow),
+        "right_flow": _active_etf_lab_snapshot_safe(right_flow),
+        "common_count": len(common_keys),
+        "left_unique_count": len(left_unique_keys),
+        "right_unique_count": len(right_unique_keys),
+        "overlap_weight_left": overlap_weight_left,
+        "overlap_weight_right": overlap_weight_right,
+        "left_profile": _active_etf_lab_snapshot_safe(left_profile),
+        "right_profile": _active_etf_lab_snapshot_safe(right_profile),
+        "left_lookthrough": _active_etf_lab_snapshot_safe(left_lookthrough),
+        "right_lookthrough": _active_etf_lab_snapshot_safe(right_lookthrough),
+        "takeaway_lines": takeaway_lines,
+        "focus_rows_data": _active_etf_lab_snapshot_safe(focus_rows_data),
+    }
+
+
 def _build_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str) -> dict:
     snapshot = None if force_refresh else peek_active_etf_pair_snapshot(left_ticker, right_ticker)
     if snapshot is None:
@@ -24731,7 +25186,90 @@ def _build_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str)
     }
 
 
+def _build_active_etf_pair_compare_snapshot_safe(
+    left_ticker: str,
+    right_ticker: str,
+    *,
+    force_refresh: bool = False,
+) -> dict:
+    left_ticker = normalize_dashboard_ticker(left_ticker)
+    right_ticker = normalize_dashboard_ticker(right_ticker)
+    if not left_ticker or not right_ticker:
+        return {
+            "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+            "kind": "compare",
+            "left_ticker": str(left_ticker or "").upper().strip(),
+            "right_ticker": str(right_ticker or "").upper().strip(),
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "status": "missing",
+            "left_payload": {},
+            "right_payload": {},
+            "left_flow": {},
+            "right_flow": {},
+            "focus_rows_data": [],
+            "takeaway_lines": [],
+        }
+
+    left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
+    right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
+    if force_refresh or not _active_etf_lab_snapshot_ready(left_snapshot) or not _active_etf_lab_snapshot_ready(right_snapshot):
+        if force_refresh:
+            _clear_active_etf_lab_refresh_caches()
+        lens_meta = {
+            "period": DEFAULT_PERIOD,
+            "interval": DEFAULT_INTERVAL,
+            "title": DEFAULT_TREND_LENS,
+        }
+        selected_tickers = dedupe_keep_order([left_ticker, right_ticker])
+        daily_data = fetch_daily_data(
+            selected_tickers,
+            str(lens_meta["period"]),
+            str(lens_meta["interval"]),
+        )
+        intraday_data = fetch_intraday_data(selected_tickers)
+        built_left = _build_active_etf_workspace_snapshot(
+            daily_data,
+            intraday_data,
+            left_ticker,
+            lens_meta=lens_meta,
+            force_market_refresh=False,
+        )
+        if _active_etf_lab_snapshot_ready(built_left):
+            left_snapshot = _persist_active_etf_workspace_snapshot(built_left)
+        built_right = _build_active_etf_workspace_snapshot(
+            daily_data,
+            intraday_data,
+            right_ticker,
+            lens_meta=lens_meta,
+            force_market_refresh=False,
+        )
+        if _active_etf_lab_snapshot_ready(built_right):
+            right_snapshot = _persist_active_etf_workspace_snapshot(built_right)
+
+    if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
+        return _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
+
+    return {
+        "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+        "kind": "compare",
+        "left_ticker": str(left_ticker or "").upper().strip(),
+        "right_ticker": str(right_ticker or "").upper().strip(),
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "missing",
+        "left_payload": {},
+        "right_payload": {},
+        "left_flow": {},
+        "right_flow": {},
+        "focus_rows_data": [],
+        "takeaway_lines": [],
+    }
+
+
 def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *, force_refresh: bool = False) -> dict:
+    if not force_refresh:
+        ready_snapshot = peek_active_etf_pair_snapshot(left_ticker, right_ticker)
+        if _active_etf_lab_snapshot_ready(ready_snapshot):
+            return ready_snapshot
     snapshot_key = _active_etf_pair_snapshot_key(left_ticker, right_ticker)
     store = _active_etf_lab_snapshot_store()
     existing = (store.get("items", {}) or {}).get(snapshot_key)
@@ -24739,7 +25277,11 @@ def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *,
         return existing
     if force_refresh:
         _clear_active_etf_lab_refresh_caches()
-    snapshot = _build_active_etf_pair_compare_snapshot(left_ticker, right_ticker)
+    snapshot = _build_active_etf_pair_compare_snapshot_safe(
+        left_ticker,
+        right_ticker,
+        force_refresh=force_refresh,
+    )
     items = dict(store.get("items", {}) or {})
     items[snapshot_key] = snapshot
     store["items"] = items
@@ -24780,8 +25322,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
         )
         return
 
-    now_tw = datetime.now(TW_TZ)
-    timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+    timestamp_text = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
     update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
     left_label = display_ticker_label(left_ticker)
     right_label = display_ticker_label(right_ticker)
@@ -25042,6 +25583,376 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
             "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
         )
 
+
+def _empty_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict:
+    return {
+        "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+        "kind": "compare",
+        "left_ticker": str(left_ticker or "").upper().strip(),
+        "right_ticker": str(right_ticker or "").upper().strip(),
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "missing",
+        "left_payload": {},
+        "right_payload": {},
+        "left_flow": {},
+        "right_flow": {},
+        "focus_rows_data": [],
+        "takeaway_lines": [],
+    }
+
+
+def _persist_active_etf_pair_snapshot(snapshot: dict) -> dict:
+    left_ticker = str((snapshot or {}).get("left_ticker", "") or "").upper().strip()
+    right_ticker = str((snapshot or {}).get("right_ticker", "") or "").upper().strip()
+    if not left_ticker or not right_ticker:
+        return snapshot
+    store = _active_etf_lab_snapshot_store()
+    items = dict(store.get("items", {}) or {})
+    items[_active_etf_pair_snapshot_key(left_ticker, right_ticker)] = snapshot
+    store["items"] = items
+    _write_active_etf_lab_snapshot_store(store)
+    return snapshot
+
+
+def _build_active_etf_pair_compare_snapshot(
+    left_ticker: str,
+    right_ticker: str,
+    *,
+    force_refresh: bool = False,
+) -> dict:
+    left_ticker = normalize_dashboard_ticker(left_ticker)
+    right_ticker = normalize_dashboard_ticker(right_ticker)
+    if not left_ticker or not right_ticker:
+        return _empty_active_etf_pair_snapshot(left_ticker, right_ticker)
+
+    existing_left = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
+    existing_right = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
+    left_snapshot = existing_left
+    right_snapshot = existing_right
+
+    needs_refresh = (
+        force_refresh
+        or not _active_etf_lab_snapshot_ready(existing_left)
+        or not _active_etf_lab_snapshot_ready(existing_right)
+    )
+    if needs_refresh:
+        if force_refresh:
+            _clear_active_etf_lab_refresh_caches()
+        lens_meta = {
+            "period": DEFAULT_PERIOD,
+            "interval": DEFAULT_INTERVAL,
+            "title": DEFAULT_TREND_LENS,
+        }
+        selected_tickers = dedupe_keep_order([left_ticker, right_ticker])
+        daily_data = fetch_daily_data(
+            selected_tickers,
+            str(lens_meta["period"]),
+            str(lens_meta["interval"]),
+        )
+        intraday_data = fetch_intraday_data(selected_tickers)
+        built_left = _build_active_etf_workspace_snapshot(
+            daily_data,
+            intraday_data,
+            left_ticker,
+            lens_meta=lens_meta,
+            force_market_refresh=False,
+        )
+        if _active_etf_lab_snapshot_ready(built_left):
+            left_snapshot = _persist_active_etf_workspace_snapshot(built_left)
+        built_right = _build_active_etf_workspace_snapshot(
+            daily_data,
+            intraday_data,
+            right_ticker,
+            lens_meta=lens_meta,
+            force_market_refresh=False,
+        )
+        if _active_etf_lab_snapshot_ready(built_right):
+            right_snapshot = _persist_active_etf_workspace_snapshot(built_right)
+
+    if not _active_etf_lab_snapshot_ready(left_snapshot) or not _active_etf_lab_snapshot_ready(right_snapshot):
+        return _empty_active_etf_pair_snapshot(left_ticker, right_ticker)
+
+    return _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
+
+
+def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *, force_refresh: bool = False) -> dict:
+    if not force_refresh:
+        ready_snapshot = peek_active_etf_pair_snapshot(left_ticker, right_ticker)
+        if _active_etf_lab_snapshot_ready(ready_snapshot):
+            return ready_snapshot
+
+    store = _active_etf_lab_snapshot_store()
+    snapshot_key = _active_etf_pair_snapshot_key(left_ticker, right_ticker)
+    existing = (store.get("items", {}) or {}).get(snapshot_key)
+    if not force_refresh and _active_etf_lab_snapshot_ready(existing):
+        return existing
+
+    snapshot = _build_active_etf_pair_compare_snapshot(
+        left_ticker,
+        right_ticker,
+        force_refresh=force_refresh,
+    )
+    if _active_etf_lab_snapshot_ready(snapshot):
+        return _persist_active_etf_pair_snapshot(snapshot)
+    if _active_etf_lab_snapshot_ready(existing):
+        return existing
+    return snapshot
+
+
+def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force_refresh: bool = False) -> None:
+    """Render ETF A/B holdings comparison with overlap, strategy, news, and foreign-flow context."""
+    lang_zh = get_language() == "zh_TW"
+    inject_active_etf_tracker_css()
+    inject_taiwan_futures_dashboard_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
+
+    snapshot = None if force_refresh else peek_active_etf_pair_snapshot(left_ticker, right_ticker)
+    if snapshot is None:
+        snapshot = get_active_etf_pair_compare_snapshot(
+            left_ticker,
+            right_ticker,
+            force_refresh=force_refresh,
+        )
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        st.info(
+            "目前抓不到這兩檔主動式 ETF 的持股快照，請稍後再試。"
+            if lang_zh
+            else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
+        )
+        return
+
+    left_payload = dict(snapshot.get("left_payload", {}) or {})
+    right_payload = dict(snapshot.get("right_payload", {}) or {})
+    left_flow = dict(snapshot.get("left_flow", {}) or {})
+    right_flow = dict(snapshot.get("right_flow", {}) or {})
+    left_items = list(left_payload.get("items", []) or [])
+    right_items = list(right_payload.get("items", []) or [])
+    if not left_items and not right_items:
+        st.info(
+            "目前抓不到這兩檔主動式 ETF 的持股快照，請稍後再試。"
+            if lang_zh
+            else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
+        )
+        return
+
+    timestamp_text = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
+    update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
+    left_label = display_ticker_label(left_ticker)
+    right_label = display_ticker_label(right_ticker)
+    left_snapshot_date = str(left_payload.get("snapshot_date", "") or "")
+    right_snapshot_date = str(right_payload.get("snapshot_date", "") or "")
+
+    def _snapshot_chip_text(label: str, payload: dict) -> str:
+        snapshot_date = str(payload.get("snapshot_date", "") or "—")
+        if str(payload.get("status", "")) == "cached":
+            return f"{label} 快照 {snapshot_date}" if lang_zh else f"{label} snapshot {snapshot_date}"
+        return f"{label} 今日快照" if lang_zh else f"{label} latest snapshot"
+
+    chips = [
+        _tracker_status_chip(("雙 ETF 持股對比" if lang_zh else "Dual ETF holdings comparison"), "info"),
+        _tracker_status_chip((f"快照時間 {timestamp_text}" if lang_zh else f"Snapshot {timestamp_text}"), "neutral"),
+        _tracker_status_chip(("共同 / 獨有 / 權重差" if lang_zh else "Common / unique / weight gap"), "up"),
+        _tracker_status_chip(_snapshot_chip_text(left_label, left_payload), "neutral"),
+        _tracker_status_chip(_snapshot_chip_text(right_label, right_payload), "neutral"),
+    ]
+    st.markdown(
+        f"""
+        <div class="guide-shell etf-tracker-shell">
+            <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
+            <div class="guide-title">{escape(left_label)} × {escape(right_label)}</div>
+            <div class="guide-copy">{escape(update_note)} {'這次除了比共同 / 獨有持股，也會穿透到底層持股的新聞偏向與官方外資偏向，幫你看出策略風格差。' if lang_zh else 'Beyond overlap and unique holdings, this compare reads through the disclosed basket for underlying news tilt and official foreign-flow bias so the strategy style is easier to compare.'}</div>
+            <div class="chip-row">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if left_payload.get("used_cache") or right_payload.get("used_cache"):
+        cached_parts = []
+        if left_payload.get("used_cache"):
+            cached_parts.append(f"{left_label} {left_snapshot_date or '—'}")
+        if right_payload.get("used_cache"):
+            cached_parts.append(f"{right_label} {right_snapshot_date or '—'}")
+        st.caption(
+            (
+                "部分持股比較目前使用最近一次成功快照："
+                + " / ".join(cached_parts)
+                + "。這樣在開盤前或 Yahoo 當下回傳空值時，Compare 仍可用。"
+            )
+            if lang_zh
+            else (
+                "Part of this compare is currently using the latest successful holdings snapshot: "
+                + " / ".join(cached_parts)
+                + ". This keeps the pair compare usable when the live Yahoo holdings payload is empty."
+            )
+        )
+
+    left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
+    right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
+    common_keys = set(left_map) & set(right_map)
+    left_unique_keys = set(left_map) - set(right_map)
+    right_unique_keys = set(right_map) - set(left_map)
+    overlap_weight_left = float(snapshot.get("overlap_weight_left", 0.0) or 0.0)
+    overlap_weight_right = float(snapshot.get("overlap_weight_right", 0.0) or 0.0)
+
+    _active_etf_compare_summary_cards(
+        left_label,
+        right_label,
+        int(snapshot.get("common_count", len(common_keys)) or len(common_keys)),
+        int(snapshot.get("left_unique_count", len(left_unique_keys)) or len(left_unique_keys)),
+        int(snapshot.get("right_unique_count", len(right_unique_keys)) or len(right_unique_keys)),
+        overlap_weight_left,
+        overlap_weight_right,
+        lang_zh,
+    )
+
+    left_profile = dict(snapshot.get("left_profile", {}) or {})
+    right_profile = dict(snapshot.get("right_profile", {}) or {})
+    left_lookthrough = dict(snapshot.get("left_lookthrough", {}) or {})
+    right_lookthrough = dict(snapshot.get("right_lookthrough", {}) or {})
+    _render_active_etf_strategy_summary(
+        left_label,
+        right_label,
+        left_profile,
+        right_profile,
+        left_lookthrough,
+        right_lookthrough,
+        left_flow,
+        right_flow,
+        lang_zh,
+    )
+    _render_active_etf_bucket_compare(left_label, right_label, left_map, right_map, lang_zh)
+
+    takeaway_lines = list(snapshot.get("takeaway_lines", []) or [])
+    if not takeaway_lines:
+        takeaway_lines = _active_etf_takeaway_lines(
+            left_label,
+            right_label,
+            left_profile,
+            right_profile,
+            left_lookthrough,
+            right_lookthrough,
+            lang_zh=lang_zh,
+        )
+    st.markdown(f"### {'研究閱讀提示' if lang_zh else 'Research reading guide'}")
+    for line in takeaway_lines[:3]:
+        st.markdown(f"- {line}")
+
+    st.markdown(f"### {'底層持股風向板' if lang_zh else 'Look-through holdings pulse board'}")
+    st.caption(
+        "這張表聚焦兩檔 ETF 合計權重最高的揭露持股，直接對照權重、底層新聞偏向、外資偏向與主導題材。"
+        if lang_zh else
+        "This board focuses on the highest combined-weight disclosed holdings and compares weight, look-through news tilt, foreign-flow bias, and dominant catalyst in one place."
+    )
+
+    focus_rows_data = list(snapshot.get("focus_rows_data", []) or [])
+    focus_rows: list[list[str]] = []
+    for item in focus_rows_data[:12]:
+        left_weight = float(item.get("left_weight", 0.0) or 0.0)
+        right_weight = float(item.get("right_weight", 0.0) or 0.0)
+        delta = float(item.get("delta", left_weight - right_weight) or 0.0)
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
+        focus_rows.append(
+            [
+                build_holding_name_cell(str(item.get("display_name", "") or item.get("symbol", "—") or "—")),
+                f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+                f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+                f'<div class="{delta_class}">{delta:+.2f}%</div>',
+                _active_etf_story_cell(
+                    str(item.get("news_label", "—") or "—"),
+                    f"{float(item.get('news_score', 0.0) or 0.0):+.2f}",
+                ),
+                _active_etf_story_cell(
+                    str(item.get("foreign_label", "—") or "—"),
+                    str(item.get("foreign_lots", "—") or "—"),
+                ),
+                _active_etf_plain_cell(str(item.get("catalyst_label", "—") or "—"), class_name="etf-tracker-text"),
+            ]
+        )
+    render_active_etf_tracker_table(
+        [
+            "持股 / 公司" if lang_zh else "Holding / company",
+            left_label,
+            right_label,
+            "權重差 A-B" if lang_zh else "Weight gap A-B",
+            "底層新聞" if lang_zh else "Look-through news",
+            "底層外資" if lang_zh else "Look-through foreign",
+            "主導題材" if lang_zh else "Dominant catalyst",
+        ],
+        focus_rows,
+        "目前尚無可用的底層持股風向板資料。" if lang_zh else "The look-through holdings pulse board is unavailable right now.",
+    )
+
+    overlap_rows = []
+    for key in sorted(
+        common_keys,
+        key=lambda row_key: abs(float(left_map[row_key].get("weight", 0.0) or 0.0) - float(right_map[row_key].get("weight", 0.0) or 0.0)),
+        reverse=True,
+    ):
+        left_weight = float(left_map[key].get("weight", 0.0) or 0.0)
+        right_weight = float(right_map[key].get("weight", 0.0) or 0.0)
+        delta = left_weight - right_weight
+        display_name = left_map[key].get("name") or right_map[key].get("name") or key
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
+        overlap_rows.append(
+            [
+                build_holding_name_cell(str(display_name)),
+                f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+                f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+                f'<div class="{delta_class}">{delta:+.2f}%</div>',
+            ]
+        )
+
+    left_only_rows = []
+    for key in sorted(left_unique_keys, key=lambda row_key: float(left_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
+        item = left_map[key]
+        left_only_rows.append(
+            [
+                build_holding_name_cell(str(item.get("name", key))),
+                f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
+            ]
+        )
+
+    right_only_rows = []
+    for key in sorted(right_unique_keys, key=lambda row_key: float(right_map[row_key].get("weight", 0.0) or 0.0), reverse=True)[:15]:
+        item = right_map[key]
+        right_only_rows.append(
+            [
+                build_holding_name_cell(str(item.get("name", key))),
+                f'<div class="etf-tracker-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>',
+            ]
+        )
+
+    st.markdown(f"### {'共同持股與權重差距' if lang_zh else 'Common holdings and weight gap'}")
+    render_active_etf_tracker_table(
+        [
+            "持股 / 公司" if lang_zh else "Holding / company",
+            left_label,
+            right_label,
+            "權重差 A-B" if lang_zh else "Weight gap A-B",
+        ],
+        overlap_rows[:25],
+        (
+            "目前尚無共同持股可供比較。若你確定兩檔有共同持股，通常是 Yahoo 持股名稱格式不同；本版已用台股代號與中英文名稱做加強比對。"
+            if lang_zh else
+            "No overlapping holdings are currently available for comparison."
+        ),
+    )
+
+    unique_cols = st.columns(2, gap="large")
+    with unique_cols[0]:
+        st.markdown(f"### {escape(left_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        render_active_etf_tracker_table(
+            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            left_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
+    with unique_cols[1]:
+        st.markdown(f"### {escape(right_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        render_active_etf_tracker_table(
+            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            right_only_rows,
+            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+        )
 
 
 if __name__ == "__main__":
