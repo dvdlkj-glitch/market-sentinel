@@ -18552,8 +18552,7 @@ def render_active_etf_lab_dashboard(
                 bundles_cache = [bundle for bundle in bundles_cache if bundle is not None]
         return bundles_cache
 
-    now_tw = datetime.now(TW_TZ)
-    timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+    timestamp_text = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
     chips = [
         _tracker_status_chip(t("active_etf_dashboard_kicker"), "info"),
         _tracker_status_chip((f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
@@ -24754,12 +24753,21 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
     inject_active_etf_tracker_css()
     inject_taiwan_futures_dashboard_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
 
-    left_payload = fetch_active_etf_holdings_snapshot(left_ticker, max_items=40)
-    right_payload = fetch_active_etf_holdings_snapshot(right_ticker, max_items=40)
-    left_flow_payload = fetch_twse_etf_institutional_flow(left_ticker)
-    right_flow_payload = fetch_twse_etf_institutional_flow(right_ticker)
-    left_flow = (left_flow_payload or {}).get("record", {}) or {}
-    right_flow = (right_flow_payload or {}).get("record", {}) or {}
+    snapshot = None if force_refresh else peek_active_etf_pair_snapshot(left_ticker, right_ticker)
+    if snapshot is None:
+        snapshot = get_active_etf_pair_compare_snapshot(left_ticker, right_ticker, force_refresh=force_refresh)
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        st.info(
+            "ç›®å‰æŠ“ä¸åˆ°é€™å…©æª”ä¸»å‹•å¼ ETF çš„æŒè‚¡å¿«ç…§ï¼Œè«‹ç¨å¾Œå†è©¦ã€‚"
+            if lang_zh
+            else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
+        )
+        return
+
+    left_payload = dict(snapshot.get("left_payload", {}) or {})
+    right_payload = dict(snapshot.get("right_payload", {}) or {})
+    left_flow = dict(snapshot.get("left_flow", {}) or {})
+    right_flow = dict(snapshot.get("right_flow", {}) or {})
 
     left_items = left_payload.get("items", []) or []
     right_items = right_payload.get("items", []) or []
@@ -24841,13 +24849,10 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
         lang_zh,
     )
 
-    signal_cache: dict[str, dict] = {}
-    left_profile = _active_etf_strategy_profile(left_map)
-    right_profile = _active_etf_strategy_profile(right_map)
-    left_lookthrough = _active_etf_build_lookthrough_snapshot(left_map, signal_cache=signal_cache)
-    signal_cache = left_lookthrough.get("signal_cache", signal_cache)
-    right_lookthrough = _active_etf_build_lookthrough_snapshot(right_map, signal_cache=signal_cache)
-    signal_cache = right_lookthrough.get("signal_cache", signal_cache)
+    left_profile = dict(snapshot.get("left_profile", {}) or {})
+    right_profile = dict(snapshot.get("right_profile", {}) or {})
+    left_lookthrough = dict(snapshot.get("left_lookthrough", {}) or {})
+    right_lookthrough = dict(snapshot.get("right_lookthrough", {}) or {})
 
     _render_active_etf_strategy_summary(
         left_label,
