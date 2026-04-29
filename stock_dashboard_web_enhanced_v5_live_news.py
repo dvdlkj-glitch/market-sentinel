@@ -17374,6 +17374,28 @@ def _load_previous_active_etf_snapshot(ticker: str) -> tuple[list[dict], str | N
     return payload, row[1], row[2] or ""
 
 
+def _load_latest_active_etf_snapshot(ticker: str) -> tuple[list[dict], str | None, str]:
+    _ensure_active_etf_snapshot_db()
+    with sqlite3.connect(ACTIVE_ETF_TRACKER_SNAPSHOT_DB) as conn:
+        row = conn.execute(
+            """
+            select holdings_json, snapshot_date, source
+            from etf_holdings_snapshots
+            where ticker = ?
+            order by snapshot_date desc
+            limit 1
+            """,
+            (str(ticker).upper(),),
+        ).fetchone()
+    if not row:
+        return [], None, ""
+    try:
+        payload = json.loads(row[0]) if row[0] else []
+    except Exception:
+        payload = []
+    return payload, row[1], row[2] or ""
+
+
 def _pick_name_and_weight_columns(df: pd.DataFrame) -> tuple[str | None, str | None]:
     columns = list(df.columns)
     lowered = {str(col).lower(): col for col in columns}
@@ -17724,7 +17746,12 @@ def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> N
 
         holdings_payload = fetch_active_etf_holdings_snapshot(ticker)
         holdings_items = holdings_payload.get("items", [])
-        holdings_model = build_active_etf_holdings_changes(ticker, holdings_items)
+        holdings_model = build_active_etf_holdings_changes(
+            ticker,
+            holdings_items,
+            snapshot_source=str(holdings_payload.get("source", "") or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL),
+            allow_snapshot_write=str(holdings_payload.get("status", "missing")) == "live",
+        )
         flow_payload = fetch_twse_etf_institutional_flow(ticker)
         flow = flow_payload.get("record", {}) or {}
 
@@ -18093,12 +18120,18 @@ def render_active_etf_lab_dashboard(
 
     inject_active_etf_tracker_css()
 
-    bundles = [
-        collect_ticker_context(daily_data, intraday_data, ticker, news_limit=10, lens_meta=lens_meta)
-        for ticker in active_etf_tickers
-    ]
-    bundles = [bundle for bundle in bundles if bundle is not None]
-    bundle_map = {bundle["ticker"]: bundle for bundle in bundles}
+    bundles_cache: list[dict] | None = None
+
+    def _ensure_bundles() -> list[dict]:
+        nonlocal bundles_cache
+        if bundles_cache is None:
+            with st.spinner("正在建立主動式 ETF 研究上下文..." if lang_zh else "Building active ETF research context..."):
+                bundles_cache = [
+                    collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta)
+                    for ticker in active_etf_tickers
+                ]
+                bundles_cache = [bundle for bundle in bundles_cache if bundle is not None]
+        return bundles_cache
 
     now_tw = datetime.now(TW_TZ)
     timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
@@ -18131,13 +18164,18 @@ def render_active_etf_lab_dashboard(
             "是" if len(active_etf_tickers) >= 2 and lang_zh else ("Yes" if len(active_etf_tickers) >= 2 else ("否" if lang_zh else "No")),
         )
         summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
+        bundles = _ensure_bundles()
         if bundles:
             render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
 
     def _render_etf_pair_compare() -> None:
         left_etf, right_etf = render_active_etf_pair_picker(active_etf_tickers)
         if left_etf and right_etf:
-            render_active_etf_pair_comparison(left_etf, right_etf)
+            with st.spinner(
+                "正在建立雙 ETF 持股、策略與底層風向比較..." if lang_zh else
+                "Building the dual-ETF holdings, strategy, and look-through comparison..."
+            ):
+                render_active_etf_pair_comparison(left_etf, right_etf)
 
     if layout_mode == "Standard":
         standard_sections = [
@@ -18154,7 +18192,7 @@ def render_active_etf_lab_dashboard(
         elif current_section == "layout_standard_pair_compare_tab":
             _render_etf_pair_compare()
         else:
-            render_single_bundle_workspace_picker(bundles, lens_meta=lens_meta)
+            render_single_bundle_workspace_picker(_ensure_bundles(), lens_meta=lens_meta)
     elif layout_mode == "Advanced":
         advanced_sections = [
             "layout_brief_tab",
@@ -18177,7 +18215,7 @@ def render_active_etf_lab_dashboard(
         elif current_section == "layout_compare_tab":
             _render_etf_pair_compare()
         else:
-            render_bundle_workspace_tabs(bundles, lens_meta=lens_meta)
+            render_bundle_workspace_tabs(_ensure_bundles(), lens_meta=lens_meta)
     else:
         _render_etf_briefing()
         expert_sections = [
@@ -18198,7 +18236,7 @@ def render_active_etf_lab_dashboard(
         if current_section == "layout_comparison_desk_tab":
             _render_etf_pair_compare()
         else:
-            render_bundle_workspace_tabs(bundles, lens_meta=lens_meta)
+            render_bundle_workspace_tabs(_ensure_bundles(), lens_meta=lens_meta)
 
 
 
@@ -19560,6 +19598,7 @@ def fetch_taiwan_company_name_map() -> dict[str, str]:
     return name_map
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
 def lookup_taiwan_holding_symbol(query: str) -> dict:
     raw_query = str(query or "").strip()
     if not raw_query:
@@ -19684,7 +19723,7 @@ def inject_active_etf_tracker_css() -> None:
         .etf-tracker-table thead th {
             text-align: left;
             padding: 13px 14px;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 900;
             letter-spacing: .10em;
             text-transform: uppercase;
@@ -19695,8 +19734,8 @@ def inject_active_etf_tracker_css() -> None:
         }
         .etf-tracker-table tbody td {
             padding: 13px 14px;
-            font-size: 14px;
-            line-height: 1.45;
+            font-size: 15px;
+            line-height: 1.52;
             color: rgba(241, 245, 255, 0.92);
             border-top: 1px solid rgba(255,255,255,0.05);
             vertical-align: top;
@@ -19708,27 +19747,31 @@ def inject_active_etf_tracker_css() -> None:
         .etf-tracker-name {
             font-weight: 800;
             color: #ffffff;
+            font-size: 15.5px;
+            line-height: 1.45;
         }
         .etf-tracker-sub {
             margin-top: 4px;
-            font-size: 12px;
+            font-size: 13px;
             color: rgba(191, 210, 232, 0.76);
         }
         .etf-tracker-value {
             font-weight: 800;
             color: #ffffff;
             white-space: nowrap;
+            font-size: 15.5px;
         }
         .etf-tracker-delta-up { color: #aaf3d7; font-weight: 800; }
         .etf-tracker-delta-down { color: #ffd0d0; font-weight: 800; }
         .etf-tracker-delta-flat { color: rgba(226,232,240,.86); font-weight: 700; }
         .etf-tracker-text {
             color: rgba(241, 245, 255, 0.92);
-            line-height: 1.52;
+            line-height: 1.58;
+            font-size: 15px;
         }
         .etf-tracker-muted {
             margin-top: 4px;
-            font-size: 12px;
+            font-size: 13px;
             color: rgba(191, 210, 232, 0.76);
             line-height: 1.45;
         }
@@ -19873,7 +19916,7 @@ def _extract_holdings_records_from_frame(frame: pd.DataFrame) -> list[dict]:
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict:
     ticker_upper = str(ticker).upper()
-    result = {"items": [], "source": "", "error": ""}
+    result = {"items": [], "source": "", "error": "", "snapshot_date": None, "status": "missing", "used_cache": False}
     try:
         tk = yf.Ticker(ticker_upper)
         candidates = []
@@ -19902,12 +19945,16 @@ def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict
             if isinstance(info_payload, dict):
                 holdings = info_payload.get("holdings") or info_payload.get("topHoldings")
                 if isinstance(holdings, list) and holdings:
-                    result["items"] = _normalize_holdings_records(
+                    normalized = _normalize_holdings_records(
                         [{"name": row.get("holdingName") or row.get("symbol") or row.get("name"), "weight": row.get("holdingPercent") or row.get("weight")} for row in holdings],
                         max_items=max_items,
                     )
-                    if result["items"]:
+                    if normalized:
+                        _upsert_active_etf_snapshot(ticker_upper, normalized, ACTIVE_ETF_HOLDINGS_SOURCE_LABEL)
+                        result["items"] = normalized
                         result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
+                        result["snapshot_date"] = _snapshot_today_string()
+                        result["status"] = "live"
                         return result
         except Exception:
             pass
@@ -19915,21 +19962,49 @@ def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict
         for frame in candidates:
             items = _extract_holdings_records_from_frame(frame)
             if items:
-                result["items"] = items[:max_items]
+                normalized = _normalize_holdings_records(items, max_items=max_items)
+                _upsert_active_etf_snapshot(ticker_upper, normalized, ACTIVE_ETF_HOLDINGS_SOURCE_LABEL)
+                result["items"] = normalized
                 result["source"] = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL
+                result["snapshot_date"] = _snapshot_today_string()
+                result["status"] = "live"
                 return result
+
+        cached_items, cached_date, cached_source = _load_latest_active_etf_snapshot(ticker_upper)
+        if cached_items:
+            result["items"] = _normalize_holdings_records(cached_items, max_items=max_items)
+            result["source"] = cached_source or f"{ACTIVE_ETF_HOLDINGS_SOURCE_LABEL} · cached"
+            result["snapshot_date"] = cached_date
+            result["status"] = "cached"
+            result["used_cache"] = True
+            result["error"] = "Using the latest successful holdings snapshot because the current Yahoo payload is unavailable."
+            return result
 
         result["error"] = "No current holdings snapshot available."
         return result
     except Exception as exc:
+        cached_items, cached_date, cached_source = _load_latest_active_etf_snapshot(ticker_upper)
+        if cached_items:
+            result["items"] = _normalize_holdings_records(cached_items, max_items=max_items)
+            result["source"] = cached_source or f"{ACTIVE_ETF_HOLDINGS_SOURCE_LABEL} · cached"
+            result["snapshot_date"] = cached_date
+            result["status"] = "cached"
+            result["used_cache"] = True
+            result["error"] = f"Live holdings payload failed ({exc}). Showing the latest successful snapshot instead."
+            return result
         result["error"] = f"Holdings snapshot unavailable: {exc}"
         return result
 
 
-def build_active_etf_holdings_changes(ticker: str, current_items: list[dict]) -> dict:
+def build_active_etf_holdings_changes(
+    ticker: str,
+    current_items: list[dict],
+    snapshot_source: str = ACTIVE_ETF_HOLDINGS_SOURCE_LABEL,
+    allow_snapshot_write: bool = True,
+) -> dict:
     current_clean = _normalize_holdings_records(current_items)
-    if current_clean:
-        _upsert_active_etf_snapshot(ticker, current_clean)
+    if current_clean and allow_snapshot_write:
+        _upsert_active_etf_snapshot(ticker, current_clean, source=snapshot_source or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL)
     previous_items, previous_date, previous_source = _load_previous_active_etf_snapshot(ticker)
 
     prev_map = {item["name"]: float(item["weight"]) for item in _normalize_holdings_records(previous_items, max_items=50)}
@@ -23522,7 +23597,7 @@ def generate_dashboard():
 def _active_etf_holding_compare_key(name: str) -> str:
     """Return a stable compare key so English / Chinese names still overlap."""
     raw_name = str(name or "").strip()
-    symbol = lookup_taiwan_holding_symbol(raw_name)
+    symbol = _active_etf_lookup_symbol_code(raw_name)
     if symbol:
         return f"symbol:{symbol}"
     normalized = _normalize_holding_alias_text(raw_name)
@@ -23539,7 +23614,7 @@ def _active_etf_holdings_compare_map(items: list[dict], max_items: int = 40) -> 
             continue
 
         key = _active_etf_holding_compare_key(raw_name)
-        symbol = lookup_taiwan_holding_symbol(raw_name)
+        symbol = _active_etf_lookup_symbol_code(raw_name)
         current = mapped.get(key)
         if current is None:
             mapped[key] = {
@@ -23552,6 +23627,368 @@ def _active_etf_holdings_compare_map(items: list[dict], max_items: int = 40) -> 
             if not current.get("symbol") and symbol:
                 current["symbol"] = symbol
     return mapped
+
+
+def _active_etf_lookup_symbol_code(name: str) -> str:
+    raw_name = str(name or "").strip()
+    if not raw_name:
+        return ""
+    direct = normalize_dashboard_ticker(raw_name)
+    if direct and is_taiwan_ticker(direct):
+        return direct
+    code_match = re.search(r"\b(\d{4,6})(?:\.TW|\.TWO)?\b", raw_name.upper())
+    if code_match:
+        code = normalize_dashboard_ticker(code_match.group(1))
+        if code and is_taiwan_ticker(code):
+            return code
+    alias_key = _normalize_holding_alias_text(raw_name)
+    alias_match = TAIWAN_HOLDING_ALIAS_MAP.get(alias_key)
+    if alias_match:
+        code = normalize_dashboard_ticker(alias_match)
+        if code and is_taiwan_ticker(code):
+            return code
+    matched = lookup_taiwan_holding_symbol(raw_name)
+    if isinstance(matched, dict):
+        code = normalize_dashboard_ticker(str(matched.get("symbol", "")).strip())
+        if code and is_taiwan_ticker(code):
+            return code
+    elif isinstance(matched, str):
+        code = normalize_dashboard_ticker(matched)
+        if code and is_taiwan_ticker(code):
+            return code
+    return ""
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_active_etf_underlying_signal(symbol: str, max_news: int = 8) -> dict:
+    normalized = normalize_dashboard_ticker(symbol)
+    if not normalized:
+        return {}
+
+    news_items, news_error = fetch_ticker_news(normalized, max_items=max_news)
+    news_pulse = build_news_pulse(news_items or [])
+    catalyst = build_catalyst_engine(news_items or [])
+
+    flow_payload: dict = {}
+    if is_taiwan_ticker(normalized):
+        base_code = ticker_base_code(normalized)
+        flow_payload = fetch_twse_stock_institutional_flow(base_code)
+        if not flow_payload or flow_payload.get("error"):
+            tpex_bundle = fetch_tpex_snapshot_bundle(base_code)
+            flow_payload = (tpex_bundle or {}).get("flow", {}) or flow_payload
+
+    foreign_net = _safe_float(flow_payload.get("foreign_net"))
+    trust_net = _safe_float(flow_payload.get("trust_net"))
+    dealer_net = _safe_float(flow_payload.get("dealer_net"))
+
+    return {
+        "symbol": normalized,
+        "label": display_ticker_label(normalized),
+        "news_score": float(news_pulse.get("score", 0.0) or 0.0),
+        "news_label": str(news_pulse.get("label", "News tilt: mixed")),
+        "dominant_catalyst": str(catalyst.get("dominant", "Macro") or "Macro"),
+        "foreign_net": foreign_net,
+        "trust_net": trust_net,
+        "dealer_net": dealer_net,
+        "flow_date": str(flow_payload.get("date", "") or ""),
+        "flow_source": str(flow_payload.get("source", "") or ""),
+        "news_error": news_error or "",
+    }
+
+
+def _active_etf_strategy_profile(mapped: dict[str, dict]) -> dict:
+    ordered = sorted(mapped.values(), key=lambda row: float(row.get("weight", 0.0) or 0.0), reverse=True)
+    weights = [float(row.get("weight", 0.0) or 0.0) for row in ordered]
+    top5_share = sum(weights[:5])
+    top10_share = sum(weights[:10])
+    unique_share = sum(weights)
+    if top5_share >= 42:
+        conviction = "較集中" if get_language() == "zh_TW" else "More concentrated"
+    elif top5_share <= 30:
+        conviction = "較分散" if get_language() == "zh_TW" else "More diversified"
+    else:
+        conviction = "中間型" if get_language() == "zh_TW" else "Balanced"
+    return {
+        "top5_share": top5_share,
+        "top10_share": top10_share,
+        "display_weight": unique_share,
+        "conviction": conviction,
+    }
+
+
+ACTIVE_ETF_BUCKET_ORDER = ["ai_tech", "financial_income", "dividend_defense", "midcap_growth", "other"]
+ACTIVE_ETF_AI_CODES = {
+    "2330", "2454", "2303", "3711", "3034", "2379", "2408", "2317", "2382", "3231", "6669",
+    "2308", "2357", "2376", "2345", "6669", "3037", "8046", "3189", "4958", "2408", "2344",
+    "2337", "3260", "2451", "5289", "8271", "4967", "8299", "5351", "2360", "3030",
+}
+ACTIVE_ETF_FINANCIAL_CODES = {"2881", "2882", "2884", "2885", "2886", "2891", "2892", "2887", "2888", "2880", "5876"}
+ACTIVE_ETF_DIVIDEND_CODES = {"2603", "2609", "2615", "1301", "1303", "2002", "2412", "1101", "1102", "1216", "3045"}
+ACTIVE_ETF_LARGE_CORE_CODES = ACTIVE_ETF_AI_CODES | ACTIVE_ETF_FINANCIAL_CODES | ACTIVE_ETF_DIVIDEND_CODES | {"0050", "006208"}
+
+
+def _active_etf_bucket_label(bucket: str, lang_zh: bool) -> str:
+    labels = {
+        "ai_tech": ("AI / 科技主軸", "AI / tech core"),
+        "financial_income": ("金融 / 收益錨", "Financial / income anchor"),
+        "dividend_defense": ("高股息 / 防禦收益", "High dividend / defensive yield"),
+        "midcap_growth": ("中小型成長", "Mid-cap growth"),
+        "other": ("其他配置", "Other exposures"),
+    }
+    zh, en = labels.get(bucket, labels["other"])
+    return zh if lang_zh else en
+
+
+def _classify_active_etf_bucket(symbol: str, name: str) -> str:
+    code = ticker_base_code(symbol or name)
+    raw_name = str(name or "").strip()
+    upper_name = raw_name.upper()
+
+    if code in ACTIVE_ETF_FINANCIAL_CODES or any(token in raw_name for token in ("金", "銀行", "保險", "證券", "票券")):
+        return "financial_income"
+    if code in ACTIVE_ETF_AI_CODES or any(token in raw_name for token in ("半導體", "IC", "晶片", "封測", "伺服器", "網通", "PCB", "記憶體", "電子", "科技", "資料中心")):
+        return "ai_tech"
+    if code in ACTIVE_ETF_DIVIDEND_CODES or any(token in raw_name for token in ("航運", "鋼", "塑", "電信", "水泥", "食品", "瓦斯", "電力")):
+        return "dividend_defense"
+    if str(symbol).upper().endswith(".TWO") or (code and code not in ACTIVE_ETF_LARGE_CORE_CODES and any(token in upper_name for token in ("TECH", "BIO", "AUTO", "ROBOT", "AI"))):
+        return "midcap_growth"
+    if code and code not in ACTIVE_ETF_LARGE_CORE_CODES and code not in ACTIVE_ETF_FINANCIAL_CODES:
+        return "midcap_growth"
+    return "other"
+
+
+def _active_etf_bucket_breakdown(mapped: dict[str, dict]) -> dict[str, float]:
+    totals = {bucket: 0.0 for bucket in ACTIVE_ETF_BUCKET_ORDER}
+    for row in mapped.values():
+        weight = float(row.get("weight", 0.0) or 0.0)
+        if weight <= 0:
+            continue
+        bucket = _classify_active_etf_bucket(str(row.get("symbol", "") or ""), str(row.get("name", "") or ""))
+        totals[bucket] = totals.get(bucket, 0.0) + weight
+    return totals
+
+
+def _render_active_etf_bucket_compare(left_label: str, right_label: str, left_map: dict[str, dict], right_map: dict[str, dict], lang_zh: bool) -> None:
+    left_buckets = _active_etf_bucket_breakdown(left_map)
+    right_buckets = _active_etf_bucket_breakdown(right_map)
+    dominant_left = max(left_buckets, key=left_buckets.get) if left_buckets else "other"
+    dominant_right = max(right_buckets, key=right_buckets.get) if right_buckets else "other"
+
+    render_html_block(
+        f'<div class="benchmark-grid">'
+        f'{_active_etf_strategy_card_html("ETF A 主風格" if lang_zh else "ETF A lead style", _active_etf_bucket_label(dominant_left, lang_zh), f"{left_label} {left_buckets.get(dominant_left, 0.0):.1f}%")}'
+        f'{_active_etf_strategy_card_html("ETF B 主風格" if lang_zh else "ETF B lead style", _active_etf_bucket_label(dominant_right, lang_zh), f"{right_label} {right_buckets.get(dominant_right, 0.0):.1f}%")}'
+        f"</div>"
+    )
+
+    rows = []
+    for bucket in ACTIVE_ETF_BUCKET_ORDER:
+        left_weight = float(left_buckets.get(bucket, 0.0) or 0.0)
+        right_weight = float(right_buckets.get(bucket, 0.0) or 0.0)
+        delta = left_weight - right_weight
+        leader = (
+            "接近" if abs(delta) < 3 else f"{left_label} 較高" if delta > 0 else f"{right_label} 較高"
+        ) if lang_zh else (
+            "Close" if abs(delta) < 3 else f"{left_label} heavier" if delta > 0 else f"{right_label} heavier"
+        )
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-delta-flat"
+        rows.append(
+            [
+                _active_etf_plain_cell(_active_etf_bucket_label(bucket, lang_zh), class_name="etf-tracker-text"),
+                f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+                f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+                f'<div class="{delta_class}">{delta:+.2f}%</div>',
+                _active_etf_story_cell(leader),
+            ]
+        )
+
+    st.markdown(f"### {'策略桶位分布' if lang_zh else 'Strategy bucket mix'}")
+    st.caption(
+        "把揭露持股聚合成 AI / 科技主軸、金融 / 收益錨、高股息 / 防禦收益、中小型成長與其他配置，幫你先看風格比例。"
+        if lang_zh else
+        "This groups disclosed holdings into AI/tech core, financial/income anchor, high-dividend/defensive yield, mid-cap growth, and other exposures so the style mix is easier to read."
+    )
+    render_active_etf_tracker_table(
+        [
+            "策略桶位" if lang_zh else "Strategy bucket",
+            left_label,
+            right_label,
+            "權重差 A-B" if lang_zh else "Weight gap A-B",
+            "閱讀" if lang_zh else "Read",
+        ],
+        rows,
+        "目前尚無可用的策略桶位分布資料。" if lang_zh else "Strategy bucket mix is unavailable right now.",
+    )
+
+
+def _active_etf_news_tone(score: float, lang_zh: bool) -> tuple[str, str]:
+    if score >= 1.1:
+        return ("底層新聞偏多" if lang_zh else "Look-through bullish news", "up")
+    if score <= -1.1:
+        return ("底層新聞偏空" if lang_zh else "Look-through bearish news", "down")
+    return ("底層新聞中性" if lang_zh else "Look-through mixed news", "neutral")
+
+
+def _active_etf_foreign_tone(foreign_net: object, lang_zh: bool) -> tuple[str, str]:
+    numeric = _safe_float(foreign_net)
+    if pd.isna(numeric):
+        return ("外資資料缺口" if lang_zh else "Foreign flow unavailable", "info")
+    if numeric > 0:
+        return ("外資偏買" if lang_zh else "Foreign buying", "up")
+    if numeric < 0:
+        return ("外資偏賣" if lang_zh else "Foreign selling", "down")
+    return ("外資中性" if lang_zh else "Foreign neutral", "neutral")
+
+
+def _active_etf_build_lookthrough_snapshot(
+    mapped: dict[str, dict],
+    *,
+    max_items: int = 12,
+    signal_cache: dict[str, dict] | None = None,
+) -> dict:
+    if signal_cache is None:
+        signal_cache = {}
+    ordered = sorted(mapped.values(), key=lambda row: float(row.get("weight", 0.0) or 0.0), reverse=True)[:max_items]
+    total_weight = 0.0
+    weighted_news = 0.0
+    foreign_positive_weight = 0.0
+    foreign_negative_weight = 0.0
+    catalyst_scores: dict[str, float] = {}
+    covered_positions = 0
+
+    for row in ordered:
+        weight = float(row.get("weight", 0.0) or 0.0)
+        symbol = normalize_dashboard_ticker(str(row.get("symbol", "") or ""))
+        if not symbol or not is_taiwan_ticker(symbol):
+            continue
+        covered_positions += 1
+        total_weight += weight
+        if symbol not in signal_cache:
+            signal_cache[symbol] = fetch_active_etf_underlying_signal(symbol)
+        signal = signal_cache.get(symbol, {})
+        news_score = float(signal.get("news_score", 0.0) or 0.0)
+        weighted_news += weight * news_score
+        foreign_net = _safe_float(signal.get("foreign_net"))
+        if not pd.isna(foreign_net):
+            if foreign_net > 0:
+                foreign_positive_weight += weight
+            elif foreign_net < 0:
+                foreign_negative_weight += weight
+        catalyst = str(signal.get("dominant_catalyst", "Macro") or "Macro")
+        catalyst_scores[catalyst] = catalyst_scores.get(catalyst, 0.0) + weight
+
+    net_news_score = weighted_news / total_weight if total_weight > 0 else 0.0
+    dominant_catalyst = max(catalyst_scores, key=catalyst_scores.get) if catalyst_scores else "Macro"
+    covered_weight = sum(float(row.get("weight", 0.0) or 0.0) for row in ordered)
+    return {
+        "weighted_news_score": net_news_score,
+        "foreign_positive_weight": foreign_positive_weight,
+        "foreign_negative_weight": foreign_negative_weight,
+        "foreign_balance_weight": foreign_positive_weight - foreign_negative_weight,
+        "dominant_catalyst": dominant_catalyst,
+        "covered_positions": covered_positions,
+        "covered_weight": covered_weight,
+        "signal_cache": signal_cache,
+    }
+
+
+def _active_etf_strategy_card_html(label: str, value: str, note: str) -> str:
+    return textwrap.dedent(
+        f"""
+        <div class="benchmark-box">
+            <div class="benchmark-label">{escape(label)}</div>
+            <div class="benchmark-value">{escape(value)}</div>
+            <div class="benchmark-sub">{escape(note)}</div>
+        </div>
+        """
+    )
+
+
+def _render_active_etf_strategy_summary(
+    left_label: str,
+    right_label: str,
+    left_profile: dict,
+    right_profile: dict,
+    left_lookthrough: dict,
+    right_lookthrough: dict,
+    left_flow: dict,
+    right_flow: dict,
+    lang_zh: bool,
+) -> None:
+    left_news_score = float(left_lookthrough.get("weighted_news_score", 0.0) or 0.0)
+    right_news_score = float(right_lookthrough.get("weighted_news_score", 0.0) or 0.0)
+    left_foreign_balance = float(left_lookthrough.get("foreign_balance_weight", 0.0) or 0.0)
+    right_foreign_balance = float(right_lookthrough.get("foreign_balance_weight", 0.0) or 0.0)
+    left_etf_foreign = _safe_float((left_flow or {}).get("foreign_net"))
+    right_etf_foreign = _safe_float((right_flow or {}).get("foreign_net"))
+
+    concentration_note = (
+        f"{left_label} {left_profile.get('top5_share', 0.0):.1f}% vs {right_label} {right_profile.get('top5_share', 0.0):.1f}% · "
+        + ("前五大占比越高，風格越集中。" if lang_zh else "Higher top-5 weight means a tighter conviction profile.")
+    )
+    unique_note = (
+        f"{left_label} {left_profile.get('top10_share', 0.0):.1f}% / {right_label} {right_profile.get('top10_share', 0.0):.1f}% · "
+        + ("看前十大揭露持股的覆蓋深度。" if lang_zh else "Reads the disclosed top-10 holding depth.")
+    )
+    news_note = (
+        f"{left_label} {left_news_score:+.2f} vs {right_label} {right_news_score:+.2f} · "
+        + ("依前段持股新聞分數加權。" if lang_zh else "Weighted by the disclosed holdings' news pulse.")
+    )
+    foreign_note = (
+        f"{left_label} {left_foreign_balance:+.1f}% vs {right_label} {right_foreign_balance:+.1f}% · "
+        + ("看底層持股中外資偏買/偏賣的權重分布。" if lang_zh else "Shows how much of the basket leans with foreign buying or selling.")
+    )
+    etf_units_note = (
+        f"{left_label} {_format_taiwan_lot_text(left_etf_foreign, lang_zh, signed=True)} / "
+        f"{right_label} {_format_taiwan_lot_text(right_etf_foreign, lang_zh, signed=True)} · "
+        + ("這是 ETF 受益權本身，不是經理人個股交易明細。" if lang_zh else "This is flow in the ETF units themselves, not manager stock trades.")
+    )
+
+    cards = [
+        _active_etf_strategy_card_html(
+            "策略濃度" if lang_zh else "Concentration",
+            (
+                left_label if left_profile.get("top5_share", 0.0) >= right_profile.get("top5_share", 0.0) else right_label
+            ),
+            concentration_note,
+        ),
+        _active_etf_strategy_card_html(
+            "前十大覆蓋" if lang_zh else "Top-10 depth",
+            f"{left_profile.get('conviction', 'Balanced')} / {right_profile.get('conviction', 'Balanced')}",
+            unique_note,
+        ),
+        _active_etf_strategy_card_html(
+            "底層新聞偏向" if lang_zh else "Look-through news",
+            (
+                left_label if left_news_score >= right_news_score else right_label
+            ),
+            news_note,
+        ),
+        _active_etf_strategy_card_html(
+            "底層外資偏向" if lang_zh else "Look-through foreign bias",
+            (
+                left_label if left_foreign_balance >= right_foreign_balance else right_label
+            ),
+            foreign_note,
+        ),
+        _active_etf_strategy_card_html(
+            "ETF 受益權外資" if lang_zh else "ETF unit foreign flow",
+            (
+                left_label if (pd.notna(left_etf_foreign) and (pd.isna(right_etf_foreign) or left_etf_foreign >= right_etf_foreign)) else right_label
+            ),
+            etf_units_note,
+        ),
+        _active_etf_strategy_card_html(
+            "主導催化" if lang_zh else "Dominant catalyst",
+            f"{tr_term(str(left_lookthrough.get('dominant_catalyst', 'Macro')))} / {tr_term(str(right_lookthrough.get('dominant_catalyst', 'Macro')))}",
+            (
+                "這裡用前段持股新聞的主導題材來看兩檔 ETF 的風格差。"
+                if lang_zh else
+                "This compares the dominant headline catalyst across the disclosed holding baskets."
+            ),
+        ),
+    ]
+    render_html_block(f'<div class="benchmark-grid">{"".join(cards)}</div>')
 
 
 def _active_etf_compare_summary_cards(
@@ -23599,13 +24036,17 @@ def _active_etf_compare_summary_cards(
 
 
 def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> None:
-    """Render ETF A/B holdings comparison with stable overlap detection."""
+    """Render ETF A/B holdings comparison with overlap, strategy, news, and foreign-flow context."""
     lang_zh = get_language() == "zh_TW"
     inject_active_etf_tracker_css()
     inject_taiwan_futures_dashboard_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
 
     left_payload = fetch_active_etf_holdings_snapshot(left_ticker, max_items=40)
     right_payload = fetch_active_etf_holdings_snapshot(right_ticker, max_items=40)
+    left_flow_payload = fetch_twse_etf_institutional_flow(left_ticker)
+    right_flow_payload = fetch_twse_etf_institutional_flow(right_ticker)
+    left_flow = (left_flow_payload or {}).get("record", {}) or {}
+    right_flow = (right_flow_payload or {}).get("record", {}) or {}
 
     left_items = left_payload.get("items", []) or []
     right_items = right_payload.get("items", []) or []
@@ -23623,11 +24064,21 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
     update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
     left_label = display_ticker_label(left_ticker)
     right_label = display_ticker_label(right_ticker)
+    left_snapshot_date = str(left_payload.get("snapshot_date", "") or "")
+    right_snapshot_date = str(right_payload.get("snapshot_date", "") or "")
+
+    def _snapshot_chip_text(label: str, payload: dict) -> str:
+        snapshot_date = str(payload.get("snapshot_date", "") or "—")
+        if str(payload.get("status", "")) == "cached":
+            return f"{label} 快照 {snapshot_date}" if lang_zh else f"{label} snapshot {snapshot_date}"
+        return f"{label} 今日快照" if lang_zh else f"{label} live snapshot"
 
     chips = [
         _tracker_status_chip(("雙 ETF 持股對比" if lang_zh else "Dual ETF holdings comparison"), "info"),
         _tracker_status_chip((f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
         _tracker_status_chip(("共同 / 獨有 / 權重差" if lang_zh else "Common / unique / weight gap"), "up"),
+        _tracker_status_chip(_snapshot_chip_text(left_label, left_payload), "neutral"),
+        _tracker_status_chip(_snapshot_chip_text(right_label, right_payload), "neutral"),
     ]
 
     st.markdown(
@@ -23635,12 +24086,26 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         <div class="guide-shell etf-tracker-shell">
             <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
             <div class="guide-title">{escape(left_label)} × {escape(right_label)}</div>
-            <div class="guide-copy">{escape(update_note)} {'這裡會重新比對中英文持股名稱與台股代號，列出共同持股、權重差距、各自獨有持股，以及共同/不同數量。' if lang_zh else 'This section matches holdings by Taiwan symbol and normalized Chinese/English names, then lists common holdings, weight gaps, unique positions, and overlap counts.'}</div>
+            <div class="guide-copy">{escape(update_note)} {'這次除了比共同 / 獨有持股，也會穿透到底層持股的新聞偏向與官方外資偏向，幫你看出策略風格差。' if lang_zh else 'Beyond overlap and unique holdings, this compare now reads through the disclosed basket for underlying news tilt and official foreign-flow bias so the strategy style is easier to compare.'}</div>
             <div class="chip-row">{''.join(chips)}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    if left_payload.get("used_cache") or right_payload.get("used_cache"):
+        cached_parts = []
+        if left_payload.get("used_cache"):
+            cached_parts.append(f"{left_label} {left_snapshot_date or '—'}")
+        if right_payload.get("used_cache"):
+            cached_parts.append(f"{right_label} {right_snapshot_date or '—'}")
+        st.caption(
+            "部分持股比較目前使用最近一次成功快照：" + " / ".join(cached_parts) + "。這樣開盤前或 Yahoo 當下回傳空值時，Compare 仍可用。"
+            if lang_zh
+            else "Part of this compare is currently using the latest successful holdings snapshot: "
+            + " / ".join(cached_parts)
+            + ". This keeps the pair compare usable when the live Yahoo holdings payload is empty."
+        )
 
     left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
     right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
@@ -23661,6 +24126,125 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         overlap_weight_left,
         overlap_weight_right,
         lang_zh,
+    )
+
+    signal_cache: dict[str, dict] = {}
+    left_profile = _active_etf_strategy_profile(left_map)
+    right_profile = _active_etf_strategy_profile(right_map)
+    left_lookthrough = _active_etf_build_lookthrough_snapshot(left_map, signal_cache=signal_cache)
+    signal_cache = left_lookthrough.get("signal_cache", signal_cache)
+    right_lookthrough = _active_etf_build_lookthrough_snapshot(right_map, signal_cache=signal_cache)
+    signal_cache = right_lookthrough.get("signal_cache", signal_cache)
+
+    _render_active_etf_strategy_summary(
+        left_label,
+        right_label,
+        left_profile,
+        right_profile,
+        left_lookthrough,
+        right_lookthrough,
+        left_flow,
+        right_flow,
+        lang_zh,
+    )
+    _render_active_etf_bucket_compare(left_label, right_label, left_map, right_map, lang_zh)
+
+    concentration_gap = float(left_profile.get("top5_share", 0.0) or 0.0) - float(right_profile.get("top5_share", 0.0) or 0.0)
+    news_gap = float(left_lookthrough.get("weighted_news_score", 0.0) or 0.0) - float(right_lookthrough.get("weighted_news_score", 0.0) or 0.0)
+    foreign_gap = float(left_lookthrough.get("foreign_balance_weight", 0.0) or 0.0) - float(right_lookthrough.get("foreign_balance_weight", 0.0) or 0.0)
+
+    takeaway_lines: list[str] = []
+    if abs(concentration_gap) >= 4:
+        leader = left_label if concentration_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} 的前五大持股占比更高，策略更集中，較適合想明確押注少數主軸的使用者。"
+            if lang_zh else
+            f"{leader} runs a more concentrated top-5 basket, which is better if you want a cleaner high-conviction expression."
+        )
+    else:
+        takeaway_lines.append(
+            "兩檔前五大濃度接近，真正差異更應該看各自獨有持股與權重差。"
+            if lang_zh else
+            "The top-5 concentration is close, so the real difference comes from unique holdings and weight gaps."
+        )
+    if abs(news_gap) >= 0.35:
+        leader = left_label if news_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} 的底層持股新聞加權分數更強，近期題材順風較明顯。"
+            if lang_zh else
+            f"{leader} has the stronger look-through news score, so its disclosed basket currently has the clearer headline tailwind."
+        )
+    else:
+        takeaway_lines.append(
+            "兩檔底層新聞分數接近，短線勝負更可能來自權重配置，而不是單純消息面。"
+            if lang_zh else
+            "The look-through news scores are close, so short-term differentiation is more about portfolio construction than headlines alone."
+        )
+    if abs(foreign_gap) >= 5:
+        leader = left_label if foreign_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} 的底層持股外資偏多權重更高，對於想確認市場資金站在哪一邊會更有參考價值。"
+            if lang_zh else
+            f"{leader} shows stronger foreign-buying weight across the underlying basket, which is useful when you want a cleaner read on market sponsorship."
+        )
+
+    st.markdown(f"### {'研究閱讀提示' if lang_zh else 'Research reading guide'}")
+    for line in takeaway_lines[:3]:
+        st.markdown(f"- {line}")
+
+    st.markdown(f"### {'底層持股風向板' if lang_zh else 'Look-through holdings pulse board'}")
+    st.caption(
+        "這張表聚焦兩檔 ETF 合計權重最高的揭露持股，直接對照權重、底層新聞偏向、外資偏向與主導題材。"
+        if lang_zh else
+        "This board focuses on the highest combined-weight disclosed holdings and compares weight, look-through news tilt, foreign-flow bias, and dominant catalyst in one place."
+    )
+
+    focus_rows = []
+    focus_keys = sorted(
+        set(left_map) | set(right_map),
+        key=lambda row_key: float(left_map.get(row_key, {}).get("weight", 0.0) or 0.0) + float(right_map.get(row_key, {}).get("weight", 0.0) or 0.0),
+        reverse=True,
+    )[:12]
+    for key in focus_keys:
+        left_weight = float(left_map.get(key, {}).get("weight", 0.0) or 0.0)
+        right_weight = float(right_map.get(key, {}).get("weight", 0.0) or 0.0)
+        delta = left_weight - right_weight
+        row_item = left_map.get(key) or right_map.get(key) or {}
+        display_name = row_item.get("name") or key
+        symbol = normalize_dashboard_ticker(str(row_item.get("symbol", "") or ""))
+        signal = signal_cache.get(symbol, {})
+        if symbol and symbol not in signal_cache:
+            signal = fetch_active_etf_underlying_signal(symbol)
+            signal_cache[symbol] = signal
+        news_score = float(signal.get("news_score", 0.0) or 0.0)
+        news_label, _ = _active_etf_news_tone(news_score, lang_zh)
+        foreign_label, _ = _active_etf_foreign_tone(signal.get("foreign_net"), lang_zh)
+        foreign_lots = _format_taiwan_lot_text(signal.get("foreign_net"), lang_zh, signed=True) if signal else "—"
+        catalyst_label = tr_term(str(signal.get("dominant_catalyst", "Macro") or "Macro")) if signal else "—"
+        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
+        focus_rows.append(
+            [
+                build_holding_name_cell(str(display_name)),
+                f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
+                f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
+                f'<div class="{delta_class}">{delta:+.2f}%</div>',
+                _active_etf_story_cell(news_label, f"{news_score:+.2f}"),
+                _active_etf_story_cell(foreign_label, foreign_lots),
+                _active_etf_plain_cell(catalyst_label, class_name="etf-tracker-text"),
+            ]
+        )
+    render_active_etf_tracker_table(
+        [
+            "持股 / 公司" if lang_zh else "Holding / company",
+            left_label,
+            right_label,
+            "權重差 A-B" if lang_zh else "Weight gap A-B",
+            "底層新聞" if lang_zh else "Look-through news",
+            "底層外資" if lang_zh else "Look-through foreign",
+            "主導題材" if lang_zh else "Dominant catalyst",
+        ],
+        focus_rows,
+        "目前尚無可用的底層持股風向板資料。" if lang_zh else "The look-through holdings pulse board is unavailable right now.",
     )
 
     overlap_rows = []
