@@ -3176,10 +3176,90 @@ def render_active_etf_pair_picker(active_etf_tickers: list[str]) -> tuple[str | 
     return left_etf, right_etf
 
 
-def render_single_bundle_workspace_picker(bundles: list[dict], lens_meta: dict | None = None) -> None:
-    if not bundles:
+def _render_active_etf_workspace_station_body(
+    selected_ticker: str,
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+) -> None:
+    lang_zh = get_language() == "zh_TW"
+    snapshot = peek_active_etf_workspace_snapshot(selected_ticker, lens_meta=lens_meta)
+    refresh_key = f"active_etf_workspace_refresh_{re.sub(r'[^A-Za-z0-9_]+', '_', str(selected_ticker).upper())}"
+    status_col, action_col = st.columns([4.5, 1.2], gap="small")
+    with status_col:
+        if snapshot is not None:
+            fetched_at = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
+            st.caption(
+                (
+                    f"目前先顯示 {display_ticker_label(selected_ticker)} 最近一次工作台快照：{fetched_at}。需要最新資料時，再按右側刷新。"
+                    if lang_zh else
+                    f"Showing the latest saved workspace snapshot for {display_ticker_label(selected_ticker)} from {fetched_at}. Refresh only when you want a newer build."
+                )
+            )
+        else:
+            st.info(
+                (
+                    f"{display_ticker_label(selected_ticker)} 尚未建立工作台快照；第一次建立會稍慢，之後會優先顯示最近一次成功版本。"
+                    if lang_zh else
+                    f"No saved workspace snapshot exists yet for {display_ticker_label(selected_ticker)}. The first build may take longer, then future opens will use the latest successful snapshot first."
+                )
+            )
+    with action_col:
+        refresh_now = st.button(
+            "刷新工作台" if lang_zh else "Refresh workspace",
+            key=refresh_key,
+            use_container_width=True,
+        )
+
+    needs_build = refresh_now or snapshot is None
+    if needs_build:
+        with st.spinner("正在建立 ETF 工作台快照..." if lang_zh else "Building the ETF workspace snapshot..."):
+            bundle, bundle_snapshot = load_active_etf_workspace_bundle(
+                daily_data,
+                intraday_data,
+                selected_ticker,
+                lens_meta=lens_meta,
+                force_refresh=refresh_now,
+            )
+    else:
+        bundle, bundle_snapshot = load_active_etf_workspace_bundle(
+            daily_data,
+            intraday_data,
+            selected_ticker,
+            lens_meta=lens_meta,
+            force_refresh=False,
+        )
+
+    if bundle is None:
+        st.warning(
+            "目前無法建立這檔主動式 ETF 的工作台資料，請稍後再試。"
+            if lang_zh else
+            "The workspace snapshot could not be built for this active ETF right now. Please try again later."
+        )
         return
-    tickers = [bundle["ticker"] for bundle in bundles]
+
+    if refresh_now and _active_etf_lab_snapshot_ready(bundle_snapshot):
+        refreshed_at = format_active_etf_snapshot_fetched_at(bundle_snapshot.get("fetched_at"))
+        st.caption(
+            (
+                f"工作台快照已更新：{refreshed_at}"
+                if lang_zh else
+                f"Workspace snapshot refreshed at {refreshed_at}"
+            )
+        )
+
+    render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(tickers))
+
+
+def render_single_bundle_workspace_picker(
+    tickers: list[str],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> None:
+    if not tickers:
+        return
     lang_zh = get_language() == "zh_TW"
     default_ticker = st.session_state.get("dashboard_standard_focus_etf", tickers[0])
     if default_ticker not in tickers:
@@ -3191,14 +3271,24 @@ def render_single_bundle_workspace_picker(bundles: list[dict], lens_meta: dict |
         format_func=display_ticker_label,
         key="dashboard_standard_focus_etf",
     )
-    render_ticker_bundle_page(next(bundle for bundle in bundles if bundle["ticker"] == selected_ticker), lens_meta=lens_meta, selected_count=len(tickers))
+    _render_active_etf_workspace_station_body(
+        selected_ticker,
+        daily_data,
+        intraday_data,
+        tickers,
+        lens_meta=lens_meta,
+    )
 
 
-def render_bundle_workspace_tabs(bundles: list[dict], lens_meta: dict | None = None) -> None:
-    if not bundles:
+def render_bundle_workspace_tabs(
+    tickers: list[str],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> None:
+    if not tickers:
         return
     lang_zh = get_language() == "zh_TW"
-    tickers = [bundle["ticker"] for bundle in bundles]
     selected_ticker = render_lightweight_option_selector(
         tickers,
         "active_etf_workspace_focus_ticker",
@@ -3212,9 +3302,13 @@ def render_bundle_workspace_tabs(bundles: list[dict], lens_meta: dict | None = N
     )
     if not selected_ticker:
         return
-    bundle = next((row for row in bundles if row["ticker"] == selected_ticker), None)
-    if bundle is not None:
-        render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=len(tickers))
+    _render_active_etf_workspace_station_body(
+        selected_ticker,
+        daily_data,
+        intraday_data,
+        tickers,
+        lens_meta=lens_meta,
+    )
 
 
 def _safe_secret(name: str, default: str = "") -> str:
@@ -3231,10 +3325,336 @@ SUPABASE_PROFILE_TABLE = _safe_secret("SUPABASE_PROFILE_TABLE", os.environ.get("
 AUTH_MIN_PASSWORD_LENGTH = 8
 
 ACTIVE_ETF_TRACKER_SNAPSHOT_DB = Path(".dashboard_cache") / "active_etf_tracker.sqlite3"
+ACTIVE_ETF_LAB_SNAPSHOT_VERSION = 1
+ACTIVE_ETF_LAB_SNAPSHOT_PATH = Path(".dashboard_cache") / "active_etf_lab_snapshots.json"
 ACTIVE_ETF_HOLDINGS_SOURCE_LABEL = "Yahoo Finance funds_data"
 ACTIVE_ETF_UPDATE_NOTE_EN = "This section is designed for after-close review and refreshes after 4:00 PM Asia/Taipei."
 ACTIVE_ETF_UPDATE_NOTE_ZH = "本區為收盤後追蹤用途，資訊設計為每日下午 4:00（台北時間）後更新。"
 ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00982A", "00981A"]
+
+
+def _active_etf_lab_snapshot_store() -> dict:
+    empty_store = {"version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION, "items": {}}
+    try:
+        if not ACTIVE_ETF_LAB_SNAPSHOT_PATH.exists():
+            return empty_store
+        payload = json.loads(ACTIVE_ETF_LAB_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return empty_store
+    if not isinstance(payload, dict):
+        return empty_store
+    items = payload.get("items")
+    if not isinstance(items, dict):
+        items = {}
+    return {
+        "version": int(payload.get("version", ACTIVE_ETF_LAB_SNAPSHOT_VERSION) or ACTIVE_ETF_LAB_SNAPSHOT_VERSION),
+        "items": items,
+    }
+
+
+def _write_active_etf_lab_snapshot_store(store: dict) -> None:
+    ACTIVE_ETF_LAB_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+        "items": dict((store or {}).get("items", {}) or {}),
+    }
+    try:
+        ACTIVE_ETF_LAB_SNAPSHOT_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _active_etf_lab_snapshot_safe(value):
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, np.ndarray):
+        return [_active_etf_lab_snapshot_safe(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return _active_etf_lab_snapshot_safe(value.item())
+    if isinstance(value, dict):
+        return {
+            str(key): _active_etf_lab_snapshot_safe(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_active_etf_lab_snapshot_safe(item) for item in value]
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return value
+
+
+def _serialize_active_etf_series(series: pd.Series | None) -> dict | None:
+    if not isinstance(series, pd.Series) or series.empty:
+        return None
+    frame = series.to_frame(name=str(series.name or "value"))
+    return {
+        "series_name": str(series.name or frame.columns[0]),
+        "frame": json.loads(frame.to_json(orient="split", date_format="iso")),
+    }
+
+
+def _deserialize_active_etf_series(payload: dict | None) -> pd.Series:
+    if not isinstance(payload, dict):
+        return pd.Series(dtype=float)
+    frame_payload = payload.get("frame")
+    if not isinstance(frame_payload, dict):
+        return pd.Series(dtype=float)
+    try:
+        frame = pd.read_json(io.StringIO(json.dumps(frame_payload, ensure_ascii=False)), orient="split")
+    except Exception:
+        return pd.Series(dtype=float)
+    if frame.empty:
+        return pd.Series(dtype=float)
+    series = frame.iloc[:, 0].copy()
+    series.name = str(payload.get("series_name") or frame.columns[0] or "value")
+    return series
+
+
+def _serialize_active_etf_frame(frame: pd.DataFrame | None) -> dict | None:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    return json.loads(frame.to_json(orient="split", date_format="iso"))
+
+
+def _deserialize_active_etf_frame(payload: dict | None) -> pd.DataFrame:
+    if not isinstance(payload, dict):
+        return pd.DataFrame()
+    try:
+        return pd.read_json(io.StringIO(json.dumps(payload, ensure_ascii=False)), orient="split")
+    except Exception:
+        return pd.DataFrame()
+
+
+def _serialize_active_etf_bundle(bundle: dict | None) -> dict:
+    bundle = dict(bundle or {})
+    return {
+        "ticker": str(bundle.get("ticker", "")).upper().strip(),
+        "field_name": str(bundle.get("field_name", "") or "").strip(),
+        "news_items": _active_etf_lab_snapshot_safe(bundle.get("news_items", [])),
+        "news_error": str(bundle.get("news_error", "") or "").strip(),
+        "intraday": _active_etf_lab_snapshot_safe(bundle.get("intraday", {})),
+        "analysis": _active_etf_lab_snapshot_safe(bundle.get("analysis", {})),
+        "price_series": _serialize_active_etf_series(bundle.get("price_series")),
+        "volume_series": _serialize_active_etf_series(bundle.get("volume_series")),
+        "daily_ohlc": _serialize_active_etf_frame(bundle.get("daily_ohlc")),
+        "intraday_ohlc": _serialize_active_etf_frame(bundle.get("intraday_ohlc")),
+    }
+
+
+def _deserialize_active_etf_bundle(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    ticker = str(payload.get("ticker", "") or "").upper().strip()
+    if not ticker:
+        return None
+    return {
+        "ticker": ticker,
+        "field_name": str(payload.get("field_name", "") or "").strip(),
+        "news_items": list(payload.get("news_items", []) or []),
+        "news_error": str(payload.get("news_error", "") or "").strip(),
+        "intraday": dict(payload.get("intraday", {}) or {}),
+        "analysis": dict(payload.get("analysis", {}) or {}),
+        "price_series": _deserialize_active_etf_series(payload.get("price_series")),
+        "volume_series": _deserialize_active_etf_series(payload.get("volume_series")),
+        "daily_ohlc": _deserialize_active_etf_frame(payload.get("daily_ohlc")),
+        "intraday_ohlc": _deserialize_active_etf_frame(payload.get("intraday_ohlc")),
+    }
+
+
+def _active_etf_workspace_snapshot_key(ticker: str, lens_meta: dict | None = None) -> str:
+    ticker_key = str(ticker or "").upper().strip()
+    period = str((lens_meta or {}).get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD)
+    interval = str((lens_meta or {}).get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL)
+    lens_title = str((lens_meta or {}).get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS)
+    return f"workspace::{ticker_key}::{period}::{interval}::{lens_title}"
+
+
+def _active_etf_pair_snapshot_key(left_ticker: str, right_ticker: str) -> str:
+    return f"compare::{str(left_ticker or '').upper().strip()}::{str(right_ticker or '').upper().strip()}"
+
+
+def _active_etf_lab_snapshot_ready(snapshot: dict | None) -> bool:
+    return (
+        isinstance(snapshot, dict)
+        and int(snapshot.get("version", 0) or 0) == ACTIVE_ETF_LAB_SNAPSHOT_VERSION
+        and str(snapshot.get("status", "") or "") == "ready"
+    )
+
+
+def format_active_etf_snapshot_fetched_at(value: object) -> str:
+    ts = _normalize_tw_timestamp(value)
+    if ts is None:
+        return "â€”"
+    return ts.strftime("%Y-%m-%d %H:%M")
+
+
+def peek_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = None) -> dict | None:
+    store = _active_etf_lab_snapshot_store()
+    snapshot = (store.get("items", {}) or {}).get(_active_etf_workspace_snapshot_key(ticker, lens_meta))
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        return None
+    return snapshot
+
+
+def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
+    store = _active_etf_lab_snapshot_store()
+    snapshot = (store.get("items", {}) or {}).get(_active_etf_pair_snapshot_key(left_ticker, right_ticker))
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        return None
+    return snapshot
+
+
+def _clear_active_etf_lab_refresh_caches() -> None:
+    try:
+        _clear_supply_chain_refresh_caches()
+    except Exception:
+        pass
+    for cached_func in (
+        fetch_daily_data,
+        fetch_intraday_data,
+        fetch_ticker_news,
+        fetch_analyst_target_snapshot,
+        fetch_asset_profile_snapshot,
+        fetch_twse_valuation_snapshot,
+        fetch_twse_stock_institutional_flow,
+        fetch_monthly_revenue_snapshot,
+        fetch_cbc_macro_snapshot,
+        fetch_taifex_put_call_snapshot,
+        fetch_active_etf_holdings_snapshot,
+        fetch_twse_etf_institutional_flow,
+        fetch_active_etf_underlying_signal,
+    ):
+        try:
+            cached_func.clear()
+        except Exception:
+            pass
+
+
+def _build_active_etf_workspace_live_bundle(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    ticker: str,
+    lens_meta: dict | None = None,
+    *,
+    force_market_refresh: bool = False,
+) -> dict | None:
+    source_daily = daily_data
+    source_intraday = intraday_data
+    if force_market_refresh:
+        period = str((lens_meta or {}).get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD)
+        interval = str((lens_meta or {}).get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL)
+        try:
+            fetch_daily_data.clear()
+        except Exception:
+            pass
+        try:
+            fetch_intraday_data.clear()
+        except Exception:
+            pass
+        source_daily = fetch_daily_data([ticker], period, interval)
+        source_intraday = fetch_intraday_data([ticker])
+    return collect_ticker_context(source_daily, source_intraday, ticker, news_limit=8, lens_meta=lens_meta)
+
+
+def _build_active_etf_workspace_snapshot(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    ticker: str,
+    lens_meta: dict | None = None,
+    *,
+    force_market_refresh: bool = False,
+) -> dict:
+    period = str((lens_meta or {}).get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD)
+    interval = str((lens_meta or {}).get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL)
+    lens_title = str((lens_meta or {}).get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS)
+    bundle = _build_active_etf_workspace_live_bundle(
+        daily_data,
+        intraday_data,
+        ticker,
+        lens_meta=lens_meta,
+        force_market_refresh=force_market_refresh,
+    )
+    if bundle is None:
+        return {
+            "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+            "kind": "workspace",
+            "ticker": str(ticker or "").upper().strip(),
+            "period": period,
+            "interval": interval,
+            "lens_title": lens_title,
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "status": "missing",
+            "bundle": {},
+        }
+    return {
+        "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+        "kind": "workspace",
+        "ticker": str(ticker or "").upper().strip(),
+        "period": period,
+        "interval": interval,
+        "lens_title": lens_title,
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "ready",
+        "bundle": _serialize_active_etf_bundle(bundle),
+    }
+
+
+def get_active_etf_workspace_bundle_snapshot(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    ticker: str,
+    lens_meta: dict | None = None,
+    *,
+    force_refresh: bool = False,
+) -> dict:
+    snapshot_key = _active_etf_workspace_snapshot_key(ticker, lens_meta)
+    store = _active_etf_lab_snapshot_store()
+    existing = (store.get("items", {}) or {}).get(snapshot_key)
+    if not force_refresh and _active_etf_lab_snapshot_ready(existing):
+        return existing
+    if force_refresh:
+        _clear_active_etf_lab_refresh_caches()
+    snapshot = _build_active_etf_workspace_snapshot(
+        daily_data,
+        intraday_data,
+        ticker,
+        lens_meta=lens_meta,
+        force_market_refresh=force_refresh,
+    )
+    items = dict(store.get("items", {}) or {})
+    items[snapshot_key] = snapshot
+    store["items"] = items
+    _write_active_etf_lab_snapshot_store(store)
+    return snapshot
+
+
+def load_active_etf_workspace_bundle(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    ticker: str,
+    lens_meta: dict | None = None,
+    *,
+    force_refresh: bool = False,
+) -> tuple[dict | None, dict]:
+    snapshot = None if force_refresh else peek_active_etf_workspace_snapshot(ticker, lens_meta=lens_meta)
+    if snapshot is None:
+        snapshot = get_active_etf_workspace_bundle_snapshot(
+            daily_data,
+            intraday_data,
+            ticker,
+            lens_meta=lens_meta,
+            force_refresh=force_refresh,
+        )
+    bundle = _deserialize_active_etf_bundle(snapshot.get("bundle"))
+    return bundle, snapshot
 
 
 
@@ -17981,8 +18401,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         )
         return
 
-    now_tw = datetime.now(TW_TZ)
-    timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
+    timestamp_text = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
     update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
 
     chips = [
@@ -18171,11 +18590,37 @@ def render_active_etf_lab_dashboard(
     def _render_etf_pair_compare() -> None:
         left_etf, right_etf = render_active_etf_pair_picker(active_etf_tickers)
         if left_etf and right_etf:
+            snapshot = peek_active_etf_pair_snapshot(left_etf, right_etf)
+            status_col, action_col = st.columns([4.5, 1.2], gap="small")
+            with status_col:
+                if snapshot is not None:
+                    fetched_at = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
+                    st.caption(
+                        (
+                            f"目前先顯示 {display_ticker_label(left_etf)} × {display_ticker_label(right_etf)} 最近一次比較快照：{fetched_at}。要更新持股、新聞與外資穿透，再按右側刷新。"
+                            if lang_zh else
+                            f"Showing the latest saved compare snapshot for {display_ticker_label(left_etf)} × {display_ticker_label(right_etf)} from {fetched_at}. Refresh only when you want newer holdings, news, and foreign-flow look-through."
+                        )
+                    )
+                else:
+                    st.info(
+                        (
+                            "這組雙 ETF 比較尚未建立快照；第一次建立會稍慢，之後會先顯示最近一次成功版本。"
+                            if lang_zh else
+                            "No saved pair snapshot exists for this ETF compare yet. The first build may take longer, then future opens will use the latest successful version first."
+                        )
+                    )
+            with action_col:
+                refresh_now = st.button(
+                    "刷新比較" if lang_zh else "Refresh compare",
+                    key=f"active_etf_pair_refresh_{re.sub(r'[^A-Za-z0-9_]+', '_', left_etf)}_{re.sub(r'[^A-Za-z0-9_]+', '_', right_etf)}",
+                    use_container_width=True,
+                )
             with st.spinner(
                 "正在建立雙 ETF 持股、策略與底層風向比較..." if lang_zh else
                 "Building the dual-ETF holdings, strategy, and look-through comparison..."
             ):
-                render_active_etf_pair_comparison(left_etf, right_etf)
+                render_active_etf_pair_comparison(left_etf, right_etf, force_refresh=refresh_now)
 
     if layout_mode == "Standard":
         standard_sections = [
@@ -18192,7 +18637,7 @@ def render_active_etf_lab_dashboard(
         elif current_section == "layout_standard_pair_compare_tab":
             _render_etf_pair_compare()
         else:
-            render_single_bundle_workspace_picker(_ensure_bundles(), lens_meta=lens_meta)
+            render_single_bundle_workspace_picker(active_etf_tickers, daily_data, intraday_data, lens_meta=lens_meta)
     elif layout_mode == "Advanced":
         advanced_sections = [
             "layout_brief_tab",
@@ -18215,7 +18660,7 @@ def render_active_etf_lab_dashboard(
         elif current_section == "layout_compare_tab":
             _render_etf_pair_compare()
         else:
-            render_bundle_workspace_tabs(_ensure_bundles(), lens_meta=lens_meta)
+            render_bundle_workspace_tabs(active_etf_tickers, daily_data, intraday_data, lens_meta=lens_meta)
     else:
         _render_etf_briefing()
         expert_sections = [
@@ -18236,7 +18681,7 @@ def render_active_etf_lab_dashboard(
         if current_section == "layout_comparison_desk_tab":
             _render_etf_pair_compare()
         else:
-            render_bundle_workspace_tabs(_ensure_bundles(), lens_meta=lens_meta)
+            render_bundle_workspace_tabs(active_etf_tickers, daily_data, intraday_data, lens_meta=lens_meta)
 
 
 
@@ -19802,6 +20247,96 @@ def inject_active_etf_tracker_css() -> None:
             background: rgba(129, 140, 248, 0.14);
             border-color: rgba(129, 140, 248, 0.22);
             color: #e6e8ff;
+        }
+        .etf-bucket-board {
+            display: grid;
+            gap: 12px;
+            margin-top: 14px;
+        }
+        .etf-bucket-row {
+            display: grid;
+            grid-template-columns: minmax(180px, 220px) 1fr;
+            gap: 16px;
+            align-items: center;
+            padding: 16px 18px;
+            border-radius: 20px;
+            border: 1px solid rgba(56, 189, 248, 0.12);
+            background:
+                linear-gradient(135deg, rgba(13, 28, 52, 0.94) 0%, rgba(8, 18, 34, 0.98) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.03),
+                0 12px 28px rgba(1, 9, 22, 0.18),
+                0 0 16px rgba(56, 189, 248, 0.05);
+        }
+        .etf-bucket-label {
+            font-size: 16px;
+            line-height: 1.35;
+            font-weight: 900;
+            color: #f8fbff;
+        }
+        .etf-bucket-read {
+            margin-top: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: rgba(191, 210, 232, 0.84);
+        }
+        .etf-bucket-lanes {
+            display: grid;
+            gap: 10px;
+        }
+        .etf-bucket-lane {
+            display: grid;
+            grid-template-columns: minmax(120px, 150px) 1fr auto;
+            gap: 12px;
+            align-items: center;
+        }
+        .etf-bucket-lane-label {
+            font-size: 13px;
+            font-weight: 800;
+            color: rgba(226, 232, 240, 0.90);
+            white-space: nowrap;
+        }
+        .etf-bucket-track {
+            position: relative;
+            height: 12px;
+            overflow: hidden;
+            border-radius: 999px;
+            border: 1px solid rgba(103, 232, 249, 0.14);
+            background:
+                linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.28);
+        }
+        .etf-bucket-fill {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            min-width: 0;
+            border-radius: 999px;
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.18);
+        }
+        .etf-bucket-fill-left {
+            background: linear-gradient(90deg, rgba(34, 211, 238, 0.92) 0%, rgba(56, 189, 248, 0.82) 100%);
+        }
+        .etf-bucket-fill-right {
+            background: linear-gradient(90deg, rgba(168, 85, 247, 0.88) 0%, rgba(129, 140, 248, 0.88) 100%);
+            box-shadow: 0 0 18px rgba(129, 140, 248, 0.18);
+        }
+        .etf-bucket-value {
+            font-size: 15px;
+            font-weight: 900;
+            color: #fff8ee;
+            min-width: 68px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        @media (max-width: 900px) {
+            .etf-bucket-row {
+                grid-template-columns: 1fr;
+            }
+            .etf-bucket-lane {
+                grid-template-columns: minmax(92px, 130px) 1fr auto;
+            }
         }
         </style>
         """,
@@ -23660,7 +24195,7 @@ def _active_etf_lookup_symbol_code(name: str) -> str:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_active_etf_underlying_signal(symbol: str, max_news: int = 8) -> dict:
+def fetch_active_etf_underlying_signal(symbol: str, max_news: int = 5) -> dict:
     normalized = normalize_dashboard_ticker(symbol)
     if not normalized:
         return {}
@@ -23781,44 +24316,50 @@ def _render_active_etf_bucket_compare(left_label: str, right_label: str, left_ma
         f"</div>"
     )
 
-    rows = []
-    for bucket in ACTIVE_ETF_BUCKET_ORDER:
-        left_weight = float(left_buckets.get(bucket, 0.0) or 0.0)
-        right_weight = float(right_buckets.get(bucket, 0.0) or 0.0)
-        delta = left_weight - right_weight
-        leader = (
-            "接近" if abs(delta) < 3 else f"{left_label} 較高" if delta > 0 else f"{right_label} 較高"
-        ) if lang_zh else (
-            "Close" if abs(delta) < 3 else f"{left_label} heavier" if delta > 0 else f"{right_label} heavier"
-        )
-        delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-delta-flat"
-        rows.append(
-            [
-                _active_etf_plain_cell(_active_etf_bucket_label(bucket, lang_zh), class_name="etf-tracker-text"),
-                f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
-                f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
-                f'<div class="{delta_class}">{delta:+.2f}%</div>',
-                _active_etf_story_cell(leader),
-            ]
-        )
-
     st.markdown(f"### {'策略桶位分布' if lang_zh else 'Strategy bucket mix'}")
     st.caption(
         "把揭露持股聚合成 AI / 科技主軸、金融 / 收益錨、高股息 / 防禦收益、中小型成長與其他配置，幫你先看風格比例。"
         if lang_zh else
         "This groups disclosed holdings into AI/tech core, financial/income anchor, high-dividend/defensive yield, mid-cap growth, and other exposures so the style mix is easier to read."
     )
-    render_active_etf_tracker_table(
-        [
-            "策略桶位" if lang_zh else "Strategy bucket",
-            left_label,
-            right_label,
-            "權重差 A-B" if lang_zh else "Weight gap A-B",
-            "閱讀" if lang_zh else "Read",
-        ],
-        rows,
-        "目前尚無可用的策略桶位分布資料。" if lang_zh else "Strategy bucket mix is unavailable right now.",
-    )
+    band_rows: list[str] = []
+    for bucket in ACTIVE_ETF_BUCKET_ORDER:
+        left_weight = float(left_buckets.get(bucket, 0.0) or 0.0)
+        right_weight = float(right_buckets.get(bucket, 0.0) or 0.0)
+        delta = left_weight - right_weight
+        if abs(delta) < 3:
+            leader = "接近" if lang_zh else "Close"
+        else:
+            leader = f"{left_label} 較高" if delta > 0 else f"{right_label} 較高"
+            if not lang_zh:
+                leader = f"{left_label} heavier" if delta > 0 else f"{right_label} heavier"
+        band_rows.append(
+            f"""
+            <div class="etf-bucket-row">
+                <div>
+                    <div class="etf-bucket-label">{escape(_active_etf_bucket_label(bucket, lang_zh))}</div>
+                    <div class="etf-bucket-read">{escape(leader)} · {delta:+.2f}%</div>
+                </div>
+                <div class="etf-bucket-lanes">
+                    <div class="etf-bucket-lane">
+                        <div class="etf-bucket-lane-label">{escape(left_label)}</div>
+                        <div class="etf-bucket-track">
+                            <div class="etf-bucket-fill etf-bucket-fill-left" style="width: {max(left_weight, 0.0):.2f}%;"></div>
+                        </div>
+                        <div class="etf-bucket-value">{left_weight:.2f}%</div>
+                    </div>
+                    <div class="etf-bucket-lane">
+                        <div class="etf-bucket-lane-label">{escape(right_label)}</div>
+                        <div class="etf-bucket-track">
+                            <div class="etf-bucket-fill etf-bucket-fill-right" style="width: {max(right_weight, 0.0):.2f}%;"></div>
+                        </div>
+                        <div class="etf-bucket-value">{right_weight:.2f}%</div>
+                    </div>
+                </div>
+            </div>
+            """
+        )
+    render_html_block(f'<div class="etf-bucket-board">{"".join(band_rows)}</div>')
 
 
 def _active_etf_news_tone(score: float, lang_zh: bool) -> tuple[str, str]:
@@ -23843,7 +24384,7 @@ def _active_etf_foreign_tone(foreign_net: object, lang_zh: bool) -> tuple[str, s
 def _active_etf_build_lookthrough_snapshot(
     mapped: dict[str, dict],
     *,
-    max_items: int = 12,
+    max_items: int = 8,
     signal_cache: dict[str, dict] | None = None,
 ) -> dict:
     if signal_cache is None:
@@ -24035,7 +24576,179 @@ def _active_etf_compare_summary_cards(
     )
 
 
-def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> None:
+def _active_etf_clean_lookthrough_snapshot(payload: dict) -> dict:
+    return {
+        str(key): _active_etf_lab_snapshot_safe(value)
+        for key, value in dict(payload or {}).items()
+        if str(key) != "signal_cache"
+    }
+
+
+def _build_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str) -> dict:
+    snapshot = None if force_refresh else peek_active_etf_pair_snapshot(left_ticker, right_ticker)
+    if snapshot is None:
+        snapshot = get_active_etf_pair_compare_snapshot(left_ticker, right_ticker, force_refresh=force_refresh)
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        st.info(
+            "ç›®å‰æŠ“ä¸åˆ°é€™å…©æª”ä¸»å‹•å¼ ETF çš„æŒè‚¡å¿«ç…§ï¼Œè«‹ç¨å¾Œå†è©¦ã€‚"
+            if lang_zh
+            else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
+        )
+        return
+
+    left_payload = dict(snapshot.get("left_payload", {}) or {})
+    right_payload = dict(snapshot.get("right_payload", {}) or {})
+    left_flow = dict(snapshot.get("left_flow", {}) or {})
+    right_flow = dict(snapshot.get("right_flow", {}) or {})
+
+    left_items = left_payload.get("items", []) or []
+    right_items = right_payload.get("items", []) or []
+    if not left_items and not right_items:
+        return {
+            "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+            "kind": "compare",
+            "left_ticker": str(left_ticker or "").upper().strip(),
+            "right_ticker": str(right_ticker or "").upper().strip(),
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "status": "missing",
+            "left_payload": _active_etf_lab_snapshot_safe(left_payload),
+            "right_payload": _active_etf_lab_snapshot_safe(right_payload),
+            "left_flow": _active_etf_lab_snapshot_safe(left_flow),
+            "right_flow": _active_etf_lab_snapshot_safe(right_flow),
+        }
+
+    left_map = _active_etf_holdings_compare_map(left_items, max_items=40)
+    right_map = _active_etf_holdings_compare_map(right_items, max_items=40)
+    common_keys = set(left_map) & set(right_map)
+    left_unique_keys = set(left_map) - set(right_map)
+    right_unique_keys = set(right_map) - set(left_map)
+    overlap_weight_left = sum(float(left_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+    overlap_weight_right = sum(float(right_map[key].get("weight", 0.0) or 0.0) for key in common_keys)
+
+    left_profile = dict(snapshot.get("left_profile", {}) or {})
+    right_profile = dict(snapshot.get("right_profile", {}) or {})
+    left_lookthrough = dict(snapshot.get("left_lookthrough", {}) or {})
+    right_lookthrough = dict(snapshot.get("right_lookthrough", {}) or {})
+
+    left_label = display_ticker_label(left_ticker)
+    right_label = display_ticker_label(right_ticker)
+    concentration_gap = float(left_profile.get("top5_share", 0.0) or 0.0) - float(right_profile.get("top5_share", 0.0) or 0.0)
+    news_gap = float(left_lookthrough.get("weighted_news_score", 0.0) or 0.0) - float(right_lookthrough.get("weighted_news_score", 0.0) or 0.0)
+    foreign_gap = float(left_lookthrough.get("foreign_balance_weight", 0.0) or 0.0) - float(right_lookthrough.get("foreign_balance_weight", 0.0) or 0.0)
+
+    takeaway_lines: list[str] = []
+    if abs(concentration_gap) >= 4:
+        leader = left_label if concentration_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} çš„å‰äº”å¤§æŒè‚¡å æ¯”æ›´é«˜ï¼Œç­–ç•¥æ›´é›†ä¸­ï¼Œè¼ƒé©åˆæƒ³æ˜Žç¢ºæŠ¼æ³¨å°‘æ•¸ä¸»è»¸çš„ä½¿ç”¨è€…ã€‚"
+            if get_language() == "zh_TW" else
+            f"{leader} runs a more concentrated top-5 basket, which is better if you want a cleaner high-conviction expression."
+        )
+    else:
+        takeaway_lines.append(
+            "å…©æª”å‰äº”å¤§æ¿ƒåº¦æŽ¥è¿‘ï¼ŒçœŸæ­£å·®ç•°æ›´æ‡‰è©²çœ‹å„è‡ªç¨æœ‰æŒè‚¡èˆ‡æ¬Šé‡å·®ã€‚"
+            if get_language() == "zh_TW" else
+            "The top-5 concentration is close, so the real difference comes from unique holdings and weight gaps."
+        )
+    if abs(news_gap) >= 0.35:
+        leader = left_label if news_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} çš„åº•å±¤æŒè‚¡æ–°èžåŠ æ¬Šåˆ†æ•¸æ›´å¼·ï¼Œè¿‘æœŸé¡Œæé †é¢¨è¼ƒæ˜Žé¡¯ã€‚"
+            if get_language() == "zh_TW" else
+            f"{leader} has the stronger look-through news score, so its disclosed basket currently has the clearer headline tailwind."
+        )
+    else:
+        takeaway_lines.append(
+            "å…©æª”åº•å±¤æ–°èžåˆ†æ•¸æŽ¥è¿‘ï¼ŒçŸ­ç·šå‹è² æ›´å¯èƒ½ä¾†è‡ªæ¬Šé‡é…ç½®ï¼Œè€Œä¸æ˜¯å–®ç´”æ¶ˆæ¯é¢ã€‚"
+            if get_language() == "zh_TW" else
+            "The look-through news scores are close, so short-term differentiation is more about portfolio construction than headlines alone."
+        )
+    if abs(foreign_gap) >= 5:
+        leader = left_label if foreign_gap > 0 else right_label
+        takeaway_lines.append(
+            f"{leader} çš„åº•å±¤æŒè‚¡å¤–è³‡åå¤šæ¬Šé‡æ›´é«˜ï¼Œå°æ–¼æƒ³ç¢ºèªå¸‚å ´è³‡é‡‘ç«™åœ¨å“ªä¸€é‚Šæœƒæ›´æœ‰åƒè€ƒåƒ¹å€¼ã€‚"
+            if get_language() == "zh_TW" else
+            f"{leader} shows stronger foreign-buying weight across the underlying basket, which is useful when you want a cleaner read on market sponsorship."
+        )
+
+    focus_rows_data: list[dict] = []
+    focus_keys = sorted(
+        set(left_map) | set(right_map),
+        key=lambda row_key: float(left_map.get(row_key, {}).get("weight", 0.0) or 0.0) + float(right_map.get(row_key, {}).get("weight", 0.0) or 0.0),
+        reverse=True,
+    )[:12]
+    for key in focus_keys:
+        left_weight = float(left_map.get(key, {}).get("weight", 0.0) or 0.0)
+        right_weight = float(right_map.get(key, {}).get("weight", 0.0) or 0.0)
+        delta = left_weight - right_weight
+        row_item = left_map.get(key) or right_map.get(key) or {}
+        display_name = str(row_item.get("name") or key)
+        symbol = normalize_dashboard_ticker(str(row_item.get("symbol", "") or ""))
+        signal = signal_cache.get(symbol, {})
+        news_score = float(signal.get("news_score", 0.0) or 0.0)
+        news_label, _ = _active_etf_news_tone(news_score, get_language() == "zh_TW")
+        foreign_label, _ = _active_etf_foreign_tone(signal.get("foreign_net"), get_language() == "zh_TW")
+        foreign_lots = _format_taiwan_lot_text(signal.get("foreign_net"), get_language() == "zh_TW", signed=True) if signal else "â€”"
+        catalyst_label = tr_term(str(signal.get("dominant_catalyst", "Macro") or "Macro")) if signal else "â€”"
+        focus_rows_data.append(
+            {
+                "display_name": display_name,
+                "symbol": symbol,
+                "left_weight": left_weight,
+                "right_weight": right_weight,
+                "delta": delta,
+                "news_label": news_label,
+                "news_score": news_score,
+                "foreign_label": foreign_label,
+                "foreign_net": _active_etf_lab_snapshot_safe(signal.get("foreign_net")),
+                "foreign_lots": foreign_lots,
+                "dominant_catalyst": str(signal.get("dominant_catalyst", "Macro") or "Macro"),
+                "catalyst_label": catalyst_label,
+            }
+        )
+
+    return {
+        "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
+        "kind": "compare",
+        "left_ticker": str(left_ticker or "").upper().strip(),
+        "right_ticker": str(right_ticker or "").upper().strip(),
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "ready",
+        "left_payload": _active_etf_lab_snapshot_safe(left_payload),
+        "right_payload": _active_etf_lab_snapshot_safe(right_payload),
+        "left_flow": _active_etf_lab_snapshot_safe(left_flow),
+        "right_flow": _active_etf_lab_snapshot_safe(right_flow),
+        "common_count": len(common_keys),
+        "left_unique_count": len(left_unique_keys),
+        "right_unique_count": len(right_unique_keys),
+        "overlap_weight_left": overlap_weight_left,
+        "overlap_weight_right": overlap_weight_right,
+        "left_profile": _active_etf_lab_snapshot_safe(left_profile),
+        "right_profile": _active_etf_lab_snapshot_safe(right_profile),
+        "left_lookthrough": _active_etf_clean_lookthrough_snapshot(left_lookthrough),
+        "right_lookthrough": _active_etf_clean_lookthrough_snapshot(right_lookthrough),
+        "takeaway_lines": takeaway_lines[:3],
+        "focus_rows_data": _active_etf_lab_snapshot_safe(focus_rows_data),
+    }
+
+
+def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *, force_refresh: bool = False) -> dict:
+    snapshot_key = _active_etf_pair_snapshot_key(left_ticker, right_ticker)
+    store = _active_etf_lab_snapshot_store()
+    existing = (store.get("items", {}) or {}).get(snapshot_key)
+    if not force_refresh and _active_etf_lab_snapshot_ready(existing):
+        return existing
+    if force_refresh:
+        _clear_active_etf_lab_refresh_caches()
+    snapshot = _build_active_etf_pair_compare_snapshot(left_ticker, right_ticker)
+    items = dict(store.get("items", {}) or {})
+    items[snapshot_key] = snapshot
+    store["items"] = items
+    _write_active_etf_lab_snapshot_store(store)
+    return snapshot
+
+
+def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force_refresh: bool = False) -> None:
     """Render ETF A/B holdings comparison with overlap, strategy, news, and foreign-flow context."""
     lang_zh = get_language() == "zh_TW"
     inject_active_etf_tracker_css()
@@ -24198,6 +24911,18 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str) -> No
         if lang_zh else
         "This board focuses on the highest combined-weight disclosed holdings and compares weight, look-through news tilt, foreign-flow bias, and dominant catalyst in one place."
     )
+
+    signal_cache: dict[str, dict] = {}
+    focus_rows_data = list(snapshot.get("focus_rows_data", []) or [])
+    for item in focus_rows_data:
+        symbol = normalize_dashboard_ticker(str(item.get("symbol", "") or ""))
+        if not symbol:
+            continue
+        signal_cache[symbol] = {
+            "news_score": float(item.get("news_score", 0.0) or 0.0),
+            "foreign_net": _safe_float(item.get("foreign_net")),
+            "dominant_catalyst": str(item.get("dominant_catalyst", "Macro") or "Macro"),
+        }
 
     focus_rows = []
     focus_keys = sorted(
