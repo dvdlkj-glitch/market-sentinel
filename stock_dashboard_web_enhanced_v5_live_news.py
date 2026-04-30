@@ -6601,6 +6601,52 @@ def _supabase_headers(*, include_auth: bool = False, extra: dict[str, str] | Non
     return headers
 
 
+def _json_request_safe(value):
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            return []
+        try:
+            return json.loads(value.to_json(orient="records", date_format="iso"))
+        except Exception:
+            return [
+                {
+                    str(column): _json_request_safe(cell)
+                    for column, cell in row.items()
+                }
+                for row in value.to_dict(orient="records")
+            ]
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return {}
+        return {
+            str(key): _json_request_safe(item)
+            for key, item in value.to_dict().items()
+        }
+    if isinstance(value, np.ndarray):
+        return [_json_request_safe(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return _json_request_safe(value.item())
+    if isinstance(value, dict):
+        return {
+            str(key): _json_request_safe(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_json_request_safe(item) for item in value]
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return value
+
+
 def _supabase_request(
     method: str,
     path: str,
@@ -6610,7 +6656,8 @@ def _supabase_request(
     extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, dict | list | str]:
     url = f"{SUPABASE_URL}{path}"
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    safe_payload = None if payload is None else _json_request_safe(payload)
+    data = None if safe_payload is None else json.dumps(safe_payload).encode("utf-8")
     request = Request(
         url,
         data=data,
@@ -6665,7 +6712,8 @@ def _supabase_service_request(
     if not _supabase_service_is_configured():
         return 0, {"message": "Supabase service role is not configured."}
     url = f"{SUPABASE_URL}{path}"
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    safe_payload = None if payload is None else _json_request_safe(payload)
+    data = None if safe_payload is None else json.dumps(safe_payload).encode("utf-8")
     request = Request(
         url,
         data=data,
