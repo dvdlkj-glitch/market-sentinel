@@ -2520,6 +2520,113 @@ def _supply_chain_snapshot_key(config_key: str, period: str, interval: str) -> s
     return f"{config_key}::{period}::{interval}"
 
 
+def _supply_chain_snapshot_ready(snapshot: dict | None) -> bool:
+    return (
+        isinstance(snapshot, dict)
+        and int(snapshot.get("version", 0) or 0) == SUPPLY_CHAIN_SNAPSHOT_VERSION
+        and str(snapshot.get("status", "") or "") == "ready"
+    )
+
+
+def _supply_chain_snapshot_as_of_date(snapshot: dict | None) -> str:
+    ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
+    if ts is None:
+        return _snapshot_today_string()
+    return ts.date().isoformat()
+
+
+def _supabase_supply_chain_read_request(path: str) -> tuple[int, dict | list | str]:
+    if _supabase_is_configured():
+        status, payload = _supabase_request("GET", path)
+        if 200 <= status < 300:
+            return status, payload
+    if _supabase_service_is_configured():
+        return _supabase_service_request("GET", path)
+    return 0, {"message": "Supabase is not configured."}
+
+
+def _supply_chain_supabase_row_from_snapshot(snapshot: dict) -> dict:
+    return {
+        "config_key": str(snapshot.get("config_key", "") or "").strip(),
+        "as_of_date": _supply_chain_snapshot_as_of_date(snapshot),
+        "fetched_at": str(snapshot.get("fetched_at") or pd.Timestamp.now(tz=TW_TZ).isoformat()),
+        "period": str(snapshot.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+        "interval": str(snapshot.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+        "lens_title": str(snapshot.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+        "status": str(snapshot.get("status", "ready") or "ready"),
+        "snapshot_payload": _json_request_safe(snapshot),
+    }
+
+
+def _supply_chain_supabase_snapshot_from_row(row: dict | None) -> dict | None:
+    if not isinstance(row, dict):
+        return None
+    payload = row.get("snapshot_payload", {})
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    snapshot = dict(payload)
+    snapshot.setdefault("version", SUPPLY_CHAIN_SNAPSHOT_VERSION)
+    snapshot.setdefault("config_key", str(row.get("config_key", "") or "").strip())
+    snapshot.setdefault("period", str(row.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD))
+    snapshot.setdefault("interval", str(row.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL))
+    snapshot.setdefault("lens_title", str(row.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS))
+    snapshot.setdefault("status", str(row.get("status", "ready") or "ready"))
+    snapshot.setdefault("fetched_at", str(row.get("fetched_at", "") or ""))
+    return snapshot
+
+
+def _load_supabase_supply_chain_snapshot(
+    config_key: str,
+    lens_meta: dict | None = None,
+    *,
+    allow_any_lens: bool = False,
+) -> dict | None:
+    normalized_key = str(config_key or "").strip()
+    if not normalized_key:
+        return None
+    select_query = quote_plus("config_key,as_of_date,fetched_at,period,interval,lens_title,status,snapshot_payload")
+    filters = [f"config_key=eq.{quote_plus(normalized_key)}"]
+    if lens_meta is not None and not allow_any_lens:
+        filters.extend(
+            [
+                f"period=eq.{quote_plus(str((lens_meta or {}).get('period', DEFAULT_PERIOD) or DEFAULT_PERIOD))}",
+                f"interval=eq.{quote_plus(str((lens_meta or {}).get('interval', DEFAULT_INTERVAL) or DEFAULT_INTERVAL))}",
+                f"lens_title=eq.{quote_plus(str((lens_meta or {}).get('title', DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS))}",
+            ]
+        )
+    path = (
+        f"/rest/v1/{SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE}"
+        f"?select={select_query}&{'&'.join(filters)}&order=as_of_date.desc,fetched_at.desc&limit=1"
+    )
+    status, payload = _supabase_supply_chain_read_request(path)
+    if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
+        return None
+    return _supply_chain_supabase_snapshot_from_row(payload[0])
+
+
+def _upsert_supabase_supply_chain_snapshot(snapshot: dict) -> bool:
+    config_key = str((snapshot or {}).get("config_key", "") or "").strip()
+    if not config_key or not _supabase_service_is_configured():
+        return False
+    row = _supply_chain_supabase_row_from_snapshot(snapshot)
+    path = (
+        f"/rest/v1/{SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE}"
+        f"?on_conflict={quote_plus('config_key,as_of_date,period,interval,lens_title')}"
+    )
+    status, _ = _supabase_service_request(
+        "POST",
+        path,
+        payload=[row],
+        extra_headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+    )
+    return 200 <= status < 300
+
+
 def _supply_chain_snapshot_to_text(value: object, *, digits: int = 4) -> str | None:
     if value is None or value is pd.NA:
         return None
@@ -2770,14 +2877,41 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
     }
 
 
+def _persist_supply_chain_focus_snapshot(snapshot: dict, lens_meta: dict | None = None) -> dict:
+    config_key = str((snapshot or {}).get("config_key", "") or "").strip()
+    if not config_key:
+        return snapshot
+    safe_snapshot = _json_request_safe(snapshot)
+    if not isinstance(safe_snapshot, dict):
+        safe_snapshot = dict(snapshot or {})
+    safe_snapshot["version"] = int(safe_snapshot.get("version", SUPPLY_CHAIN_SNAPSHOT_VERSION) or SUPPLY_CHAIN_SNAPSHOT_VERSION)
+    safe_snapshot["config_key"] = config_key
+    period = str(safe_snapshot.get("period", (lens_meta or {}).get("period", DEFAULT_PERIOD)) or DEFAULT_PERIOD)
+    interval = str(safe_snapshot.get("interval", (lens_meta or {}).get("interval", DEFAULT_INTERVAL)) or DEFAULT_INTERVAL)
+    safe_snapshot["period"] = period
+    safe_snapshot["interval"] = interval
+    safe_snapshot["lens_title"] = str(safe_snapshot.get("lens_title", (lens_meta or {}).get("title", DEFAULT_TREND_LENS)) or DEFAULT_TREND_LENS)
+    store = _supply_chain_snapshot_store()
+    items = dict(store.get("items", {}) or {})
+    items[_supply_chain_snapshot_key(config_key, period, interval)] = safe_snapshot
+    store["items"] = items
+    _write_supply_chain_snapshot_store(store)
+    _upsert_supabase_supply_chain_snapshot(safe_snapshot)
+    return safe_snapshot
+
+
 def peek_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = None) -> dict | None:
     period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
     interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    remote_snapshot = _load_supabase_supply_chain_snapshot(config_key, lens_meta=lens_meta)
+    if _supply_chain_snapshot_ready(remote_snapshot):
+        return remote_snapshot
+    fallback_remote_snapshot = _load_supabase_supply_chain_snapshot(config_key, allow_any_lens=True)
+    if _supply_chain_snapshot_ready(fallback_remote_snapshot):
+        return fallback_remote_snapshot
     store = _supply_chain_snapshot_store()
     snapshot = (store.get("items", {}) or {}).get(_supply_chain_snapshot_key(config_key, period, interval))
-    if not isinstance(snapshot, dict):
-        return None
-    if int(snapshot.get("version", 0) or 0) != SUPPLY_CHAIN_SNAPSHOT_VERSION:
+    if not _supply_chain_snapshot_ready(snapshot):
         return None
     return snapshot
 
@@ -2787,6 +2921,12 @@ def get_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = No
     if not config:
         return {}
 
+    if not force_refresh:
+        existing_snapshot = peek_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta)
+        if _supply_chain_snapshot_ready(existing_snapshot):
+            _persist_supply_chain_focus_snapshot(existing_snapshot, lens_meta=lens_meta)
+            return existing_snapshot
+
     period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
     interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
     snapshot_key = _supply_chain_snapshot_key(config_key, period, interval)
@@ -2794,15 +2934,75 @@ def get_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = No
     existing = (store.get("items", {}) or {}).get(snapshot_key)
     if force_refresh:
         _clear_supply_chain_refresh_caches()
-    elif isinstance(existing, dict) and int(existing.get("version", 0) or 0) == SUPPLY_CHAIN_SNAPSHOT_VERSION:
+    elif _supply_chain_snapshot_ready(existing):
+        _upsert_supabase_supply_chain_snapshot(existing)
         return existing
 
     snapshot = _build_supply_chain_focus_snapshot(config_key, config, lens_meta=lens_meta)
-    items = dict(store.get("items", {}) or {})
-    items[snapshot_key] = snapshot
-    store["items"] = items
-    _write_supply_chain_snapshot_store(store)
-    return snapshot
+    return _persist_supply_chain_focus_snapshot(snapshot, lens_meta=lens_meta)
+
+
+def parse_supply_chain_snapshot_keys(raw_value: str | None = None) -> list[str]:
+    source_value = str(raw_value or os.environ.get("SUPPLY_CHAIN_SNAPSHOT_KEYS", "")).strip()
+    if source_value:
+        tokens = re.split(r"[\s,;|]+", source_value)
+        return [
+            key for key in dedupe_keep_order(str(token).strip() for token in tokens if str(token).strip())
+            if key in SUPPLY_CHAIN_FOCUS_CONFIGS
+        ]
+    return [key for key in SUPPLY_CHAIN_FOCUS_ORDER if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
+
+
+def prefetch_supply_chain_focus_snapshots_job(
+    config_keys: list[str] | None = None,
+    *,
+    lens_meta: dict | None = None,
+    period: str | None = None,
+    interval: str | None = None,
+) -> dict:
+    selected_keys = [
+        key for key in dedupe_keep_order(config_keys or parse_supply_chain_snapshot_keys())
+        if key in SUPPLY_CHAIN_FOCUS_CONFIGS
+    ]
+    if not selected_keys:
+        return {"status": "skipped", "reason": "No supply-chain groups configured.", "config_keys": []}
+
+    resolved_lens_meta = lens_meta
+    if resolved_lens_meta is None:
+        resolved_lens_meta = {
+            "period": str(period or DEFAULT_PERIOD or "1y"),
+            "interval": str(interval or DEFAULT_INTERVAL or "1d"),
+            "title": DEFAULT_TREND_LENS,
+        }
+
+    _clear_supply_chain_refresh_caches()
+    built_rows: list[dict] = []
+    for config_key in selected_keys:
+        config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+        if not config:
+            continue
+        snapshot = _build_supply_chain_focus_snapshot(config_key, config, lens_meta=resolved_lens_meta)
+        _persist_supply_chain_focus_snapshot(snapshot, lens_meta=resolved_lens_meta)
+        built_rows.append(
+            {
+                "config_key": config_key,
+                "title": supply_chain_group_label(config_key),
+                "status": str(snapshot.get("status", "empty") or "empty"),
+                "fetched_at": str(snapshot.get("fetched_at", "") or ""),
+                "aggregate_move_sum": _safe_float(snapshot.get("aggregate_move_sum")),
+                "foreign_net_total": _safe_float(snapshot.get("foreign_net_total")),
+            }
+        )
+
+    return {
+        "status": "ok",
+        "config_keys": selected_keys,
+        "rows": _json_request_safe(built_rows),
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "lens_title": str(resolved_lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+        "period": str(resolved_lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+        "interval": str(resolved_lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+    }
 
 
 def format_supply_chain_snapshot_fetched_at(value: object) -> str:
@@ -3476,6 +3676,10 @@ SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE = _safe_secret(
     "SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE",
     os.environ.get("SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE", "taiwan_official_snapshots"),
 ) or "taiwan_official_snapshots"
+SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE = _safe_secret(
+    "SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE",
+    os.environ.get("SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE", "supply_chain_focus_snapshots"),
+) or "supply_chain_focus_snapshots"
 AUTH_MIN_PASSWORD_LENGTH = 8
 
 ACTIVE_ETF_TRACKER_SNAPSHOT_DB = Path(".dashboard_cache") / "active_etf_tracker.sqlite3"
@@ -20129,6 +20333,90 @@ def render_supply_chain_overall_summary(
     return rows
 
 
+def _supply_chain_compare_button_key(config_key: str) -> str:
+    safe_key = re.sub(r"[^A-Za-z0-9_]+", "_", str(config_key or "chain")).strip("_")
+    return f"supply_chain_stock_compare_chain_btn_{safe_key}"
+
+
+def inject_supply_chain_compare_button_css(config_keys: list[str], active_key: str) -> None:
+    button_keys = [_supply_chain_compare_button_key(config_key) for config_key in config_keys]
+    base_selectors = ",\n".join(f".st-key-{button_key} button" for button_key in button_keys)
+    active_selector = f".st-key-{_supply_chain_compare_button_key(active_key)} button"
+    if not base_selectors:
+        return
+    render_html_block(
+        f"""
+        <style>
+        {base_selectors} {{
+            min-height: 3.05rem !important;
+            border-radius: 999px !important;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 36%, transparent) !important;
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 99%, transparent) 100%) !important;
+            color: #f2d18b !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 12px 26px rgba(3, 10, 20, 0.12) !important;
+            font-weight: 850 !important;
+            letter-spacing: 0 !important;
+            white-space: normal !important;
+            transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease !important;
+        }}
+        {base_selectors}:hover {{
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 76%, transparent) !important;
+            color: #ffe5aa !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 16px 34px rgba(56, 189, 248, 0.16) !important;
+        }}
+        {active_selector} {{
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 30%, var(--card, rgba(8,16,28,0.92))) 0%, color-mix(in srgb, var(--brand, #818cf8) 18%, var(--card, rgba(8,16,28,0.92))) 100%) !important;
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 90%, transparent) !important;
+            color: #fff7df !important;
+            box-shadow:
+                0 0 0 1px color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent),
+                0 18px 38px rgba(56, 189, 248, 0.22),
+                inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }}
+        </style>
+        """
+    )
+
+
+def render_supply_chain_compare_chain_buttons(config_keys: list[str]) -> str | None:
+    if not config_keys:
+        return None
+    state_key = "supply_chain_stock_compare_active_chain"
+    active_key = st.session_state.get(state_key, config_keys[0])
+    if active_key not in config_keys:
+        active_key = config_keys[0]
+    st.session_state[state_key] = active_key
+
+    inject_supply_chain_compare_button_css(config_keys, active_key)
+    cols_per_row = 3
+    for row_start in range(0, len(config_keys), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for idx, config_key in enumerate(config_keys[row_start: row_start + cols_per_row]):
+            config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key, {})
+            count = len(build_supply_chain_universe(config.get("catalog", [])))
+            label = (
+                f"{supply_chain_group_label(config_key)} · {count} 檔"
+                if get_language() == "zh_TW"
+                else f"{supply_chain_group_label(config_key)} · {count} names"
+            )
+            with cols[idx]:
+                if st.button(
+                    label,
+                    key=_supply_chain_compare_button_key(config_key),
+                    use_container_width=True,
+                ):
+                    st.session_state[state_key] = config_key
+                    st.rerun()
+    return str(st.session_state.get(state_key, active_key))
+
+
 def render_supply_chain_stock_compare_picker(
     selected_keys: list[str],
     daily_data: pd.DataFrame | None,
@@ -20150,15 +20438,7 @@ def render_supply_chain_stock_compare_picker(
     if not chain_options:
         return
 
-    active_chain = render_lightweight_option_selector(
-        chain_options,
-        "supply_chain_stock_compare_active_chain",
-        format_func=lambda key: f"{supply_chain_group_label(key)} · {len(build_supply_chain_universe(SUPPLY_CHAIN_FOCUS_CONFIGS[key]['catalog']))} 檔"
-        if lang_zh
-        else f"{supply_chain_group_label(key)} · {len(build_supply_chain_universe(SUPPLY_CHAIN_FOCUS_CONFIGS[key]['catalog']))} names",
-        helper_text="",
-        widget_label="supply-chain-stock-compare-chain",
-    )
+    active_chain = render_supply_chain_compare_chain_buttons(chain_options)
 
     for config_key in chain_options:
         config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
