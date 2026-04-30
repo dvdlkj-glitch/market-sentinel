@@ -20140,16 +20140,28 @@ def render_supply_chain_stock_compare_picker(
         "#### 手動股票對股票比較" if lang_zh else "#### Manual Stock-to-Stock Compare"
     )
     st.caption(
-        "每條供應鏈都先收合起來；需要跨鏈比較時，再展開想看的區塊並勾選股票。"
+        "先選供應鏈區塊，再勾選股票。需要跨鏈比較時，切換到另一條供應鏈繼續加選即可。"
         if lang_zh
-        else "Each chain starts collapsed. Open the chain blocks you care about, then choose stocks for cross-chain comparison."
+        else "Choose a chain block first, then pick stocks. Switch to another chain to add cross-chain names."
     )
 
     selected_by_chain: dict[str, list[str]] = {}
-    for config_key in selected_keys:
+    chain_options = [key for key in selected_keys if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
+    if not chain_options:
+        return
+
+    active_chain = render_lightweight_option_selector(
+        chain_options,
+        "supply_chain_stock_compare_active_chain",
+        format_func=lambda key: f"{supply_chain_group_label(key)} · {len(build_supply_chain_universe(SUPPLY_CHAIN_FOCUS_CONFIGS[key]['catalog']))} 檔"
+        if lang_zh
+        else f"{supply_chain_group_label(key)} · {len(build_supply_chain_universe(SUPPLY_CHAIN_FOCUS_CONFIGS[key]['catalog']))} names",
+        helper_text="",
+        widget_label="supply-chain-stock-compare-chain",
+    )
+
+    for config_key in chain_options:
         config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
-        if not config:
-            continue
         universe = build_supply_chain_universe(config["catalog"])
         options = [
             normalize_dashboard_ticker(item.get("ticker"))
@@ -20167,19 +20179,19 @@ def render_supply_chain_stock_compare_picker(
             if ticker in options
         ]
         st.session_state[state_key] = stored
-        with st.expander(f"{chain_title} · {len(options)} 檔" if lang_zh else f"{chain_title} · {len(options)} names", expanded=False):
+        if config_key == active_chain:
             selected = st.multiselect(
                 "選擇要加入股票對股票比較的成分股" if lang_zh else "Choose constituents for stock-to-stock comparison",
                 options=options,
                 format_func=display_ticker_label,
                 key=state_key,
             )
-            selected_by_chain[config_key] = selected
             if selected:
                 st.caption(
                     ("已選：" if lang_zh else "Selected: ")
                     + " ｜ ".join(display_ticker_label(ticker) for ticker in selected)
                 )
+        selected_by_chain[config_key] = st.session_state.get(state_key, [])
 
     selected_tickers = dedupe_keep_order(
         ticker
