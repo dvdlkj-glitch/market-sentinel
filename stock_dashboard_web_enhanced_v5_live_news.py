@@ -3475,6 +3475,26 @@ def _active_etf_lab_snapshot_safe(value):
         return None
     if isinstance(value, (pd.Timestamp, datetime)):
         return value.isoformat()
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            return []
+        try:
+            return json.loads(value.to_json(orient="records", date_format="iso"))
+        except Exception:
+            return [
+                {
+                    str(column): _active_etf_lab_snapshot_safe(cell)
+                    for column, cell in row.items()
+                }
+                for row in value.to_dict(orient="records")
+            ]
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return {}
+        return {
+            str(key): _active_etf_lab_snapshot_safe(item)
+            for key, item in value.to_dict().items()
+        }
     if isinstance(value, np.ndarray):
         return [_active_etf_lab_snapshot_safe(item) for item in value.tolist()]
     if isinstance(value, np.generic):
@@ -3747,21 +3767,24 @@ def _persist_active_etf_workspace_snapshot(snapshot: dict) -> dict:
     ticker = str((snapshot or {}).get("ticker", "") or "").upper().strip()
     if not ticker:
         return snapshot
+    safe_snapshot = _active_etf_lab_snapshot_safe(snapshot)
+    if not isinstance(safe_snapshot, dict):
+        safe_snapshot = dict(snapshot or {})
     snapshot_key = _active_etf_workspace_snapshot_key(
         ticker,
         {
-            "period": str(snapshot.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
-            "interval": str(snapshot.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
-            "title": str(snapshot.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+            "period": str(safe_snapshot.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+            "interval": str(safe_snapshot.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+            "title": str(safe_snapshot.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
         },
     )
     store = _active_etf_lab_snapshot_store()
     items = dict(store.get("items", {}) or {})
-    items[snapshot_key] = snapshot
+    items[snapshot_key] = safe_snapshot
     store["items"] = items
     _write_active_etf_lab_snapshot_store(store)
-    _upsert_supabase_active_etf_snapshot(snapshot)
-    return snapshot
+    _upsert_supabase_active_etf_snapshot(safe_snapshot)
+    return safe_snapshot
 
 
 def get_active_etf_workspace_bundle_snapshot(
@@ -25607,12 +25630,15 @@ def _persist_active_etf_pair_snapshot(snapshot: dict) -> dict:
     right_ticker = str((snapshot or {}).get("right_ticker", "") or "").upper().strip()
     if not left_ticker or not right_ticker:
         return snapshot
+    safe_snapshot = _active_etf_lab_snapshot_safe(snapshot)
+    if not isinstance(safe_snapshot, dict):
+        safe_snapshot = dict(snapshot or {})
     store = _active_etf_lab_snapshot_store()
     items = dict(store.get("items", {}) or {})
-    items[_active_etf_pair_snapshot_key(left_ticker, right_ticker)] = snapshot
+    items[_active_etf_pair_snapshot_key(left_ticker, right_ticker)] = safe_snapshot
     store["items"] = items
     _write_active_etf_lab_snapshot_store(store)
-    return snapshot
+    return safe_snapshot
 
 
 def _build_active_etf_pair_compare_snapshot(
