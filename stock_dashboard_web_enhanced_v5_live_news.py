@@ -3506,7 +3506,7 @@ def render_active_etf_pair_picker(active_etf_tickers: list[str]) -> tuple[str | 
     left_etf = left_col.selectbox(
         "比較 ETF A" if lang_zh else "Compare ETF A",
         options=active_etf_tickers,
-        format_func=display_ticker_label,
+        format_func=active_etf_selector_label,
         key=pair_left_key,
     )
     right_options = [ticker for ticker in active_etf_tickers if ticker != left_etf] or active_etf_tickers
@@ -3515,7 +3515,7 @@ def render_active_etf_pair_picker(active_etf_tickers: list[str]) -> tuple[str | 
     right_etf = right_col.selectbox(
         "比較 ETF B" if lang_zh else "Compare ETF B",
         options=right_options,
-        format_func=display_ticker_label,
+        format_func=active_etf_selector_label,
         key=pair_right_key,
     )
     return left_etf, right_etf
@@ -3606,14 +3606,22 @@ def render_single_bundle_workspace_picker(
     if not tickers:
         return
     lang_zh = get_language() == "zh_TW"
-    default_ticker = st.session_state.get("dashboard_standard_focus_etf", tickers[0])
-    if default_ticker not in tickers:
-        default_ticker = tickers[0]
+    active_group = render_active_etf_group_buttons(
+        tickers,
+        state_key="active_etf_workspace_group",
+    )
+    visible_tickers = [
+        ticker for ticker in tickers
+        if not active_group or active_etf_group_key(ticker) == active_group
+    ] or tickers
+    default_ticker = st.session_state.get("dashboard_standard_focus_etf", visible_tickers[0])
+    if default_ticker not in visible_tickers:
+        default_ticker = visible_tickers[0]
     selected_ticker = st.selectbox(
         "選擇一檔 ETF 工作台" if lang_zh else "Choose one ETF workspace",
-        options=tickers,
-        index=tickers.index(default_ticker),
-        format_func=display_ticker_label,
+        options=visible_tickers,
+        index=visible_tickers.index(default_ticker),
+        format_func=active_etf_selector_label,
         key="dashboard_standard_focus_etf",
     )
     _render_active_etf_workspace_station_body(
@@ -3634,10 +3642,18 @@ def render_bundle_workspace_tabs(
     if not tickers:
         return
     lang_zh = get_language() == "zh_TW"
-    selected_ticker = render_lightweight_option_selector(
+    active_group = render_active_etf_group_buttons(
         tickers,
+        state_key="active_etf_workspace_group",
+    )
+    visible_tickers = [
+        ticker for ticker in tickers
+        if not active_group or active_etf_group_key(ticker) == active_group
+    ] or tickers
+    selected_ticker = render_lightweight_option_selector(
+        visible_tickers,
         "active_etf_workspace_focus_ticker",
-        format_func=display_ticker_label,
+        format_func=active_etf_selector_label,
         helper_text=(
             "工作台一次只載入一檔主動式 ETF，避免切換時整排頁面同時重算。"
             if lang_zh else
@@ -3690,7 +3706,7 @@ TAIWAN_OFFICIAL_SNAPSHOT_PATH = Path(".dashboard_cache") / "taiwan_official_snap
 ACTIVE_ETF_HOLDINGS_SOURCE_LABEL = "Yahoo Finance funds_data"
 ACTIVE_ETF_UPDATE_NOTE_EN = "This section is designed for after-close review and refreshes after 4:00 PM Asia/Taipei."
 ACTIVE_ETF_UPDATE_NOTE_ZH = "本區為收盤後追蹤用途，資訊設計為每日下午 4:00（台北時間）後更新。"
-ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00982A", "00981A"]
+ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00981A", "00982A", "00988A", "00990A", "00991A", "00992A"]
 TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY = "__MARKET__"
 
 
@@ -4785,6 +4801,301 @@ TAIWAN_TICKER_METADATA = {
     "00878.TW": {"code": "00878", "zh": "國泰永續高股息", "en": "Cathay ESG High Dividend"},
     "006208.TW": {"code": "006208", "zh": "富邦台50", "en": "Fubon Taiwan 50"},
 }
+
+ACTIVE_ETF_GROUP_METADATA = {
+    "taiwan-core": {
+        "zh": "台股核心 / 均衡",
+        "en": "Taiwan core / balanced",
+        "note_zh": "偏核心配置，通常以台股大型股、優質股與多因子選股為主。",
+        "note_en": "Core Taiwan allocation built around large-cap, quality, or balanced multi-factor tilts.",
+    },
+    "taiwan-growth": {
+        "zh": "台股成長 / 龍頭",
+        "en": "Taiwan growth / leaders",
+        "note_zh": "偏成長與龍頭股，適合想追蹤台股主升段與優勢成長主題。",
+        "note_en": "Growth- and leader-oriented Taiwan strategies for users leaning into trend and earnings expansion.",
+    },
+    "high-dividend": {
+        "zh": "高息 / 防禦收益",
+        "en": "High dividend / defensive income",
+        "note_zh": "偏高股息與收益策略，重視現金流與下檔緩衝。",
+        "note_en": "Income-first active ETFs emphasizing dividends, cash flow, and defensive carry.",
+    },
+    "technology-ai": {
+        "zh": "科技 / AI 主題",
+        "en": "Technology / AI theme",
+        "note_zh": "偏科技創新、AI 與高成長題材，波動通常較高。",
+        "note_en": "Higher-beta thematic funds focused on technology, AI, and innovation growth.",
+    },
+    "global-us": {
+        "zh": "全球 / 美股創新",
+        "en": "Global / U.S. innovation",
+        "note_zh": "跨市場配置，偏向全球創新或美股科技成長風格。",
+        "note_en": "Cross-market strategies skewed to global innovation and U.S. growth leadership.",
+    },
+}
+
+ACTIVE_ETF_METADATA = {
+    "00400A.TW": {
+        "code": "00400A",
+        "zh": "主動國泰動能高息",
+        "en": "Cathay Momentum High Dividend Active ETF",
+        "issuer_zh": "國泰投信",
+        "issuer_en": "Cathay SITE",
+        "style_zh": "高股息 / 動能",
+        "style_en": "High dividend / momentum",
+        "direction_zh": "收益偏多",
+        "direction_en": "Income bullish",
+        "group_key": "high-dividend",
+        "aliases": ["國泰動能高息", "主動國泰動能高息ETF"],
+    },
+    "00980A.TW": {
+        "code": "00980A",
+        "zh": "主動野村臺灣優選",
+        "en": "Nomura Taiwan Select Active ETF",
+        "issuer_zh": "野村投信",
+        "issuer_en": "Nomura SITE",
+        "style_zh": "台股核心 / 優選",
+        "style_en": "Taiwan core / select",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["野村臺灣優選", "主動野村台灣優選"],
+    },
+    "00981A.TW": {
+        "code": "00981A",
+        "zh": "主動統一台股增長",
+        "en": "Uni-President Taiwan Growth Active ETF",
+        "issuer_zh": "統一投信",
+        "issuer_en": "Uni-President SITE",
+        "style_zh": "台股成長 / 主升段",
+        "style_en": "Taiwan growth / trend",
+        "direction_zh": "成長偏多",
+        "direction_en": "Growth bullish",
+        "group_key": "taiwan-growth",
+        "aliases": ["統一台股增長", "主動統一臺灣增長"],
+    },
+    "00982A.TW": {
+        "code": "00982A",
+        "zh": "主動群益台灣強棒",
+        "en": "Capital Taiwan Select High Conviction Active ETF",
+        "issuer_zh": "群益投信",
+        "issuer_en": "Capital SITE",
+        "style_zh": "台股核心 / 強棒選股",
+        "style_en": "Taiwan core / high conviction",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["群益台灣強棒", "台灣強棒"],
+    },
+    "00983A.TWO": {
+        "code": "00983A",
+        "zh": "主動中信ARK創新",
+        "en": "CTBC ARK Innovation Active ETF",
+        "issuer_zh": "中國信託投信",
+        "issuer_en": "CTBC SITE",
+        "style_zh": "美股創新 / 顛覆式成長",
+        "style_en": "U.S. innovation / disruptive growth",
+        "direction_zh": "創新偏多",
+        "direction_en": "Innovation bullish",
+        "group_key": "global-us",
+        "aliases": ["中信ARK創新", "ARK創新", "主動中信 ARK 創新"],
+    },
+    "00984A.TW": {
+        "code": "00984A",
+        "zh": "主動安聯台灣高息",
+        "en": "Allianz Taiwan High Dividend Active ETF",
+        "issuer_zh": "安聯投信",
+        "issuer_en": "Allianz Global Investors Taiwan",
+        "style_zh": "高息 / 台股收益",
+        "style_en": "High dividend / Taiwan income",
+        "direction_zh": "收益偏多",
+        "direction_en": "Income bullish",
+        "group_key": "high-dividend",
+        "aliases": ["安聯台灣高息", "主動安聯高息"],
+    },
+    "00985A.TW": {
+        "code": "00985A",
+        "zh": "主動野村臺灣增強50",
+        "en": "Nomura Taiwan Enhanced 50 Active ETF",
+        "issuer_zh": "野村投信",
+        "issuer_en": "Nomura SITE",
+        "style_zh": "台股核心 / 50增強",
+        "style_en": "Taiwan core / enhanced 50",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["野村臺灣增強50", "主動野村台灣增強50"],
+    },
+    "00986A.TW": {
+        "code": "00986A",
+        "zh": "主動台新龍頭成長",
+        "en": "Taishin Taiwan Leaders Growth Active ETF",
+        "issuer_zh": "台新投信",
+        "issuer_en": "Taishin SITE",
+        "style_zh": "台股成長 / 龍頭",
+        "style_en": "Taiwan growth / leaders",
+        "direction_zh": "成長偏多",
+        "direction_en": "Growth bullish",
+        "group_key": "taiwan-growth",
+        "aliases": ["台新龍頭成長", "主動台新龍頭成長"],
+    },
+    "00987A.TW": {
+        "code": "00987A",
+        "zh": "主動台新台灣優勢成長",
+        "en": "Taishin Taiwan Advantage Growth Active ETF",
+        "issuer_zh": "台新投信",
+        "issuer_en": "Taishin SITE",
+        "style_zh": "台股成長 / 優勢股",
+        "style_en": "Taiwan growth / advantage stocks",
+        "direction_zh": "成長偏多",
+        "direction_en": "Growth bullish",
+        "group_key": "taiwan-growth",
+        "aliases": ["台新優勢成長", "主動台新優勢成長"],
+    },
+    "00988A.TW": {
+        "code": "00988A",
+        "zh": "主動統一全球創新",
+        "en": "Uni-President Global Innovation Active ETF",
+        "issuer_zh": "統一投信",
+        "issuer_en": "Uni-President SITE",
+        "style_zh": "全球創新 / 跨市場",
+        "style_en": "Global innovation / cross-market",
+        "direction_zh": "全球成長偏多",
+        "direction_en": "Global growth bullish",
+        "group_key": "global-us",
+        "aliases": ["統一全球創新", "主動統一全球創新"],
+    },
+    "00989A.TW": {
+        "code": "00989A",
+        "zh": "主動摩根美國科技",
+        "en": "JPMorgan U.S. Technology Active ETF",
+        "issuer_zh": "摩根投信",
+        "issuer_en": "JPMorgan Asset Management Taiwan",
+        "style_zh": "美股科技 / 創新",
+        "style_en": "U.S. technology / innovation",
+        "direction_zh": "科技偏多",
+        "direction_en": "Tech bullish",
+        "group_key": "global-us",
+        "aliases": ["摩根美國科技", "主動摩根美國科技"],
+    },
+    "00990A.TW": {
+        "code": "00990A",
+        "zh": "主動元大台灣AI新經濟",
+        "en": "Yuanta Taiwan AI New Economy Active ETF",
+        "issuer_zh": "元大投信",
+        "issuer_en": "Yuanta SITE",
+        "style_zh": "台股科技 / AI",
+        "style_en": "Taiwan technology / AI",
+        "direction_zh": "AI 偏多",
+        "direction_en": "AI bullish",
+        "group_key": "technology-ai",
+        "aliases": ["元大AI新經濟", "主動元大AI新經濟"],
+    },
+    "00991A.TW": {
+        "code": "00991A",
+        "zh": "主動復華台灣未來50",
+        "en": "Fuh Hwa Taiwan Future 50 Active ETF",
+        "issuer_zh": "復華投信",
+        "issuer_en": "Fuh Hwa SITE",
+        "style_zh": "台股核心 / 未來50",
+        "style_en": "Taiwan core / future 50",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["復華未來50", "主動復華未來50"],
+    },
+    "00992A.TW": {
+        "code": "00992A",
+        "zh": "主動群益台灣科技高息成長",
+        "en": "Capital Taiwan Technology Dividend Growth Active ETF",
+        "issuer_zh": "群益投信",
+        "issuer_en": "Capital SITE",
+        "style_zh": "科技 / 高息成長",
+        "style_en": "Technology / dividend growth",
+        "direction_zh": "科技偏多",
+        "direction_en": "Tech bullish",
+        "group_key": "technology-ai",
+        "aliases": ["群益科技高息成長", "主動群益科技高息成長", "主動群益科技創新"],
+    },
+    "00993A.TW": {
+        "code": "00993A",
+        "zh": "主動安聯台灣選股",
+        "en": "Allianz Taiwan Select Active ETF",
+        "issuer_zh": "安聯投信",
+        "issuer_en": "Allianz Global Investors Taiwan",
+        "style_zh": "台股核心 / 主動選股",
+        "style_en": "Taiwan core / active selection",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["安聯台灣", "主動安聯台灣"],
+    },
+    "00994A.TW": {
+        "code": "00994A",
+        "zh": "主動第一金台股優選",
+        "en": "First Taiwan Select Active ETF",
+        "issuer_zh": "第一金投信",
+        "issuer_en": "First Securities Investment Trust",
+        "style_zh": "台股核心 / 優選",
+        "style_en": "Taiwan core / select",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["第一金台股優選", "主動第一金台股優"],
+    },
+    "00995A.TW": {
+        "code": "00995A",
+        "zh": "主動中信台灣卓越50",
+        "en": "CTBC Taiwan Excellence 50 Active ETF",
+        "issuer_zh": "中國信託投信",
+        "issuer_en": "CTBC SITE",
+        "style_zh": "台股核心 / 卓越50",
+        "style_en": "Taiwan core / excellence 50",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["中信台灣卓越50", "主動中信台灣卓越50", "主動中信台灣卓越"],
+    },
+    "00996A.TW": {
+        "code": "00996A",
+        "zh": "主動兆豐台灣豐收平衡",
+        "en": "Mega Taiwan Harvest Balanced Active ETF",
+        "issuer_zh": "兆豐投信",
+        "issuer_en": "Mega SITE",
+        "style_zh": "台股平衡 / 收益",
+        "style_en": "Taiwan balanced / income",
+        "direction_zh": "平衡偏多",
+        "direction_en": "Balanced bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["兆豐台灣豐收平衡", "主動兆豐豐收平衡", "主動兆豐台灣豐收"],
+    },
+    "00997A.TW": {
+        "code": "00997A",
+        "zh": "主動野村美國研發龍頭",
+        "en": "Nomura U.S. R&D Leaders Active ETF",
+        "issuer_zh": "野村投信",
+        "issuer_en": "Nomura SITE",
+        "style_zh": "美股創新 / 研發龍頭",
+        "style_en": "U.S. innovation / R&D leaders",
+        "direction_zh": "科技偏多",
+        "direction_en": "Tech bullish",
+        "group_key": "global-us",
+        "aliases": ["野村美國研發龍頭", "主動野村美國研發龍頭"],
+    },
+}
+
+for _active_etf_ticker, _active_etf_meta in ACTIVE_ETF_METADATA.items():
+    _existing_meta = dict(TAIWAN_TICKER_METADATA.get(_active_etf_ticker, {}))
+    _merged_aliases: list[str] = []
+    for _alias in list(_existing_meta.get("aliases", []) or []) + list(_active_etf_meta.get("aliases", []) or []):
+        _alias_text = str(_alias or "").strip()
+        if _alias_text and _alias_text not in _merged_aliases:
+            _merged_aliases.append(_alias_text)
+    _existing_meta.update(_active_etf_meta)
+    if _merged_aliases:
+        _existing_meta["aliases"] = _merged_aliases
+    TAIWAN_TICKER_METADATA[_active_etf_ticker] = _existing_meta
 
 
 
@@ -7072,6 +7383,159 @@ def normalize_taiwan_active_etf_symbol(raw_symbol: str) -> str:
     return f"{base}.TW"
 
 
+def active_etf_catalog_tickers() -> list[str]:
+    return sorted(
+        ACTIVE_ETF_METADATA.keys(),
+        key=lambda ticker: str(ACTIVE_ETF_METADATA.get(ticker, {}).get("code", ticker)),
+    )
+
+
+def get_active_etf_metadata(ticker: str) -> dict:
+    normalized = normalize_taiwan_active_etf_symbol(ticker) or str(ticker or "").upper().strip()
+    candidates = [normalized]
+    if normalized.endswith(".TW"):
+        candidates.append(f"{normalized[:-3]}.TWO")
+    elif normalized.endswith(".TWO"):
+        candidates.append(f"{normalized[:-4]}.TW")
+    elif normalized:
+        candidates.extend([f"{normalized}.TW", f"{normalized}.TWO"])
+    for candidate in candidates:
+        meta = ACTIVE_ETF_METADATA.get(candidate)
+        if isinstance(meta, dict):
+            return meta
+    return {}
+
+
+def active_etf_group_key(ticker: str) -> str:
+    return str(get_active_etf_metadata(ticker).get("group_key", "taiwan-core"))
+
+
+def _active_etf_ui_is_zh() -> bool:
+    try:
+        return get_language() == "zh_TW" or get_lang() == "繁體中文"
+    except Exception:
+        return get_lang() == "繁體中文"
+
+
+def active_etf_group_label(group_key: str) -> str:
+    meta = ACTIVE_ETF_GROUP_METADATA.get(group_key, {})
+    return str(meta.get("zh" if _active_etf_ui_is_zh() else "en", group_key))
+
+
+def active_etf_group_note(group_key: str) -> str:
+    meta = ACTIVE_ETF_GROUP_METADATA.get(group_key, {})
+    return str(meta.get("note_zh" if _active_etf_ui_is_zh() else "note_en", ""))
+
+
+def active_etf_selector_label(ticker: str) -> str:
+    base_label = display_ticker_label(ticker)
+    meta = get_active_etf_metadata(ticker)
+    if not meta:
+        return base_label
+    is_zh = _active_etf_ui_is_zh()
+    style = str(meta.get("style_zh" if is_zh else "style_en", "")).strip()
+    direction = str(meta.get("direction_zh" if is_zh else "direction_en", "")).strip()
+    detail_parts = [part for part in [style, direction] if part]
+    if not detail_parts:
+        return base_label
+    return f"{base_label} · {' · '.join(detail_parts)}"
+
+
+def active_etf_grouped_tickers(tickers: list[str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {group_key: [] for group_key in ACTIVE_ETF_GROUP_METADATA}
+    for ticker in filter_active_etf_tickers(tickers):
+        group_key = active_etf_group_key(ticker)
+        grouped.setdefault(group_key, []).append(ticker)
+    return {group_key: values for group_key, values in grouped.items() if values}
+
+
+def _active_etf_group_button_key(state_key: str, group_key: str) -> str:
+    safe_state = re.sub(r"[^A-Za-z0-9_]+", "_", str(state_key or "").lower()).strip("_") or "active_etf_group"
+    safe_group = re.sub(r"[^A-Za-z0-9_]+", "_", str(group_key or "").lower()).strip("_") or "group"
+    return f"{safe_state}_{safe_group}_button"
+
+
+def inject_active_etf_group_button_css(state_key: str, group_keys: list[str], active_key: str) -> None:
+    button_keys = [_active_etf_group_button_key(state_key, group_key) for group_key in group_keys]
+    if not button_keys:
+        return
+    base_selectors = ",\n".join(f".st-key-{button_key} button" for button_key in button_keys)
+    active_selector = f".st-key-{_active_etf_group_button_key(state_key, active_key)} button"
+    render_html_block(
+        f"""
+        <style>
+        {base_selectors} {{
+            min-height: 3.05rem !important;
+            border-radius: 999px !important;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 36%, transparent) !important;
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 99%, transparent) 100%) !important;
+            color: #f2d18b !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 12px 26px rgba(3, 10, 20, 0.12) !important;
+            font-weight: 850 !important;
+            white-space: normal !important;
+            transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease !important;
+        }}
+        {base_selectors}:hover {{
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 76%, transparent) !important;
+            color: #ffe5aa !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 16px 34px rgba(56, 189, 248, 0.16) !important;
+        }}
+        {active_selector} {{
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 30%, var(--card, rgba(8,16,28,0.92))) 0%, color-mix(in srgb, var(--brand, #818cf8) 18%, var(--card, rgba(8,16,28,0.92))) 100%) !important;
+            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 90%, transparent) !important;
+            color: #fff7df !important;
+            box-shadow:
+                0 0 0 1px color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent),
+                0 18px 38px rgba(56, 189, 248, 0.22),
+                inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }}
+        </style>
+        """
+    )
+
+
+def render_active_etf_group_buttons(tickers: list[str], *, state_key: str) -> str | None:
+    grouped = active_etf_grouped_tickers(tickers)
+    group_keys = list(grouped.keys())
+    if not group_keys:
+        return None
+    active_key = st.session_state.get(state_key, group_keys[0])
+    if active_key not in group_keys:
+        active_key = group_keys[0]
+    st.session_state[state_key] = active_key
+
+    inject_active_etf_group_button_css(state_key, group_keys, active_key)
+    cols_per_row = 3
+    for row_start in range(0, len(group_keys), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for idx, group_key in enumerate(group_keys[row_start: row_start + cols_per_row]):
+            count = len(grouped.get(group_key, []))
+            label = (
+                f"{active_etf_group_label(group_key)} · {count} 檔"
+                if _active_etf_ui_is_zh()
+                else f"{active_etf_group_label(group_key)} · {count} ETFs"
+            )
+            with cols[idx]:
+                if st.button(
+                    label,
+                    key=_active_etf_group_button_key(state_key, group_key),
+                    use_container_width=True,
+                ):
+                    st.session_state[state_key] = group_key
+                    st.rerun()
+    note = active_etf_group_note(st.session_state.get(state_key, active_key))
+    if note:
+        st.caption(note)
+    return str(st.session_state.get(state_key, active_key))
+
+
 def filter_active_etf_tickers(tickers: list[str]) -> list[str]:
     filtered: list[str] = []
     for ticker in tickers:
@@ -7092,6 +7556,25 @@ def build_active_etf_search_results(query: str, max_results: int = 12) -> list[s
     if direct_symbol:
         results.append(direct_symbol)
 
+    query_token = _normalize_holding_alias_text(query_text)
+    if query_token:
+        for ticker, meta in ACTIVE_ETF_METADATA.items():
+            candidates = [
+                meta.get("code", ""),
+                meta.get("zh", ""),
+                meta.get("en", ""),
+                meta.get("issuer_zh", ""),
+                meta.get("issuer_en", ""),
+                meta.get("style_zh", ""),
+                meta.get("style_en", ""),
+                meta.get("direction_zh", ""),
+                meta.get("direction_en", ""),
+                active_etf_group_label(str(meta.get("group_key", ""))),
+            ]
+            candidates.extend(meta.get("aliases", []) or [])
+            if any(query_token in _normalize_holding_alias_text(candidate) for candidate in candidates if candidate):
+                results.append(ticker)
+
     for item in fetch_remote_symbol_search(query_text, max_results=max_results):
         symbol = normalize_taiwan_active_etf_symbol(item.get("symbol", ""))
         if not symbol or not is_taiwan_active_etf(symbol):
@@ -7099,7 +7582,7 @@ def build_active_etf_search_results(query: str, max_results: int = 12) -> list[s
         register_runtime_symbol_metadata(symbol, name=item.get("name", ""), exchange=item.get("exchange", ""), market="TW")
         results.append(symbol)
 
-    return sort_ticker_options(results)
+    return sort_ticker_options(dedupe_keep_order(results)[:max_results])
 
 
 def normalize_dashboard_ticker(raw_symbol: str) -> str:
@@ -21351,7 +21834,7 @@ def render_active_etf_sidebar_selector(selected_lang: str) -> tuple[list[str], s
             search_matches = st.multiselect(
                 t("search_results"),
                 options=search_results,
-                format_func=display_ticker_label,
+                format_func=active_etf_selector_label,
                 help=t("active_etf_search_results_help"),
                 key=search_matches_widget_key,
             )
@@ -21361,22 +21844,34 @@ def render_active_etf_sidebar_selector(selected_lang: str) -> tuple[list[str], s
     else:
         st.session_state[search_matches_widget_key] = []
 
-    available_universe = sort_ticker_options(set(search_results) | set(custom_tickers))
+    available_universe = sort_ticker_options(set(active_etf_catalog_tickers()) | set(search_results) | set(custom_tickers))
     selected_active_etfs = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
     selected_active_set = {normalize_dashboard_ticker(value) for value in selected_active_etfs}
     available_universe = [ticker for ticker in available_universe if normalize_dashboard_ticker(ticker) not in selected_active_set]
+
+    active_available_group = None
+    if available_universe:
+        render_html_block(f'<div class="side-group-label">{"主動式 ETF 分組" if is_zh else "Active ETF groups"}</div>')
+        active_available_group = render_active_etf_group_buttons(
+            available_universe,
+            state_key="dashboard_active_etf_available_group",
+        )
+    visible_available_universe = [
+        ticker for ticker in available_universe
+        if not active_available_group or active_etf_group_key(ticker) == active_available_group
+    ]
 
     candidate_widget_key = "dashboard_active_etf_candidate_widget"
     valid_candidates = [
         normalize_dashboard_ticker(value)
         for value in st.session_state.get(candidate_widget_key, [])
-        if normalize_dashboard_ticker(value) in set(available_universe)
+        if normalize_dashboard_ticker(value) in set(visible_available_universe)
     ]
     st.session_state[candidate_widget_key] = valid_candidates
     candidate_tickers = st.multiselect(
         t("active_etf_available"),
-        options=available_universe,
-        format_func=display_ticker_label,
+        options=visible_available_universe,
+        format_func=active_etf_selector_label,
         placeholder=t("pick_watchlist_symbols"),
         key=candidate_widget_key,
     )
@@ -21400,17 +21895,30 @@ def render_active_etf_sidebar_selector(selected_lang: str) -> tuple[list[str], s
     render_html_block(f'<div class="side-group-label">{t("active_etf_selected")}</div>')
     st.caption(t("active_etf_selected_count", count=len(selected_active_etfs)))
 
+    visible_selected_universe = list(selected_active_etfs)
+    active_selected_group = None
+    if visible_selected_universe:
+        render_html_block(f'<div class="side-group-label">{"已選 ETF 分組" if is_zh else "Selected ETF groups"}</div>')
+        active_selected_group = render_active_etf_group_buttons(
+            visible_selected_universe,
+            state_key="dashboard_active_etf_selected_group",
+        )
+        visible_selected_universe = [
+            ticker for ticker in visible_selected_universe
+            if not active_selected_group or active_etf_group_key(ticker) == active_selected_group
+        ]
+
     remove_widget_key = "dashboard_active_etf_remove_widget"
     valid_removals = [
         normalize_dashboard_ticker(value)
         for value in st.session_state.get(remove_widget_key, [])
-        if normalize_dashboard_ticker(value) in set(selected_active_etfs)
+        if normalize_dashboard_ticker(value) in set(visible_selected_universe)
     ]
     st.session_state[remove_widget_key] = valid_removals
     remove_candidates = st.multiselect(
         t("active_etf_selected"),
-        options=selected_active_etfs,
-        format_func=display_ticker_label,
+        options=visible_selected_universe,
+        format_func=active_etf_selector_label,
         placeholder=t("pick_watchlist_symbols"),
         key=remove_widget_key,
     )
