@@ -114,17 +114,17 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
             profiles = {
                 "Standard": {
                     "title": "標準使用者導覽",
-                    "copy": "先看供應鏈摘要與台股總經背景，再進到各主題戰力板，最後才進比較區與單檔工作台。",
+                    "copy": "先看供應鏈摘要與台股總經背景，再進到各主題戰力板，最後才進整組供應鏈比較與單檔工作台。",
                     "steps": ["先看摘要", "再看戰力板", "最後進工作台"],
                 },
                 "Advanced": {
                     "title": "進階使用者工作區",
-                    "copy": "把 Overview、Chains、Compare、Workspace 分開，先看範圍與快照，再進戰力板、比較區與單檔研究。",
+                    "copy": "把 Overview、Chains、Compare、Workspace 分開，先看範圍與快照，再進戰力板、整組供應鏈比較與單檔研究。",
                     "steps": ["Overview", "Chains", "Compare", "Workspace"],
                 },
                 "Expert": {
                     "title": "供應鏈研究檯",
-                    "copy": "把供應鏈總覽固定在上方，下面改成獨立的戰力板、比較站與個股工作台，適合長時間研究。",
+                    "copy": "把供應鏈研究拆成總覽、戰力板、整組比較站與個股工作台，適合長時間研究。",
                     "steps": ["總覽", "戰力板", "比較", "研究分頁"],
                 },
             }
@@ -132,17 +132,17 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
             profiles = {
                 "Standard": {
                     "title": "Standard guided layout",
-                    "copy": "Start with the supply-chain brief and Taiwan macro backdrop, move into the chain boards, then finish in comparison and workspaces.",
+                    "copy": "Start with the supply-chain brief and Taiwan macro backdrop, move into the chain boards, then finish with whole-chain comparison and workspaces.",
                     "steps": ["Start with the brief", "Move into chain boards", "Finish in workspaces"],
                 },
                 "Advanced": {
                     "title": "Advanced supply-chain workspace",
-                    "copy": "Separates Overview, Chains, Compare, and Workspace so you can scan scope and snapshot status first, then drill into boards and single-ticker research.",
+                    "copy": "Separates Overview, Chains, Compare, and Workspace so you can scan scope and snapshot status first, then drill into boards, whole-chain comparison, and single-ticker research.",
                     "steps": ["Overview", "Chains", "Compare", "Workspace"],
                 },
                 "Expert": {
                     "title": "Supply-chain research desk",
-                    "copy": "Keeps the supply-chain overview on top and turns the boards, compare station, and ticker workspaces into dedicated lower layers for longer research sessions.",
+                    "copy": "Splits supply-chain research into overview, boards, whole-chain comparison, and ticker workspaces for longer research sessions.",
                     "steps": ["Overview", "Chain boards", "Compare", "Ticker desks"],
                 },
             }
@@ -280,13 +280,13 @@ def render_layout_flow_cards(layout_mode: str, dashboard_mode: str) -> None:
             [
                 ("01", "供應鏈摘要" if lang_zh else "Chain Brief", "先看台股總經背景、供應鏈範圍與目前快照狀態。" if lang_zh else "Start with Taiwan macro context, the selected chain scope, and the current snapshot state."),
                 ("02", "供應鏈戰力板" if lang_zh else "Chain Boards", "再進入低軌、ABF、記憶體、封測、機器人等主題戰力板。" if lang_zh else "Then move into the thematic boards for LEO, ABF, memory, packaging & test, robotics, and more."),
-                ("03", "工作台" if lang_zh else "Workspace", "最後進入相關成分股的比較與單檔研究。" if lang_zh else "Finish in related-stock comparison and single-ticker workspaces."),
+                ("03", "比較與工作台" if lang_zh else "Compare & Workspace", "最後看整組供應鏈比較，再進單檔研究。" if lang_zh else "Finish with whole-chain comparison, then single-ticker workspaces."),
             ]
             if layout_mode == "Standard"
             else [
                 ("01", "Overview", "先看供應鏈範圍、市場背景與快照狀態。" if lang_zh else "Start with chain scope, market backdrop, and snapshot state."),
                 ("02", "Chains", "供應鏈戰力板獨立成一站。" if lang_zh else "The thematic chain boards get their own station."),
-                ("03", "Compare", "把相關成分股集中到比較站。" if lang_zh else "Keep the related constituent names in one comparison station."),
+                ("03", "Compare", "比較整條供應鏈的漲幅、外資與最強成分股。" if lang_zh else "Compare whole chains by move, foreign flow, and leader names."),
                 ("04", "Workspace", "每檔供應鏈成分股保留完整工作台。" if lang_zh else "Each supply-chain ticker keeps its full workspace."),
             ]
         )
@@ -2603,6 +2603,68 @@ def _deserialize_supply_chain_rows(rows: list[dict]) -> list[dict]:
     return parsed_rows
 
 
+def _supply_chain_move_summary(rows: list[dict]) -> dict:
+    moves: list[float] = []
+    for row in rows or []:
+        numeric = _safe_float(row.get("latest_move"))
+        if pd.notna(numeric):
+            moves.append(float(numeric))
+    total = sum(moves) if moves else float("nan")
+    return {
+        "aggregate_move_sum": total,
+        "average_move": (total / len(moves)) if moves else float("nan"),
+        "valid_move_count": len(moves),
+    }
+
+
+def _supply_chain_official_flow_snapshot(ticker: str) -> dict:
+    normalized = normalize_dashboard_ticker(ticker)
+    if not normalized or not is_taiwan_ticker(normalized):
+        return {}
+    try:
+        peek_func = globals().get("peek_taiwan_official_ticker_snapshot")
+        snapshot = peek_func(normalized) if callable(peek_func) else None
+    except Exception:
+        snapshot = None
+    if not isinstance(snapshot, dict):
+        return {}
+    flow = snapshot.get("flow", {}) or {}
+    return flow if isinstance(flow, dict) else {}
+
+
+def _supply_chain_foreign_flow_summary(rows: list[dict]) -> dict:
+    entries: list[dict] = []
+    for row in rows or []:
+        ticker = normalize_dashboard_ticker(row.get("ticker"))
+        flow = _supply_chain_official_flow_snapshot(ticker)
+        foreign_net = _safe_float(flow.get("foreign_net"))
+        if pd.isna(foreign_net):
+            continue
+        entries.append(
+            {
+                "ticker": ticker,
+                "name": str(row.get("name") or display_ticker_label(ticker) or ticker),
+                "foreign_net": float(foreign_net),
+            }
+        )
+
+    total = sum(item["foreign_net"] for item in entries) if entries else float("nan")
+    leader = max(entries, key=lambda item: item["foreign_net"]) if entries else {}
+    laggard = min(entries, key=lambda item: item["foreign_net"]) if entries else {}
+    return {
+        "foreign_net_total": total,
+        "foreign_net_count": len(entries),
+        "foreign_buy_count": sum(1 for item in entries if item["foreign_net"] > 0),
+        "foreign_sell_count": sum(1 for item in entries if item["foreign_net"] < 0),
+        "foreign_leader_name": str(leader.get("name", "")),
+        "foreign_leader_ticker": str(leader.get("ticker", "")),
+        "foreign_leader_net": leader.get("foreign_net", float("nan")),
+        "foreign_laggard_name": str(laggard.get("name", "")),
+        "foreign_laggard_ticker": str(laggard.get("ticker", "")),
+        "foreign_laggard_net": laggard.get("foreign_net", float("nan")),
+    }
+
+
 def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta: dict | None = None) -> dict:
     catalog = config["catalog"]
     universe = build_supply_chain_universe(catalog)
@@ -2629,6 +2691,20 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
             "leader_name": "",
             "leader_ticker": "",
             "leader_move": "",
+            "rank_rows": [],
+            "aggregate_move_sum": "",
+            "average_move": "",
+            "valid_move_count": 0,
+            "foreign_net_total": "",
+            "foreign_net_count": 0,
+            "foreign_buy_count": 0,
+            "foreign_sell_count": 0,
+            "foreign_leader_name": "",
+            "foreign_leader_ticker": "",
+            "foreign_leader_net": "",
+            "foreign_laggard_name": "",
+            "foreign_laggard_ticker": "",
+            "foreign_laggard_net": "",
         }
 
     top_rows = enrich_supply_chain_top_rows(
@@ -2642,6 +2718,8 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
     rising_count = sum(1 for row in rows if row.get("positive_move"))
     bullish_news_count = sum(1 for row in top_rows if "bullish" in str(row.get("news_label_raw", "")).lower())
     intraday_rows = sum(1 for row in top_rows if row.get("price_source") == "intraday_vs_prev_close")
+    move_summary = _supply_chain_move_summary(rows)
+    foreign_summary = _supply_chain_foreign_flow_summary(rows)
 
     labels = config["summary_labels"]
     summary_cards = [
@@ -2668,6 +2746,7 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
         "lens_title": lens_title,
         "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
         "status": "ready",
+        "rank_rows": _serialize_supply_chain_rows(rows, config["columns"]),
         "top_rows": _serialize_supply_chain_rows(top_rows, config["columns"]),
         "summary_cards": summary_cards,
         "last_sync_text": last_sync_text,
@@ -2675,6 +2754,19 @@ def _build_supply_chain_focus_snapshot(config_key: str, config: dict, lens_meta:
         "leader_name": str((top_rows[0] or {}).get("name") or ""),
         "leader_ticker": str((top_rows[0] or {}).get("ticker") or ""),
         "leader_move": _supply_chain_snapshot_to_text((top_rows[0] or {}).get("latest_move")),
+        "aggregate_move_sum": _supply_chain_snapshot_to_text(move_summary.get("aggregate_move_sum")),
+        "average_move": _supply_chain_snapshot_to_text(move_summary.get("average_move")),
+        "valid_move_count": int(move_summary.get("valid_move_count", 0) or 0),
+        "foreign_net_total": _supply_chain_snapshot_to_text(foreign_summary.get("foreign_net_total")),
+        "foreign_net_count": int(foreign_summary.get("foreign_net_count", 0) or 0),
+        "foreign_buy_count": int(foreign_summary.get("foreign_buy_count", 0) or 0),
+        "foreign_sell_count": int(foreign_summary.get("foreign_sell_count", 0) or 0),
+        "foreign_leader_name": str(foreign_summary.get("foreign_leader_name", "") or ""),
+        "foreign_leader_ticker": str(foreign_summary.get("foreign_leader_ticker", "") or ""),
+        "foreign_leader_net": _supply_chain_snapshot_to_text(foreign_summary.get("foreign_leader_net")),
+        "foreign_laggard_name": str(foreign_summary.get("foreign_laggard_name", "") or ""),
+        "foreign_laggard_ticker": str(foreign_summary.get("foreign_laggard_ticker", "") or ""),
+        "foreign_laggard_net": _supply_chain_snapshot_to_text(foreign_summary.get("foreign_laggard_net")),
     }
 
 
@@ -19603,11 +19695,483 @@ def render_selected_supply_chain_sections(config_keys: list[str], lens_meta: dic
             render_supply_chain_focus_section(config_key, lens_meta=lens_meta)
 
 
+def _supply_chain_snapshot_rows(snapshot: dict) -> list[dict]:
+    rows = _deserialize_supply_chain_rows(snapshot.get("rank_rows", []) or [])
+    if rows:
+        return rows
+    return _deserialize_supply_chain_rows(snapshot.get("top_rows", []) or [])
+
+
+def build_supply_chain_overview_rows(
+    config_keys: list[str],
+    lens_meta: dict | None = None,
+    *,
+    force_refresh: bool = False,
+) -> list[dict]:
+    overview_rows: list[dict] = []
+    for config_key in config_keys:
+        config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+        if not config:
+            continue
+        snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=force_refresh)
+        if not isinstance(snapshot, dict) or str(snapshot.get("status", "ready")) != "ready":
+            continue
+
+        rows = _supply_chain_snapshot_rows(snapshot)
+        move_summary = _supply_chain_move_summary(rows)
+        aggregate_move = _safe_float(snapshot.get("aggregate_move_sum"))
+        average_move = _safe_float(snapshot.get("average_move"))
+        valid_move_count = _coerce_snapshot_int(snapshot.get("valid_move_count"), default=0)
+        if pd.isna(aggregate_move):
+            aggregate_move = move_summary.get("aggregate_move_sum", float("nan"))
+        if pd.isna(average_move):
+            average_move = move_summary.get("average_move", float("nan"))
+        if not valid_move_count:
+            valid_move_count = int(move_summary.get("valid_move_count", 0) or 0)
+
+        foreign_net = _safe_float(snapshot.get("foreign_net_total"))
+        foreign_count = _coerce_snapshot_int(snapshot.get("foreign_net_count"), default=0)
+        if pd.isna(foreign_net) or not foreign_count:
+            foreign_summary = _supply_chain_foreign_flow_summary(rows)
+            foreign_net = foreign_summary.get("foreign_net_total", float("nan"))
+            foreign_count = int(foreign_summary.get("foreign_net_count", 0) or 0)
+            foreign_leader_name = str(foreign_summary.get("foreign_leader_name", "") or "")
+            foreign_leader_net = foreign_summary.get("foreign_leader_net", float("nan"))
+            foreign_laggard_name = str(foreign_summary.get("foreign_laggard_name", "") or "")
+            foreign_laggard_net = foreign_summary.get("foreign_laggard_net", float("nan"))
+        else:
+            foreign_leader_name = str(snapshot.get("foreign_leader_name", "") or "")
+            foreign_leader_net = _safe_float(snapshot.get("foreign_leader_net"))
+            foreign_laggard_name = str(snapshot.get("foreign_laggard_name", "") or "")
+            foreign_laggard_net = _safe_float(snapshot.get("foreign_laggard_net"))
+
+        leader_name = str(snapshot.get("leader_name", "") or "")
+        leader_ticker = str(snapshot.get("leader_ticker", "") or "")
+        leader_move = _safe_float(snapshot.get("leader_move"))
+        if rows and not leader_name:
+            leader_name = str(rows[0].get("name") or display_ticker_label(rows[0].get("ticker", "")) or "")
+            leader_ticker = str(rows[0].get("ticker", "") or "")
+            leader_move = _safe_float(rows[0].get("latest_move"))
+
+        overview_rows.append(
+            {
+                "config_key": config_key,
+                "title": supply_chain_group_label(config_key),
+                "ticker_count": len(build_supply_chain_universe(config["catalog"])),
+                "fetched_at": snapshot.get("fetched_at"),
+                "last_sync_text": str(snapshot.get("last_sync_text", "") or "—"),
+                "aggregate_move_sum": aggregate_move,
+                "average_move": average_move,
+                "valid_move_count": valid_move_count,
+                "rising_count": _coerce_snapshot_int(snapshot.get("rising_count"), default=0),
+                "leader_name": leader_name,
+                "leader_ticker": leader_ticker,
+                "leader_move": leader_move,
+                "foreign_net_total": foreign_net,
+                "foreign_net_count": foreign_count,
+                "foreign_leader_name": foreign_leader_name,
+                "foreign_leader_net": foreign_leader_net,
+                "foreign_laggard_name": foreign_laggard_name,
+                "foreign_laggard_net": foreign_laggard_net,
+            }
+        )
+
+    overview_rows.sort(
+        key=lambda row: (
+            pd.notna(row.get("aggregate_move_sum")),
+            float(row.get("aggregate_move_sum")) if pd.notna(row.get("aggregate_move_sum")) else -10**9,
+            int(row.get("rising_count", 0) or 0),
+        ),
+        reverse=True,
+    )
+    for rank, row in enumerate(overview_rows, start=1):
+        row["rank"] = rank
+    return overview_rows
+
+
+def _supply_chain_overall_rank_icon(rank: int) -> str:
+    icons = {
+        1: "◆",
+        2: "◇",
+        3: "▲",
+    }
+    return icons.get(int(rank or 0), "○")
+
+
+def _supply_chain_move_tone(value: object) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "flat"
+    if numeric > 0:
+        return "up"
+    if numeric < 0:
+        return "down"
+    return "flat"
+
+
+def _format_supply_chain_foreign_flow(value: object, lang_zh: bool) -> str:
+    numeric = _safe_float(value)
+    if pd.isna(numeric):
+        return "—"
+    return _format_taiwan_lot_text(numeric, lang_zh, signed=True)
+
+
+def inject_supply_chain_overview_css() -> None:
+    render_html_block(
+        """
+        <style>
+        .sc-overall-shell {
+            margin-top: 14px;
+            margin-bottom: 18px;
+        }
+        .sc-overall-head {
+            display: flex;
+            gap: 14px;
+            align-items: flex-end;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .sc-overall-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 12px;
+        }
+        .sc-overall-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 18px;
+            padding: 16px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+            background:
+                radial-gradient(circle at 12% 12%, color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent), transparent 34%),
+                linear-gradient(145deg, color-mix(in srgb, var(--card-soft, #111c2f) 92%, transparent), color-mix(in srgb, var(--card, #08111f) 98%, transparent));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 18px 36px rgba(0,0,0,.18);
+        }
+        .sc-overall-card.rank-1 {
+            border-color: color-mix(in srgb, #f6d36b 45%, var(--brand-2, #38bdf8));
+            box-shadow: 0 0 0 1px rgba(246,211,107,.16), 0 22px 48px rgba(246,211,107,.08);
+        }
+        .sc-overall-icon {
+            position: absolute;
+            top: 14px;
+            right: 16px;
+            width: 34px;
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            font-size: 18px;
+            font-weight: 900;
+            color: #f6d36b;
+            background: rgba(246,211,107,.11);
+            border: 1px solid rgba(246,211,107,.34);
+        }
+        .sc-overall-kicker,
+        .sc-overall-label {
+            font-size: 11px;
+            line-height: 1.2;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+        }
+        .sc-overall-title {
+            margin-top: 8px;
+            padding-right: 44px;
+            font-size: 19px;
+            line-height: 1.25;
+            font-weight: 950;
+            color: var(--ink, #eef7ff);
+        }
+        .sc-overall-value {
+            margin-top: 12px;
+            font-size: 28px;
+            line-height: 1;
+            font-weight: 950;
+            color: var(--ink, #eef7ff);
+        }
+        .sc-overall-value.up,
+        .sc-overall-mini-value.up {
+            color: #8df0bd;
+        }
+        .sc-overall-value.down,
+        .sc-overall-mini-value.down {
+            color: #ffb4b4;
+        }
+        .sc-overall-note {
+            margin-top: 8px;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: var(--muted, rgba(226,238,255,.78));
+        }
+        .sc-overall-mini-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .sc-overall-mini {
+            border-radius: 16px;
+            padding: 13px 14px;
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.035);
+        }
+        .sc-overall-mini-value {
+            margin-top: 6px;
+            font-size: 17px;
+            line-height: 1.25;
+            font-weight: 950;
+            color: var(--ink, #eef7ff);
+        }
+        .sc-overall-table {
+            margin-top: 14px;
+            overflow: hidden;
+            border-radius: 18px;
+            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+            background: rgba(6,14,26,.55);
+            overflow-x: auto;
+        }
+        .sc-overall-table-head,
+        .sc-overall-table-row {
+            display: grid;
+            grid-template-columns: 0.55fr 1.5fr 1fr 1fr 1fr 1.15fr;
+            min-width: 860px;
+        }
+        .sc-overall-table-head {
+            background: rgba(56,189,248,.08);
+        }
+        .sc-overall-cell {
+            padding: 13px 14px;
+            border-bottom: 1px solid rgba(255,255,255,.055);
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--muted, rgba(226,238,255,.82));
+        }
+        .sc-overall-table-row:last-child .sc-overall-cell {
+            border-bottom: 0;
+        }
+        .sc-overall-table-head .sc-overall-cell {
+            font-size: 11px;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+        }
+        .sc-overall-strong {
+            font-weight: 950;
+            color: var(--ink, #eef7ff);
+        }
+        </style>
+        """
+    )
+
+
+def _render_supply_chain_overview_cards(rows: list[dict], *, show_icons: bool) -> str:
+    cards: list[str] = []
+    lang_zh = get_language() == "zh_TW"
+    for row in rows:
+        rank = int(row.get("rank", 0) or 0)
+        aggregate = row.get("aggregate_move_sum", pd.NA)
+        aggregate_tone = _supply_chain_move_tone(aggregate)
+        foreign = row.get("foreign_net_total", pd.NA)
+        foreign_tone = _supply_chain_move_tone(foreign)
+        icon_html = (
+            f'<div class="sc-overall-icon">{escape(_supply_chain_overall_rank_icon(rank))}</div>'
+            if show_icons
+            else ""
+        )
+        cards.append(
+            f'''
+            <div class="sc-overall-card rank-{rank}">
+                {icon_html}
+                <div class="sc-overall-kicker">#{rank:02d} {'Chain Signal' if not lang_zh else '供應鏈訊號'}</div>
+                <div class="sc-overall-title">{escape(str(row.get("title", "")))}</div>
+                <div class="sc-overall-value {aggregate_tone}">{escape(format_percent(aggregate))}</div>
+                <div class="sc-overall-note">
+                    {escape('整組加總漲幅' if lang_zh else 'Aggregate move')} ·
+                    {escape(str(row.get("rising_count", 0)))} / {escape(str(row.get("ticker_count", 0)))} {escape('檔上漲' if lang_zh else 'risers')}
+                </div>
+                <div class="sc-overall-mini-grid">
+                    <div class="sc-overall-mini">
+                        <div class="sc-overall-label">{escape('最強一檔' if lang_zh else 'Leader')}</div>
+                        <div class="sc-overall-mini-value {aggregate_tone}">
+                            {escape(str(row.get("leader_name", "") or "—"))} {escape(format_percent(row.get("leader_move")))}
+                        </div>
+                    </div>
+                    <div class="sc-overall-mini">
+                        <div class="sc-overall-label">{escape('外資合計' if lang_zh else 'Foreign flow')}</div>
+                        <div class="sc-overall-mini-value {foreign_tone}">
+                            {escape(_format_supply_chain_foreign_flow(foreign, lang_zh))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            '''
+        )
+    return "".join(cards)
+
+
+def _render_supply_chain_overview_table(rows: list[dict]) -> str:
+    lang_zh = get_language() == "zh_TW"
+    headers = (
+        ["排序", "供應鏈", "整組漲幅", "平均漲幅", "外資合計", "最強一檔"]
+        if lang_zh
+        else ["Rank", "Chain", "Aggregate", "Average", "Foreign net", "Leader"]
+    )
+    head_html = "".join(f'<div class="sc-overall-cell">{escape(header)}</div>' for header in headers)
+    row_html: list[str] = []
+    for row in rows:
+        aggregate_tone = _supply_chain_move_tone(row.get("aggregate_move_sum"))
+        foreign_tone = _supply_chain_move_tone(row.get("foreign_net_total"))
+        leader_text = f"{row.get('leader_name', '') or '—'} {format_percent(row.get('leader_move'))}"
+        cells = [
+            f"#{int(row.get('rank', 0) or 0):02d}",
+            str(row.get("title", "") or "—"),
+            format_percent(row.get("aggregate_move_sum")),
+            format_percent(row.get("average_move")),
+            _format_supply_chain_foreign_flow(row.get("foreign_net_total"), lang_zh),
+            leader_text,
+        ]
+        classes = ["", "sc-overall-strong", aggregate_tone, aggregate_tone, foreign_tone, "sc-overall-strong"]
+        cell_html = "".join(
+            f'<div class="sc-overall-cell {escape(classes[idx])}">{escape(str(value))}</div>'
+            for idx, value in enumerate(cells)
+        )
+        row_html.append(f'<div class="sc-overall-table-row">{cell_html}</div>')
+    return (
+        '<div class="sc-overall-table">'
+        f'<div class="sc-overall-table-head">{head_html}</div>'
+        + "".join(row_html)
+        + "</div>"
+    )
+
+
+def render_supply_chain_overall_summary(
+    selected_keys: list[str],
+    lens_meta: dict | None = None,
+    *,
+    show_icons: bool = True,
+    force_refresh: bool = False,
+) -> list[dict]:
+    lang_zh = get_language() == "zh_TW"
+    inject_supply_chain_overview_css()
+    rows = build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=force_refresh)
+    if not rows:
+        st.info("目前還沒有可用的供應鏈快照。" if lang_zh else "No supply-chain snapshots are available yet.")
+        return []
+
+    valid_foreign_rows = [row for row in rows if pd.notna(_safe_float(row.get("foreign_net_total")))]
+    foreign_buy_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) > 0]
+    foreign_sell_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) < 0]
+    top_buy = max(foreign_buy_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_buy_rows else None
+    top_sell = min(foreign_sell_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_sell_rows else None
+    leader = rows[0]
+
+    headline_cards = [
+        (
+            "整組漲幅王" if lang_zh else "Aggregate leader",
+            str(leader.get("title", "—")),
+            format_percent(leader.get("aggregate_move_sum")),
+            _supply_chain_move_tone(leader.get("aggregate_move_sum")),
+        ),
+        (
+            "外資最買" if lang_zh else "Most foreign buying",
+            str((top_buy or {}).get("title", "—")),
+            _format_supply_chain_foreign_flow((top_buy or {}).get("foreign_net_total"), lang_zh),
+            _supply_chain_move_tone((top_buy or {}).get("foreign_net_total")),
+        ),
+        (
+            "外資最賣" if lang_zh else "Most foreign selling",
+            str((top_sell or {}).get("title", "—")),
+            _format_supply_chain_foreign_flow((top_sell or {}).get("foreign_net_total"), lang_zh),
+            _supply_chain_move_tone((top_sell or {}).get("foreign_net_total")),
+        ),
+    ]
+    mini_html = "".join(
+        f'''
+        <div class="sc-overall-mini">
+            <div class="sc-overall-label">{escape(label)}</div>
+            <div class="sc-overall-mini-value {escape(tone)}">{escape(title)} · {escape(value)}</div>
+        </div>
+        '''
+        for label, title, value, tone in headline_cards
+    )
+
+    title = "Overall 供應鏈摘要" if lang_zh else "Overall Supply-Chain Summary"
+    copy = (
+        "依照每條供應鏈成分股的最新漲跌幅加總排序，並同步看外資在整組供應鏈上的買賣超方向。"
+        if lang_zh
+        else "Ranks each chain by aggregate constituent move and checks where foreign flow is most supportive or cautious."
+    )
+    basis = (
+        "整組漲幅 = 目前快照中可用成分股漲跌幅加總；外資合計優先讀官方快照。"
+        if lang_zh
+        else "Aggregate move sums available constituent moves in the current snapshot; foreign flow uses official snapshots first."
+    )
+
+    render_html_block(
+        f'''
+        <div class="guide-shell sc-overall-shell">
+            <div class="sc-overall-head">
+                <div>
+                    <div class="section-header">{escape(title)}</div>
+                    <div class="guide-copy">{escape(copy)}</div>
+                </div>
+            </div>
+            <div class="sc-overall-mini-grid">{mini_html}</div>
+            <div class="sc-overall-grid">{_render_supply_chain_overview_cards(rows, show_icons=show_icons)}</div>
+            {_render_supply_chain_overview_table(rows)}
+            <div class="leo-rank-note">{escape(basis)}</div>
+        </div>
+        '''
+    )
+    return rows
+
+
+def render_supply_chain_group_compare(selected_keys: list[str], lens_meta: dict | None = None) -> None:
+    lang_zh = get_language() == "zh_TW"
+    refresh_cols = st.columns([3, 1])
+    with refresh_cols[0]:
+        st.caption(
+            "這裡只比較整組供應鏈，不再把所有成分股攤在同一張股票比較表。"
+            if lang_zh
+            else "This station compares whole supply chains instead of putting every constituent stock into one comparison table."
+        )
+    with refresh_cols[1]:
+        refresh_now = st.button(
+            "刷新供應鏈快照" if lang_zh else "Refresh chains",
+            key="supply_chain_group_compare_refresh",
+            use_container_width=True,
+        )
+    if refresh_now:
+        with st.spinner("正在更新供應鏈快照..." if lang_zh else "Refreshing supply-chain snapshots..."):
+            rows = render_supply_chain_overall_summary(
+                selected_keys,
+                lens_meta=lens_meta,
+                show_icons=False,
+                force_refresh=True,
+            )
+    else:
+        rows = render_supply_chain_overall_summary(
+            selected_keys,
+            lens_meta=lens_meta,
+            show_icons=False,
+            force_refresh=False,
+        )
+    if rows:
+        st.caption(
+            "Compare 頁面聚焦：整組漲幅、平均漲幅、上漲家數、外資合計與最強個股。"
+            if lang_zh
+            else "Compare focuses on aggregate move, average move, risers, foreign flow, and each chain leader."
+        )
+
+
 def supply_chain_layout_section_label(value: str) -> str:
     lang_zh = get_lang() == "繁體中文"
     labels = {
         "layout_standard_supply_chain_brief_tab": "1. 供應鏈摘要" if lang_zh else "1. Chain Brief",
-        "layout_standard_supply_chain_compare_tab": "2. 比較與規劃" if lang_zh else "2. Compare & Plan",
+        "layout_standard_supply_chain_compare_tab": "2. 供應鏈比較" if lang_zh else "2. Chain Compare",
         "layout_standard_supply_chain_workspace_tab": "3. 供應鏈工作台" if lang_zh else "3. Supply Chain Workspace",
         "layout_supply_chain_tab": "供應鏈" if lang_zh else "Chains",
         "layout_overview_tab": "總覽" if lang_zh else "Overview",
@@ -19701,7 +20265,7 @@ def render_supply_chain_lab_dashboard(
         <div class="guide-shell etf-tracker-shell">
             <div class="section-header">{'供應鏈專屬 Dashboard' if lang_zh else 'Supply Chain Dashboard'}</div>
             <div class="guide-title">{'主題供應鏈研究工作區' if lang_zh else 'Thematic supply-chain research workspace'}</div>
-            <div class="guide-copy">{'把低軌、ABF、記憶體、封測與機器人等供應鏈戰力板獨立成一個 Dashboard，並保留比較區與單檔工作台。' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard while keeping comparison and single-ticker workspaces intact.'}</div>
+            <div class="guide-copy">{'把低軌、ABF、記憶體、封測與機器人等供應鏈戰力板獨立成一個 Dashboard，並改成整組供應鏈之間的比較。' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard and compares whole chains instead of large stock lists.'}</div>
             <div class="chip-row">{''.join(chips)}</div>
         </div>
         """,
@@ -19713,26 +20277,28 @@ def render_supply_chain_lab_dashboard(
 
     def _render_supply_chain_briefing() -> None:
         render_taiwan_market_macro_strip(force_show=True)
-        summary_cols = st.columns(3)
-        summary_cols[0].metric("供應鏈主題數" if lang_zh else "Chains selected", len(selected_keys))
-        summary_cols[1].metric("成分股檔數" if lang_zh else "Constituent tickers", len(supply_chain_tickers))
-        summary_cols[2].metric(
-            "可做比較" if lang_zh else "Compare ready",
-            "是" if len(supply_chain_tickers) >= 2 and lang_zh else ("Yes" if len(supply_chain_tickers) >= 2 else ("否" if lang_zh else "No")),
-        )
+        refresh_cols = st.columns([3, 1])
         chain_names = " ｜ ".join(supply_chain_group_label(key) for key in selected_keys)
-        st.caption(
-            (f"目前範圍：{chain_names}" if lang_zh else f"Current chain scope: {chain_names}")
-        )
+        with refresh_cols[0]:
+            st.caption(f"目前範圍：{chain_names}" if lang_zh else f"Current chain scope: {chain_names}")
+        with refresh_cols[1]:
+            refresh_now = st.button(
+                "刷新 Overall" if lang_zh else "Refresh Overall",
+                key="supply_chain_overall_refresh",
+                use_container_width=True,
+            )
+        if refresh_now:
+            with st.spinner("正在更新供應鏈 Overall 快照..." if lang_zh else "Refreshing supply-chain overview snapshots..."):
+                render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=True)
+        else:
+            render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=False)
         render_active_trend_lens(lens_meta)
 
     def _render_supply_chain_compare() -> None:
-        if len(supply_chain_tickers) < 2:
-            st.info("目前供應鏈成分股不足兩檔，無法開啟比較區。" if lang_zh else "At least two supply-chain tickers are needed for comparison.")
+        if len(selected_keys) < 2:
+            st.info("目前供應鏈主題不足兩組，請先在左側多選幾條供應鏈。" if lang_zh else "Select at least two supply-chain themes from the sidebar first.")
             return
-        render_global_scenario_planning_stack(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
-        render_precomparison_target_and_brief_groups(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
-        render_comparison_section(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+        render_supply_chain_group_compare(selected_keys, lens_meta=lens_meta)
 
     if layout_mode == "Standard":
         standard_sections = [
@@ -19746,7 +20312,6 @@ def render_supply_chain_lab_dashboard(
         )
         if current_section == "layout_standard_supply_chain_brief_tab":
             _render_supply_chain_briefing()
-            render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
         elif current_section == "layout_standard_supply_chain_compare_tab":
             _render_supply_chain_compare()
         else:
@@ -19778,8 +20343,8 @@ def render_supply_chain_lab_dashboard(
         else:
             render_ticker_workspace_tabs(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
     else:
-        _render_supply_chain_briefing()
         expert_sections = [
+            "layout_overview_tab",
             "layout_supply_chain_tab",
             "layout_comparison_desk_tab",
             "layout_ticker_desks_tab",
@@ -19795,7 +20360,9 @@ def render_supply_chain_lab_dashboard(
             ),
             widget_label="dashboard-expert-supply-chain-station",
         )
-        if current_section == "layout_supply_chain_tab":
+        if current_section == "layout_overview_tab":
+            _render_supply_chain_briefing()
+        elif current_section == "layout_supply_chain_tab":
             render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
         elif current_section == "layout_comparison_desk_tab":
             _render_supply_chain_compare()
