@@ -20129,14 +20129,94 @@ def render_supply_chain_overall_summary(
     return rows
 
 
-def render_supply_chain_group_compare(selected_keys: list[str], lens_meta: dict | None = None) -> None:
+def render_supply_chain_stock_compare_picker(
+    selected_keys: list[str],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> None:
+    lang_zh = get_language() == "zh_TW"
+    st.markdown(
+        "#### 手動股票對股票比較" if lang_zh else "#### Manual Stock-to-Stock Compare"
+    )
+    st.caption(
+        "每條供應鏈都先收合起來；需要跨鏈比較時，再展開想看的區塊並勾選股票。"
+        if lang_zh
+        else "Each chain starts collapsed. Open the chain blocks you care about, then choose stocks for cross-chain comparison."
+    )
+
+    selected_by_chain: dict[str, list[str]] = {}
+    for config_key in selected_keys:
+        config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
+        if not config:
+            continue
+        universe = build_supply_chain_universe(config["catalog"])
+        options = [
+            normalize_dashboard_ticker(item.get("ticker"))
+            for item in universe
+            if normalize_dashboard_ticker(item.get("ticker"))
+        ]
+        options = dedupe_keep_order(options)
+        if not options:
+            continue
+
+        chain_title = supply_chain_group_label(config_key)
+        state_key = f"supply_chain_stock_compare_selection_{re.sub(r'[^A-Za-z0-9_]+', '_', str(config_key))}"
+        stored = [
+            ticker for ticker in st.session_state.get(state_key, [])
+            if ticker in options
+        ]
+        st.session_state[state_key] = stored
+        with st.expander(f"{chain_title} · {len(options)} 檔" if lang_zh else f"{chain_title} · {len(options)} names", expanded=False):
+            selected = st.multiselect(
+                "選擇要加入股票對股票比較的成分股" if lang_zh else "Choose constituents for stock-to-stock comparison",
+                options=options,
+                format_func=display_ticker_label,
+                key=state_key,
+            )
+            selected_by_chain[config_key] = selected
+            if selected:
+                st.caption(
+                    ("已選：" if lang_zh else "Selected: ")
+                    + " ｜ ".join(display_ticker_label(ticker) for ticker in selected)
+                )
+
+    selected_tickers = dedupe_keep_order(
+        ticker
+        for values in selected_by_chain.values()
+        for ticker in values
+    )
+    if len(selected_tickers) < 2:
+        st.info(
+            "請至少從一條或多條供應鏈中選兩檔股票，才會載入股票對股票比較。"
+            if lang_zh
+            else "Select at least two stocks from one or more chains to load the stock-to-stock comparison."
+        )
+        return
+
+    st.caption(
+        (
+            f"目前股票對股票比較：{len(selected_tickers)} 檔。這一段已跳脫整組供應鏈排序，改看你手動挑選的股票。"
+            if lang_zh
+            else f"Stock-to-stock comparison: {len(selected_tickers)} names. This section uses only the stocks you selected, separate from whole-chain ranking."
+        )
+    )
+    render_comparison_section(daily_data, intraday_data, selected_tickers, lens_meta=lens_meta)
+
+
+def render_supply_chain_group_compare(
+    selected_keys: list[str],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> None:
     lang_zh = get_language() == "zh_TW"
     refresh_cols = st.columns([3, 1])
     with refresh_cols[0]:
         st.caption(
-            "這裡只比較整組供應鏈，不再把所有成分股攤在同一張股票比較表。"
+            "上半段先比較整組供應鏈；下半段可自行展開區塊，手動挑股票做股票對股票比較。"
             if lang_zh
-            else "This station compares whole supply chains instead of putting every constituent stock into one comparison table."
+            else "The top section compares whole chains; the lower section lets you open chain blocks and manually choose stocks for stock-to-stock comparison."
         )
     with refresh_cols[1]:
         refresh_now = st.button(
@@ -20161,10 +20241,16 @@ def render_supply_chain_group_compare(selected_keys: list[str], lens_meta: dict 
         )
     if rows:
         st.caption(
-            "Compare 頁面聚焦：整組漲幅、平均漲幅、上漲家數、外資合計與最強個股。"
+            "整組比較聚焦：整組漲幅、平均漲幅、上漲家數、外資合計與最強個股。"
             if lang_zh
-            else "Compare focuses on aggregate move, average move, risers, foreign flow, and each chain leader."
+            else "Whole-chain comparison focuses on aggregate move, average move, risers, foreign flow, and each chain leader."
         )
+    render_supply_chain_stock_compare_picker(
+        selected_keys,
+        daily_data,
+        intraday_data,
+        lens_meta=lens_meta,
+    )
 
 
 def supply_chain_layout_section_label(value: str) -> str:
@@ -20298,7 +20384,12 @@ def render_supply_chain_lab_dashboard(
         if len(selected_keys) < 2:
             st.info("目前供應鏈主題不足兩組，請先在左側多選幾條供應鏈。" if lang_zh else "Select at least two supply-chain themes from the sidebar first.")
             return
-        render_supply_chain_group_compare(selected_keys, lens_meta=lens_meta)
+        render_supply_chain_group_compare(
+            selected_keys,
+            daily_data,
+            intraday_data,
+            lens_meta=lens_meta,
+        )
 
     if layout_mode == "Standard":
         standard_sections = [
