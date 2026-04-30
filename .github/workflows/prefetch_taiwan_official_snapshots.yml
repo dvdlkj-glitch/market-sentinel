@@ -1,0 +1,41 @@
+name: Prefetch Taiwan Official Snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: Optional comma-separated Taiwan tickers
+        required: false
+        type: string
+  schedule:
+    - cron: "18 8 * * 1-5"
+    - cron: "48 10 * * 1-5"
+
+jobs:
+  prefetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE: ${{ vars.SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE }}
+      TAIWAN_OFFICIAL_SNAPSHOT_TICKERS: ${{ github.event.inputs.tickers || vars.TAIWAN_OFFICIAL_SNAPSHOT_TICKERS }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prefetch Taiwan official snapshots
+        run: >
+          python scripts/prefetch_taiwan_official_snapshots.py

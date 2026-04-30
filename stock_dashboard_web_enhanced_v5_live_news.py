@@ -2364,7 +2364,7 @@ def build_supply_chain_target_pe_cards(rows: list[dict], *, sample_size: int = 4
                 }
             )
 
-        valuation = (fetch_taiwan_official_dashboard_snapshot(row["ticker"]).get("valuation", {}) or {})
+        valuation = (load_taiwan_official_dashboard_snapshot(row["ticker"]).get("valuation", {}) or {})
         pe_value = _safe_float(valuation.get("pe"))
         if pd.notna(pe_value):
             pe_candidates.append(
@@ -3327,15 +3327,22 @@ SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE = _safe_secret(
     "SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE",
     os.environ.get("SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE", "active_etf_snapshots"),
 ) or "active_etf_snapshots"
+SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE = _safe_secret(
+    "SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE",
+    os.environ.get("SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE", "taiwan_official_snapshots"),
+) or "taiwan_official_snapshots"
 AUTH_MIN_PASSWORD_LENGTH = 8
 
 ACTIVE_ETF_TRACKER_SNAPSHOT_DB = Path(".dashboard_cache") / "active_etf_tracker.sqlite3"
 ACTIVE_ETF_LAB_SNAPSHOT_VERSION = 1
 ACTIVE_ETF_LAB_SNAPSHOT_PATH = Path(".dashboard_cache") / "active_etf_lab_snapshots.json"
+TAIWAN_OFFICIAL_SNAPSHOT_VERSION = 1
+TAIWAN_OFFICIAL_SNAPSHOT_PATH = Path(".dashboard_cache") / "taiwan_official_snapshots.json"
 ACTIVE_ETF_HOLDINGS_SOURCE_LABEL = "Yahoo Finance funds_data"
 ACTIVE_ETF_UPDATE_NOTE_EN = "This section is designed for after-close review and refreshes after 4:00 PM Asia/Taipei."
 ACTIVE_ETF_UPDATE_NOTE_ZH = "本區為收盤後追蹤用途，資訊設計為每日下午 4:00（台北時間）後更新。"
 ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00982A", "00981A"]
+TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY = "__MARKET__"
 
 
 def _active_etf_lab_snapshot_store() -> dict:
@@ -3890,6 +3897,378 @@ def prefetch_active_etf_snapshots_job(
         "lens_title": str(lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
         "period": str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
         "interval": str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+    }
+
+
+def _taiwan_official_snapshot_store() -> dict:
+    empty_store = {"version": TAIWAN_OFFICIAL_SNAPSHOT_VERSION, "items": {}}
+    try:
+        if not TAIWAN_OFFICIAL_SNAPSHOT_PATH.exists():
+            return empty_store
+        payload = json.loads(TAIWAN_OFFICIAL_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return empty_store
+    if not isinstance(payload, dict):
+        return empty_store
+    items = payload.get("items")
+    if not isinstance(items, dict):
+        items = {}
+    return {
+        "version": int(payload.get("version", TAIWAN_OFFICIAL_SNAPSHOT_VERSION) or TAIWAN_OFFICIAL_SNAPSHOT_VERSION),
+        "items": items,
+    }
+
+
+def _write_taiwan_official_snapshot_store(store: dict) -> None:
+    TAIWAN_OFFICIAL_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": TAIWAN_OFFICIAL_SNAPSHOT_VERSION,
+        "items": dict((store or {}).get("items", {}) or {}),
+    }
+    try:
+        TAIWAN_OFFICIAL_SNAPSHOT_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _taiwan_official_snapshot_target(snapshot_kind: str, ticker: str | None = None) -> str:
+    kind = str(snapshot_kind or "ticker").strip().lower()
+    if kind == "macro":
+        return TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY
+    normalized = normalize_dashboard_ticker(ticker)
+    return str(normalized or ticker or "").upper().strip()
+
+
+def _taiwan_official_snapshot_key(snapshot_kind: str, ticker: str | None = None) -> str:
+    kind = str(snapshot_kind or "ticker").strip().lower()
+    return f"{kind}::{_taiwan_official_snapshot_target(kind, ticker)}"
+
+
+def _taiwan_official_snapshot_as_of_date(snapshot: dict | None) -> str:
+    ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
+    if ts is None:
+        return _snapshot_today_string()
+    return ts.date().isoformat()
+
+
+def _supabase_taiwan_official_read_request(path: str) -> tuple[int, dict | list | str]:
+    if _supabase_is_configured():
+        status, payload = _supabase_request("GET", path)
+        if 200 <= status < 300:
+            return status, payload
+    if _supabase_service_is_configured():
+        return _supabase_service_request("GET", path)
+    return 0, {"message": "Supabase is not configured."}
+
+
+def _taiwan_official_supabase_row_from_snapshot(snapshot: dict) -> dict:
+    snapshot_kind = str((snapshot or {}).get("snapshot_kind", "ticker") or "ticker").strip().lower()
+    snapshot_ticker = _taiwan_official_snapshot_target(snapshot_kind, str((snapshot or {}).get("ticker", "") or ""))
+    return {
+        "snapshot_kind": snapshot_kind,
+        "ticker": snapshot_ticker,
+        "as_of_date": _taiwan_official_snapshot_as_of_date(snapshot),
+        "fetched_at": str(snapshot.get("fetched_at") or pd.Timestamp.now(tz=TW_TZ).isoformat()),
+        "status": str(snapshot.get("status", "ready") or "ready"),
+        "snapshot_payload": _json_request_safe(snapshot),
+    }
+
+
+def _taiwan_official_supabase_snapshot_from_row(row: dict | None) -> dict | None:
+    if not isinstance(row, dict):
+        return None
+    payload = row.get("snapshot_payload", {})
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    snapshot = dict(payload)
+    snapshot_kind = str(row.get("snapshot_kind", snapshot.get("snapshot_kind", "ticker")) or "ticker").strip().lower()
+    snapshot_ticker = _taiwan_official_snapshot_target(snapshot_kind, str(row.get("ticker", snapshot.get("ticker", "")) or ""))
+    snapshot.setdefault("version", TAIWAN_OFFICIAL_SNAPSHOT_VERSION)
+    snapshot.setdefault("snapshot_kind", snapshot_kind)
+    snapshot["ticker"] = snapshot_ticker if snapshot_kind == "macro" else str(snapshot.get("ticker", snapshot_ticker) or snapshot_ticker).upper().strip()
+    snapshot.setdefault("status", str(row.get("status", "ready") or "ready"))
+    snapshot.setdefault("fetched_at", str(row.get("fetched_at", "") or ""))
+    return snapshot
+
+
+def _load_supabase_taiwan_official_snapshot(snapshot_kind: str, ticker: str | None = None) -> dict | None:
+    kind = str(snapshot_kind or "ticker").strip().lower()
+    target = _taiwan_official_snapshot_target(kind, ticker)
+    select_query = quote_plus("snapshot_kind,ticker,as_of_date,fetched_at,status,snapshot_payload")
+    filters = [
+        f"snapshot_kind=eq.{quote_plus(kind)}",
+        f"ticker=eq.{quote_plus(target)}",
+    ]
+    path = (
+        f"/rest/v1/{SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE}"
+        f"?select={select_query}&{'&'.join(filters)}&order=as_of_date.desc,fetched_at.desc&limit=1"
+    )
+    status, payload = _supabase_taiwan_official_read_request(path)
+    if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
+        return None
+    return _taiwan_official_supabase_snapshot_from_row(payload[0])
+
+
+def _upsert_supabase_taiwan_official_snapshot(snapshot: dict) -> bool:
+    snapshot_kind = str((snapshot or {}).get("snapshot_kind", "ticker") or "ticker").strip().lower()
+    target = _taiwan_official_snapshot_target(snapshot_kind, str((snapshot or {}).get("ticker", "") or ""))
+    if not snapshot_kind or not target or not _supabase_service_is_configured():
+        return False
+    row = _taiwan_official_supabase_row_from_snapshot(snapshot)
+    path = (
+        f"/rest/v1/{SUPABASE_TAIWAN_OFFICIAL_SNAPSHOT_TABLE}"
+        f"?on_conflict={quote_plus('snapshot_kind,ticker,as_of_date')}"
+    )
+    status, _ = _supabase_service_request(
+        "POST",
+        path,
+        payload=[row],
+        extra_headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+    )
+    return 200 <= status < 300
+
+
+def _taiwan_official_snapshot_ready(snapshot: dict | None) -> bool:
+    return (
+        isinstance(snapshot, dict)
+        and int(snapshot.get("version", 0) or 0) == TAIWAN_OFFICIAL_SNAPSHOT_VERSION
+        and str(snapshot.get("status", "") or "") == "ready"
+    )
+
+
+def format_taiwan_official_snapshot_fetched_at(value: object) -> str:
+    ts = _normalize_tw_timestamp(value)
+    if ts is None:
+        return "—"
+    return ts.strftime("%Y-%m-%d %H:%M")
+
+
+def _clear_taiwan_official_refresh_caches() -> None:
+    for cached_func in (
+        fetch_taiwan_official_dashboard_snapshot,
+        fetch_twse_valuation_snapshot,
+        fetch_twse_stock_institutional_flow,
+        fetch_tpex_snapshot_bundle,
+        fetch_monthly_revenue_snapshot,
+        fetch_cbc_macro_snapshot,
+        fetch_taifex_put_call_snapshot,
+        fetch_twse_etf_institutional_flow,
+    ):
+        try:
+            cached_func.clear()
+        except Exception:
+            pass
+
+
+def _build_taiwan_official_macro_snapshot(*, force_refresh: bool = False) -> dict:
+    if force_refresh:
+        for cached_func in (fetch_cbc_macro_snapshot, fetch_taifex_put_call_snapshot):
+            try:
+                cached_func.clear()
+            except Exception:
+                pass
+    macro = _json_request_safe(fetch_cbc_macro_snapshot())
+    derivatives = _json_request_safe(fetch_taifex_put_call_snapshot())
+    return {
+        "version": TAIWAN_OFFICIAL_SNAPSHOT_VERSION,
+        "snapshot_kind": "macro",
+        "ticker": TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY,
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "ready",
+        "macro": macro if isinstance(macro, dict) else {},
+        "derivatives": derivatives if isinstance(derivatives, dict) else {},
+        "errors": {
+            "cbc_fx": str(((macro or {}).get("fx", {}) or {}).get("error", "")),
+            "cbc_rate": str(((macro or {}).get("policy_rate", {}) or {}).get("error", "")),
+            "taifex_pcr": str((derivatives or {}).get("error", "")),
+        },
+    }
+
+
+def _build_taiwan_official_ticker_snapshot(
+    ticker: str,
+    *,
+    macro_snapshot: dict | None = None,
+    force_refresh: bool = False,
+) -> dict:
+    normalized = normalize_dashboard_ticker(ticker)
+    if not is_taiwan_ticker(normalized):
+        return {
+            "version": TAIWAN_OFFICIAL_SNAPSHOT_VERSION,
+            "snapshot_kind": "ticker",
+            "ticker": str(normalized or ticker or "").upper().strip(),
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "status": "missing",
+            "valuation": {},
+            "flow": {},
+            "revenue": {},
+            "macro": {},
+            "derivatives": {},
+            "errors": {"ticker": "Unsupported or empty Taiwan ticker."},
+        }
+    if force_refresh:
+        for cached_func in (
+            fetch_taiwan_official_dashboard_snapshot,
+            fetch_twse_valuation_snapshot,
+            fetch_twse_stock_institutional_flow,
+            fetch_tpex_snapshot_bundle,
+            fetch_monthly_revenue_snapshot,
+            fetch_twse_etf_institutional_flow,
+        ):
+            try:
+                cached_func.clear()
+            except Exception:
+                pass
+    payload = _build_taiwan_official_dashboard_payload(normalized, macro_snapshot=macro_snapshot)
+    snapshot = dict(payload or {})
+    snapshot["version"] = TAIWAN_OFFICIAL_SNAPSHOT_VERSION
+    snapshot["snapshot_kind"] = "ticker"
+    snapshot["ticker"] = str(snapshot.get("ticker", normalized) or normalized).upper().strip()
+    snapshot["fetched_at"] = pd.Timestamp.now(tz=TW_TZ).isoformat()
+    snapshot["status"] = "ready" if snapshot else "missing"
+    market_fetched_at = str((macro_snapshot or {}).get("fetched_at", "") or "")
+    if market_fetched_at:
+        snapshot["market_fetched_at"] = market_fetched_at
+    return _json_request_safe(snapshot)
+
+
+def _persist_taiwan_official_snapshot(snapshot: dict) -> dict:
+    snapshot_kind = str((snapshot or {}).get("snapshot_kind", "ticker") or "ticker").strip().lower()
+    target = _taiwan_official_snapshot_target(snapshot_kind, str((snapshot or {}).get("ticker", "") or ""))
+    if not snapshot_kind or not target:
+        return snapshot
+    safe_snapshot = _json_request_safe(snapshot)
+    if not isinstance(safe_snapshot, dict):
+        safe_snapshot = dict(snapshot or {})
+    safe_snapshot["version"] = int(safe_snapshot.get("version", TAIWAN_OFFICIAL_SNAPSHOT_VERSION) or TAIWAN_OFFICIAL_SNAPSHOT_VERSION)
+    safe_snapshot["snapshot_kind"] = snapshot_kind
+    safe_snapshot["ticker"] = target if snapshot_kind == "macro" else str(safe_snapshot.get("ticker", target) or target).upper().strip()
+    store = _taiwan_official_snapshot_store()
+    items = dict(store.get("items", {}) or {})
+    items[_taiwan_official_snapshot_key(snapshot_kind, target)] = safe_snapshot
+    store["items"] = items
+    _write_taiwan_official_snapshot_store(store)
+    _upsert_supabase_taiwan_official_snapshot(safe_snapshot)
+    return safe_snapshot
+
+
+def peek_taiwan_official_macro_snapshot() -> dict | None:
+    remote_snapshot = _load_supabase_taiwan_official_snapshot("macro", TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY)
+    if _taiwan_official_snapshot_ready(remote_snapshot):
+        return remote_snapshot
+    store = _taiwan_official_snapshot_store()
+    snapshot = (store.get("items", {}) or {}).get(_taiwan_official_snapshot_key("macro", TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY))
+    if not _taiwan_official_snapshot_ready(snapshot):
+        return None
+    return snapshot
+
+
+def get_taiwan_official_macro_snapshot(*, force_refresh: bool = False) -> dict:
+    if not force_refresh:
+        existing = peek_taiwan_official_macro_snapshot()
+        if _taiwan_official_snapshot_ready(existing):
+            return existing
+    snapshot = _build_taiwan_official_macro_snapshot(force_refresh=force_refresh)
+    return _persist_taiwan_official_snapshot(snapshot)
+
+
+def peek_taiwan_official_ticker_snapshot(ticker: str) -> dict | None:
+    normalized = normalize_dashboard_ticker(ticker)
+    if not is_taiwan_ticker(normalized):
+        return None
+    remote_snapshot = _load_supabase_taiwan_official_snapshot("ticker", normalized)
+    if _taiwan_official_snapshot_ready(remote_snapshot):
+        return remote_snapshot
+    store = _taiwan_official_snapshot_store()
+    snapshot = (store.get("items", {}) or {}).get(_taiwan_official_snapshot_key("ticker", normalized))
+    if not _taiwan_official_snapshot_ready(snapshot):
+        return None
+    return snapshot
+
+
+def get_taiwan_official_ticker_snapshot(
+    ticker: str,
+    *,
+    force_refresh: bool = False,
+    macro_snapshot: dict | None = None,
+) -> dict:
+    normalized = normalize_dashboard_ticker(ticker)
+    if not is_taiwan_ticker(normalized):
+        return {}
+    if not force_refresh:
+        existing = peek_taiwan_official_ticker_snapshot(normalized)
+        if _taiwan_official_snapshot_ready(existing):
+            return existing
+    resolved_macro_snapshot = macro_snapshot
+    if resolved_macro_snapshot is None:
+        resolved_macro_snapshot = get_taiwan_official_macro_snapshot(force_refresh=force_refresh)
+    snapshot = _build_taiwan_official_ticker_snapshot(
+        normalized,
+        macro_snapshot=resolved_macro_snapshot,
+        force_refresh=force_refresh,
+    )
+    return _persist_taiwan_official_snapshot(snapshot)
+
+
+def load_taiwan_official_dashboard_snapshot(ticker: str, *, force_refresh: bool = False) -> dict:
+    normalized = normalize_dashboard_ticker(ticker)
+    if not is_taiwan_ticker(normalized):
+        return {}
+    return get_taiwan_official_ticker_snapshot(normalized, force_refresh=force_refresh)
+
+
+def parse_taiwan_official_snapshot_tickers(raw_value: str | None = None) -> list[str]:
+    source_value = str(raw_value or os.environ.get("TAIWAN_OFFICIAL_SNAPSHOT_TICKERS", "")).strip()
+    if source_value:
+        tokens = re.split(r"[\s,;|]+", source_value)
+        parsed = [normalize_dashboard_ticker(token) for token in tokens if str(token).strip()]
+        return [ticker for ticker in dedupe_keep_order(parsed) if is_taiwan_ticker(ticker)]
+    default_taiwan = [ticker for ticker in DEFAULT_TICKERS if is_taiwan_ticker(ticker)]
+    fallback = dedupe_keep_order(ACTIVE_ETF_QUICK_PICK_SYMBOLS + default_taiwan)
+    return [ticker for ticker in fallback if is_taiwan_ticker(ticker)]
+
+
+def prefetch_taiwan_official_snapshots_job(
+    tickers: list[str] | None = None,
+    *,
+    force_refresh: bool = True,
+) -> dict:
+    selected_tickers = [
+        ticker for ticker in dedupe_keep_order(tickers or parse_taiwan_official_snapshot_tickers())
+        if is_taiwan_ticker(ticker)
+    ]
+    if force_refresh:
+        _clear_taiwan_official_refresh_caches()
+    market_snapshot = get_taiwan_official_macro_snapshot(force_refresh=force_refresh)
+    built_rows: list[dict] = []
+    for ticker in selected_tickers:
+        snapshot = get_taiwan_official_ticker_snapshot(
+            ticker,
+            force_refresh=force_refresh,
+            macro_snapshot=market_snapshot,
+        )
+        built_rows.append(
+            {
+                "ticker": str(snapshot.get("ticker", ticker) or ticker),
+                "status": str(snapshot.get("status", "missing") or "missing"),
+                "fetched_at": str(snapshot.get("fetched_at", "") or ""),
+            }
+        )
+    return {
+        "status": "ok",
+        "tickers": selected_tickers,
+        "rows": built_rows,
+        "market_status": str((market_snapshot or {}).get("status", "missing") or "missing"),
+        "market_fetched_at": str((market_snapshot or {}).get("fetched_at", "") or ""),
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
     }
 
 
@@ -16599,13 +16978,15 @@ def fetch_taifex_put_call_snapshot() -> dict:
 
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
+def _build_taiwan_official_dashboard_payload(ticker: str, *, macro_snapshot: dict | None = None) -> dict:
     ticker = str(ticker or "").upper().strip()
     if not is_taiwan_ticker(ticker):
         return {}
 
     code = ticker_base_code(ticker)
+    resolved_macro = dict(macro_snapshot or {})
+    macro_payload = _json_request_safe(resolved_macro.get("macro")) if isinstance(resolved_macro.get("macro"), dict) else None
+    derivatives_payload = _json_request_safe(resolved_macro.get("derivatives")) if isinstance(resolved_macro.get("derivatives"), dict) else None
     payload = {
         "ticker": ticker,
         "code": code,
@@ -16613,8 +16994,8 @@ def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
         "valuation": {},
         "flow": {},
         "revenue": {},
-        "macro": fetch_cbc_macro_snapshot(),
-        "derivatives": fetch_taifex_put_call_snapshot(),
+        "macro": macro_payload if isinstance(macro_payload, dict) else fetch_cbc_macro_snapshot(),
+        "derivatives": derivatives_payload if isinstance(derivatives_payload, dict) else fetch_taifex_put_call_snapshot(),
         "errors": {},
     }
 
@@ -16660,7 +17041,12 @@ def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
         "cbc_rate": str((payload["macro"].get("policy_rate", {}) or {}).get("error", "")),
         "taifex_pcr": str((payload["derivatives"] or {}).get("error", "")),
     }
-    return payload
+    return _json_request_safe(payload)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_taiwan_official_dashboard_snapshot(ticker: str) -> dict:
+    return _build_taiwan_official_dashboard_payload(ticker)
 
 
 
@@ -17203,7 +17589,66 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     if not is_open:
         return
 
-    snapshot = fetch_taiwan_official_dashboard_snapshot(ticker)
+    cached_snapshot = peek_taiwan_official_ticker_snapshot(ticker)
+    snapshot_cols = st.columns([3, 1])
+    refresh_label = "刷新官方資料" if lang_zh else "Refresh official data"
+    with snapshot_cols[1]:
+        refresh_now = st.button(
+            refresh_label,
+            key=f"tw-official-refresh::{ticker}",
+            use_container_width=True,
+        )
+
+    snapshot = cached_snapshot
+    with snapshot_cols[0]:
+        if isinstance(cached_snapshot, dict):
+            fetched_at_text = format_taiwan_official_snapshot_fetched_at(cached_snapshot.get("fetched_at"))
+            market_fetched_at_text = format_taiwan_official_snapshot_fetched_at(cached_snapshot.get("market_fetched_at"))
+            if market_fetched_at_text != "—":
+                st.caption(
+                    (
+                        f"官方快照 {fetched_at_text} · 市場背景 {market_fetched_at_text}"
+                        if lang_zh
+                        else f"Official snapshot {fetched_at_text} · Market backdrop {market_fetched_at_text}"
+                    )
+                )
+            else:
+                st.caption(
+                    (
+                        f"官方快照 {fetched_at_text}"
+                        if lang_zh
+                        else f"Official snapshot {fetched_at_text}"
+                    )
+                )
+        else:
+            st.caption(
+                "目前還沒有保存的官方快照，首次載入會建立一份。"
+                if lang_zh
+                else "No saved official snapshot exists yet. The first open will build one."
+            )
+
+    if refresh_now or not isinstance(snapshot, dict):
+        with st.spinner("正在建立官方資料快照..." if lang_zh else "Building official data snapshot..."):
+            snapshot = load_taiwan_official_dashboard_snapshot(ticker, force_refresh=refresh_now)
+
+    if refresh_now and isinstance(snapshot, dict):
+        refreshed_at_text = format_taiwan_official_snapshot_fetched_at(snapshot.get("fetched_at"))
+        st.caption(
+            (
+                f"官方快照已刷新：{refreshed_at_text}"
+                if lang_zh
+                else f"Official snapshot refreshed at {refreshed_at_text}"
+            )
+        )
+
+    if not isinstance(snapshot, dict):
+        st.info(
+            "目前無法建立這檔台股的官方資料快照，請稍後再試。"
+            if lang_zh
+            else "The official data snapshot could not be built for this Taiwan ticker right now. Please try again later."
+        )
+        return
+
     valuation = snapshot.get("valuation", {}) or {}
     flow = snapshot.get("flow", {}) or {}
     revenue = snapshot.get("revenue", {}) or {}
