@@ -20385,10 +20385,9 @@ def inject_supply_chain_compare_button_css(config_keys: list[str], active_key: s
     )
 
 
-def render_supply_chain_compare_chain_buttons(config_keys: list[str]) -> str | None:
+def render_supply_chain_group_buttons(config_keys: list[str], *, state_key: str) -> str | None:
     if not config_keys:
         return None
-    state_key = "supply_chain_stock_compare_active_chain"
     active_key = st.session_state.get(state_key, config_keys[0])
     if active_key not in config_keys:
         active_key = config_keys[0]
@@ -20415,6 +20414,13 @@ def render_supply_chain_compare_chain_buttons(config_keys: list[str]) -> str | N
                     st.session_state[state_key] = config_key
                     st.rerun()
     return str(st.session_state.get(state_key, active_key))
+
+
+def render_supply_chain_compare_chain_buttons(config_keys: list[str]) -> str | None:
+    return render_supply_chain_group_buttons(
+        config_keys,
+        state_key="supply_chain_stock_compare_active_chain",
+    )
 
 
 def render_supply_chain_stock_compare_picker(
@@ -20494,6 +20500,65 @@ def render_supply_chain_stock_compare_picker(
         )
     )
     render_comparison_section(daily_data, intraday_data, selected_tickers, lens_meta=lens_meta)
+
+
+def render_supply_chain_workspace_picker(
+    selected_keys: list[str],
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    lens_meta: dict | None = None,
+) -> None:
+    lang_zh = get_language() == "zh_TW"
+    st.markdown("#### 供應鏈工作台" if lang_zh else "#### Supply-Chain Workspace")
+    st.caption(
+        "先選供應鏈區塊，再只載入該區塊的成分股工作台；切到其他供應鏈時，會保留各自最後看的股票。"
+        if lang_zh
+        else "Choose a chain block first, then load workspaces only for that chain. Each chain remembers the last ticker you viewed."
+    )
+
+    chain_options = [key for key in selected_keys if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
+    if not chain_options:
+        return
+
+    active_chain = render_supply_chain_group_buttons(
+        chain_options,
+        state_key="supply_chain_workspace_active_chain",
+    )
+    active_config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(str(active_chain), {})
+    active_universe = build_supply_chain_universe(active_config.get("catalog", []))
+    active_tickers = dedupe_keep_order(
+        normalize_dashboard_ticker(item.get("ticker"))
+        for item in active_universe
+        if normalize_dashboard_ticker(item.get("ticker"))
+    )
+    if not active_tickers:
+        st.info(
+            "目前這條供應鏈還沒有可用成分股工作台。"
+            if lang_zh else
+            "No usable constituent workspaces are available for this chain right now."
+        )
+        return
+
+    ticker_state_key = f"supply_chain_workspace_focus_ticker_{re.sub(r'[^A-Za-z0-9_]+', '_', str(active_chain or 'chain'))}"
+    selected_ticker = render_lightweight_option_selector(
+        active_tickers,
+        ticker_state_key,
+        format_func=display_ticker_label,
+        helper_text=(
+            f"目前只載入 {supply_chain_group_label(active_chain)} 的成分股工作台，切換其他供應鏈時不會拖著全部股票一起重算。"
+            if lang_zh else
+            f"Only {supply_chain_group_label(active_chain)} constituents are loaded here, so switching chains does not recalculate every ticker at once."
+        ),
+        widget_label="supply-chain-workspaces-selector",
+    )
+    if selected_ticker:
+        render_ticker_page(
+            daily_data,
+            intraday_data,
+            selected_ticker,
+            lens_meta=lens_meta,
+            selected_count=len(active_tickers),
+        )
 
 
 def render_supply_chain_group_compare(
@@ -20698,7 +20763,12 @@ def render_supply_chain_lab_dashboard(
         elif current_section == "layout_standard_supply_chain_compare_tab":
             _render_supply_chain_compare()
         else:
-            render_standard_workspace_picker(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+            render_supply_chain_workspace_picker(
+                selected_keys,
+                daily_data,
+                intraday_data,
+                lens_meta=lens_meta,
+            )
     elif layout_mode == "Advanced":
         advanced_sections = [
             "layout_overview_tab",
@@ -20724,7 +20794,12 @@ def render_supply_chain_lab_dashboard(
         elif current_section == "layout_compare_tab":
             _render_supply_chain_compare()
         else:
-            render_ticker_workspace_tabs(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+            render_supply_chain_workspace_picker(
+                selected_keys,
+                daily_data,
+                intraday_data,
+                lens_meta=lens_meta,
+            )
     else:
         expert_sections = [
             "layout_overview_tab",
@@ -20750,7 +20825,12 @@ def render_supply_chain_lab_dashboard(
         elif current_section == "layout_comparison_desk_tab":
             _render_supply_chain_compare()
         else:
-            render_ticker_workspace_tabs(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+            render_supply_chain_workspace_picker(
+                selected_keys,
+                daily_data,
+                intraday_data,
+                lens_meta=lens_meta,
+            )
 
 
 
