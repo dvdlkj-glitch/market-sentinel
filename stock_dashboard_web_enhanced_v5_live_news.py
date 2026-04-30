@@ -109,7 +109,44 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
     lang_zh = get_lang() == "繁體中文"
     is_active_etf = dashboard_mode == "Active ETF Lab"
     is_supply_chain = dashboard_mode == "Supply Chain Lab"
-    if lang_zh:
+    if is_supply_chain:
+        if lang_zh:
+            profiles = {
+                "Standard": {
+                    "title": "標準使用者導覽",
+                    "copy": "先看供應鏈摘要與台股總經背景，再進到各主題戰力板，最後才進比較區與單檔工作台。",
+                    "steps": ["先看摘要", "再看戰力板", "最後進工作台"],
+                },
+                "Advanced": {
+                    "title": "進階使用者工作區",
+                    "copy": "把 Overview、Chains、Compare、Workspace 分開，先看範圍與快照，再進戰力板、比較區與單檔研究。",
+                    "steps": ["Overview", "Chains", "Compare", "Workspace"],
+                },
+                "Expert": {
+                    "title": "供應鏈研究檯",
+                    "copy": "把供應鏈總覽固定在上方，下面改成獨立的戰力板、比較站與個股工作台，適合長時間研究。",
+                    "steps": ["總覽", "戰力板", "比較", "研究分頁"],
+                },
+            }
+        else:
+            profiles = {
+                "Standard": {
+                    "title": "Standard guided layout",
+                    "copy": "Start with the supply-chain brief and Taiwan macro backdrop, move into the chain boards, then finish in comparison and workspaces.",
+                    "steps": ["Start with the brief", "Move into chain boards", "Finish in workspaces"],
+                },
+                "Advanced": {
+                    "title": "Advanced supply-chain workspace",
+                    "copy": "Separates Overview, Chains, Compare, and Workspace so you can scan scope and snapshot status first, then drill into boards and single-ticker research.",
+                    "steps": ["Overview", "Chains", "Compare", "Workspace"],
+                },
+                "Expert": {
+                    "title": "Supply-chain research desk",
+                    "copy": "Keeps the supply-chain overview on top and turns the boards, compare station, and ticker workspaces into dedicated lower layers for longer research sessions.",
+                    "steps": ["Overview", "Chain boards", "Compare", "Ticker desks"],
+                },
+            }
+    elif lang_zh:
         profiles = {
             "Standard": {
                 "title": "標準使用者導覽",
@@ -127,21 +164,6 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
                 "steps": ["總覽", "規劃", "比較", "研究分頁"],
             },
         }
-    elif dashboard_mode == "Supply Chain Lab":
-        steps = (
-            [
-                ("01", "ä¾›æ‡‰éˆæ‘˜è¦" if lang_zh else "Chain Brief", "å…ˆçœ‹å°è‚¡ç¸½ç¶“èƒŒæ™¯ã€�ä¾›æ‡‰éˆç¯„åœèˆ‡å½“å‰å¿«ç…§ç‹€æ…‹ã€‚" if lang_zh else "Start with Taiwan macro context, the selected chain scope, and current snapshot status."),
-                ("02", "ä¾›æ‡‰éˆæˆ°åŠ›æ¿" if lang_zh else "Chain Boards", "å†é€²å…¥ä½Žè»Œã€ABFã€�è¨˜æ†¶é«”ã€�å°æ¸¬ã€�æ©Ÿå™¨äººç­‰ä¸»é¡Œæˆ°åŠ›æ¿ã€‚" if lang_zh else "Then move into the thematic boards for LEO, ABF, memory, packaging, robotics, and more."),
-                ("03", "å·¥ä½œå°" if lang_zh else "Workspace", "æœ€å¾Œé€²å…¥ç›¸é—œæˆåˆ†è‚¡çš„æ¯”è¼ƒèˆ‡å–®æª”ç ”ç©¶ã€‚" if lang_zh else "Finish in related-stock comparison and single-ticker workspaces."),
-            ]
-            if layout_mode == "Standard"
-            else [
-                ("01", "Overview", "å…ˆçœ‹ä¾›æ‡‰éˆç¯„åœã€�å¸‚å ´èƒŒæ™¯èˆ‡å¿«ç…§ç‹€æ…‹ã€‚" if lang_zh else "Start with chain scope, market backdrop, and snapshot status."),
-                ("02", "Chains", "ä¾›æ‡‰éˆæˆ°åŠ›æ¿ç¨ç«‹æˆç«™ã€‚" if lang_zh else "The thematic supply-chain boards get their own station."),
-                ("03", "Compare", "æŠŠç›¸é—œæˆåˆ†è‚¡æ”¾åˆ°åŒä¸€å€‹æ¯”è¼ƒç«™é»žã€‚" if lang_zh else "Keep the related constituent names in one comparison station."),
-                ("04", "Workspace", "æ¯æª”ä¾›æ‡‰éˆæˆåˆ†è‚¡ä¿ç•™å®Œæ•´å·¥ä½œå°ã€‚" if lang_zh else "Each supply-chain ticker keeps its full workspace."),
-            ]
-        )
     else:
         profiles = {
             "Standard": {
@@ -166,11 +188,6 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
             payload["copy"] += " 你現在看到的是主動式 ETF 專屬版本，會優先把比分板、雙 ETF 比較與單檔研究分開。"
         else:
             payload["copy"] += " This Active ETF version prioritizes the scoreboard, pair comparison, and single-ETF workspaces separately."
-    if is_supply_chain:
-        if lang_zh:
-            payload["copy"] += " ä½ ç¾åœ¨çœ‹åˆ°çš„æ˜¯ä¾›æ‡‰éˆå°ˆå±¬ç‰ˆæœ¬ï¼Œæœƒå„ªå…ˆæŠŠä¸»é¡Œä¾›æ‡‰éˆæˆ°åŠ›æ¿ã€ç›¸é—œæˆåˆ†è‚¡æ¯”è¼ƒèˆ‡å–®æª”å·¥ä½œå°æ‹†é–‹ã€‚"
-        else:
-            payload["copy"] += " This Supply Chain version prioritizes the thematic chain boards, related-stock comparison, and single-ticker workspaces separately."
     return payload
 
 
@@ -186,7 +203,7 @@ def render_dashboard_layout_intro(layout_mode: str, dashboard_mode: str, tickers
         else ("已選標的" if get_lang() == "繁體中文" else "Selected tickers")
     )
     if dashboard_mode == "Supply Chain Lab":
-        subject = "ä¾›æ‡‰éˆæˆåˆ†è‚¡" if get_lang() == "ç¹é«”ä¸­æ–‡" else "Supply-chain tickers"
+        subject = "供應鏈成分股" if get_lang() == "繁體中文" else "Supply-chain tickers"
     count_label = f"{len(tickers)} {subject}"
     render_html_block(
         f'''
@@ -258,7 +275,22 @@ def inject_layout_profile_overrides() -> None:
 
 def render_layout_flow_cards(layout_mode: str, dashboard_mode: str) -> None:
     lang_zh = get_lang() == "繁體中文"
-    if dashboard_mode == "Active ETF Lab":
+    if dashboard_mode == "Supply Chain Lab":
+        steps = (
+            [
+                ("01", "供應鏈摘要" if lang_zh else "Chain Brief", "先看台股總經背景、供應鏈範圍與目前快照狀態。" if lang_zh else "Start with Taiwan macro context, the selected chain scope, and the current snapshot state."),
+                ("02", "供應鏈戰力板" if lang_zh else "Chain Boards", "再進入低軌、ABF、記憶體、封測、機器人等主題戰力板。" if lang_zh else "Then move into the thematic boards for LEO, ABF, memory, packaging & test, robotics, and more."),
+                ("03", "工作台" if lang_zh else "Workspace", "最後進入相關成分股的比較與單檔研究。" if lang_zh else "Finish in related-stock comparison and single-ticker workspaces."),
+            ]
+            if layout_mode == "Standard"
+            else [
+                ("01", "Overview", "先看供應鏈範圍、市場背景與快照狀態。" if lang_zh else "Start with chain scope, market backdrop, and snapshot state."),
+                ("02", "Chains", "供應鏈戰力板獨立成一站。" if lang_zh else "The thematic chain boards get their own station."),
+                ("03", "Compare", "把相關成分股集中到比較站。" if lang_zh else "Keep the related constituent names in one comparison station."),
+                ("04", "Workspace", "每檔供應鏈成分股保留完整工作台。" if lang_zh else "Each supply-chain ticker keeps its full workspace."),
+            ]
+        )
+    elif dashboard_mode == "Active ETF Lab":
         steps = (
             [
                 ("01", "ETF 摘要" if lang_zh else "ETF Brief", "先看主動式 ETF 的比分板、台灣總經與更新狀態。" if lang_zh else "Start with the ETF scoreboard, Taiwan macro context, and refresh state."),
@@ -19537,7 +19569,7 @@ def render_active_etf_lab_dashboard(
 def supply_chain_group_label(config_key: str) -> str:
     config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(str(config_key), {})
     title = str(config.get("title", config_key) or config_key)
-    if get_lang() == "ç¹é«”ä¸­æ–‡":
+    if get_lang() == "繁體中文":
         return title
     english_labels = {
         "low-orbit": "Low-Earth Orbit",
@@ -19572,25 +19604,25 @@ def render_selected_supply_chain_sections(config_keys: list[str], lens_meta: dic
 
 
 def supply_chain_layout_section_label(value: str) -> str:
-    lang_zh = get_lang() == "ç¹é«”ä¸­æ–‡"
+    lang_zh = get_lang() == "繁體中文"
     labels = {
-        "layout_standard_supply_chain_brief_tab": "1. ä¾›æ‡‰éˆæ‘˜è¦" if lang_zh else "1. Chain Brief",
-        "layout_standard_supply_chain_compare_tab": "2. æ¯”è¼ƒèˆ‡è¦åŠƒ" if lang_zh else "2. Compare & Plan",
-        "layout_standard_supply_chain_workspace_tab": "3. ä¾›æ‡‰éˆå·¥ä½œå°" if lang_zh else "3. Supply Chain Workspace",
-        "layout_supply_chain_tab": "ä¾›æ‡‰éˆ" if lang_zh else "Chains",
-        "layout_overview_tab": "ç¸½è¦½" if lang_zh else "Overview",
-        "layout_compare_tab": "æ¯”è¼ƒ" if lang_zh else "Compare",
-        "layout_workspace_tab": "å·¥ä½œå°" if lang_zh else "Workspace",
-        "layout_comparison_desk_tab": "æ¯”è¼ƒ" if lang_zh else "Comparison Desk",
-        "layout_ticker_desks_tab": "å·¥ä½œå°" if lang_zh else "Ticker Desks",
+        "layout_standard_supply_chain_brief_tab": "1. 供應鏈摘要" if lang_zh else "1. Chain Brief",
+        "layout_standard_supply_chain_compare_tab": "2. 比較與規劃" if lang_zh else "2. Compare & Plan",
+        "layout_standard_supply_chain_workspace_tab": "3. 供應鏈工作台" if lang_zh else "3. Supply Chain Workspace",
+        "layout_supply_chain_tab": "供應鏈" if lang_zh else "Chains",
+        "layout_overview_tab": "總覽" if lang_zh else "Overview",
+        "layout_compare_tab": "比較" if lang_zh else "Compare",
+        "layout_workspace_tab": "工作台" if lang_zh else "Workspace",
+        "layout_comparison_desk_tab": "比較" if lang_zh else "Comparison Desk",
+        "layout_ticker_desks_tab": "工作台" if lang_zh else "Ticker Desks",
     }
     return labels.get(str(value), standard_layout_section_label(value))
 
 
 def render_supply_chain_sidebar_selector(selected_lang: str) -> tuple[list[str], list[str]]:
-    is_zh = selected_lang == "ç¹é«”ä¸­æ–‡"
+    is_zh = selected_lang == "繁體中文"
     render_html_block(
-        f'<div class="side-group-label">{"ä¾›æ‡‰éˆä¸»é¡Œ" if is_zh else "Supply chain themes"}</div>'
+        f'<div class="side-group-label">{"供應鏈主題" if is_zh else "Supply chain themes"}</div>'
     )
     available_keys = [key for key in SUPPLY_CHAIN_FOCUS_ORDER if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
     stored_groups = [
@@ -19601,13 +19633,13 @@ def render_supply_chain_sidebar_selector(selected_lang: str) -> tuple[list[str],
         stored_groups = available_keys.copy()
 
     st.caption(
-        "é¸æ“‡è¦æ”¾é€²ç¨ç«‹ä¾›æ‡‰éˆ Dashboard çš„ä¸»é¡Œç¾¤çµ„ï¼Œä¸‹æ–¹çš„æ¯”è¼ƒèˆ‡å·¥ä½œå°æœƒè‡ªå‹•ä»¥é€™äº›æˆåˆ†è‚¡ç‚ºç¯„åœã€‚"
+        "選擇要放進獨立供應鏈 Dashboard 的主題群組，下方的比較與工作台會自動以這些成分股為範圍。"
         if is_zh else
         "Choose which thematic chains belong in the dedicated Supply Chain Dashboard. Compare and Workspace will automatically scope to these constituent names."
     )
 
     selected_groups = st.multiselect(
-        "ä¾›æ‡‰éˆä¸»é¡Œ" if is_zh else "Supply chain themes",
+        "供應鏈主題" if is_zh else "Supply chain themes",
         options=available_keys,
         default=stored_groups,
         format_func=supply_chain_group_label,
@@ -19616,17 +19648,17 @@ def render_supply_chain_sidebar_selector(selected_lang: str) -> tuple[list[str],
 
     action_cols = st.columns(2)
     with action_cols[0]:
-        if st.button("å…¨é¸ä¸»é¡Œ" if is_zh else "Select all", use_container_width=True, key="supply_chain_select_all"):
+        if st.button("全選主題" if is_zh else "Select all", use_container_width=True, key="supply_chain_select_all"):
             selected_groups = available_keys.copy()
     with action_cols[1]:
-        if st.button("æ¸…ç©ºä¸»é¡Œ" if is_zh else "Clear all", use_container_width=True, key="supply_chain_clear_all"):
+        if st.button("清空主題" if is_zh else "Clear all", use_container_width=True, key="supply_chain_clear_all"):
             selected_groups = []
 
     st.session_state["dashboard_supply_chain_groups"] = selected_groups
     tickers = build_supply_chain_dashboard_tickers(selected_groups)
     st.caption(
         (
-            f"ç›®å‰é¸å– {len(selected_groups)} æ¢ä¾›æ‡‰éˆï¼Œå…± {len(tickers)} æª”æˆåˆ†è‚¡ã€‚"
+            f"目前選取 {len(selected_groups)} 條供應鏈，共 {len(tickers)} 檔成分股。"
             if is_zh else
             f"{len(selected_groups)} chains selected, covering {len(tickers)} constituent tickers."
         )
@@ -19651,7 +19683,7 @@ def render_supply_chain_lab_dashboard(
 
     if not selected_keys or not supply_chain_tickers:
         st.info(
-            "ç›®å‰é‚„æ²’æœ‰é¸å°ä¾›æ‡‰éˆä¸»é¡Œï¼Œè«‹å…ˆåœ¨å·¦å´å‹¾é¸è¦è§€å¯Ÿçš„ä¾›æ‡‰éˆç¾¤çµ„ã€‚"
+            "目前還沒有選到供應鏈主題，請先在左側勾選要觀察的供應鏈群組。"
             if lang_zh
             else "No supply-chain themes are selected yet. Choose the chains you want from the left sidebar first."
         )
@@ -19659,17 +19691,17 @@ def render_supply_chain_lab_dashboard(
 
     timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
     chips = [
-        _tracker_status_chip("ä¾›æ‡‰éˆå°ˆå€" if lang_zh else "Supply Chain Lab", "info"),
-        _tracker_status_chip((f"æ›´æ–°æ™‚é–“ {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
-        _tracker_status_chip((f"{len(selected_keys)} æ¢ä¾›æ‡‰éˆ" if lang_zh else f"{len(selected_keys)} chains"), "up"),
-        _tracker_status_chip((f"{len(supply_chain_tickers)} æª”æˆåˆ†è‚¡" if lang_zh else f"{len(supply_chain_tickers)} constituents"), "neutral"),
+        _tracker_status_chip("供應鏈專區" if lang_zh else "Supply Chain Lab", "info"),
+        _tracker_status_chip((f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
+        _tracker_status_chip((f"{len(selected_keys)} 條供應鏈" if lang_zh else f"{len(selected_keys)} chains"), "up"),
+        _tracker_status_chip((f"{len(supply_chain_tickers)} 檔成分股" if lang_zh else f"{len(supply_chain_tickers)} constituents"), "neutral"),
     ]
     st.markdown(
         f"""
         <div class="guide-shell etf-tracker-shell">
-            <div class="section-header">{'ä¾›æ‡‰éˆå°ˆå±¬ Dashboard' if lang_zh else 'Supply Chain Dashboard'}</div>
-            <div class="guide-title">{'ä¸»é¡Œä¾›æ‡‰éˆç ”ç©¶å·¥ä½œå€' if lang_zh else 'Thematic supply-chain research workspace'}</div>
-            <div class="guide-copy">{'æŠŠä½Žè»Œã€ABFã€�è¨˜æ†¶é«”ã€�å°æ¸¬èˆ‡æ©Ÿå™¨äººç­‰ä¾›æ‡‰éˆæˆ°åŠ›æ¿ç¨ç«‹æˆä¸€å€‹ Dashboardï¼Œä¸¦ä¿ç•™æ¯”è¼ƒå€èˆ‡å–®æª”å·¥ä½œå°ã€‚' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard while keeping comparison and single-ticker workspaces intact.'}</div>
+            <div class="section-header">{'供應鏈專屬 Dashboard' if lang_zh else 'Supply Chain Dashboard'}</div>
+            <div class="guide-title">{'主題供應鏈研究工作區' if lang_zh else 'Thematic supply-chain research workspace'}</div>
+            <div class="guide-copy">{'把低軌、ABF、記憶體、封測與機器人等供應鏈戰力板獨立成一個 Dashboard，並保留比較區與單檔工作台。' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard while keeping comparison and single-ticker workspaces intact.'}</div>
             <div class="chip-row">{''.join(chips)}</div>
         </div>
         """,
@@ -19682,21 +19714,21 @@ def render_supply_chain_lab_dashboard(
     def _render_supply_chain_briefing() -> None:
         render_taiwan_market_macro_strip(force_show=True)
         summary_cols = st.columns(3)
-        summary_cols[0].metric("ä¾›æ‡‰éˆä¸»é¡Œæ•¸" if lang_zh else "Chains selected", len(selected_keys))
-        summary_cols[1].metric("æˆåˆ†è‚¡æª”æ•¸" if lang_zh else "Constituent tickers", len(supply_chain_tickers))
+        summary_cols[0].metric("供應鏈主題數" if lang_zh else "Chains selected", len(selected_keys))
+        summary_cols[1].metric("成分股檔數" if lang_zh else "Constituent tickers", len(supply_chain_tickers))
         summary_cols[2].metric(
-            "å¯åšæ¯”è¼ƒ" if lang_zh else "Compare ready",
-            "æ˜¯" if len(supply_chain_tickers) >= 2 and lang_zh else ("Yes" if len(supply_chain_tickers) >= 2 else ("å¦" if lang_zh else "No")),
+            "可做比較" if lang_zh else "Compare ready",
+            "是" if len(supply_chain_tickers) >= 2 and lang_zh else ("Yes" if len(supply_chain_tickers) >= 2 else ("否" if lang_zh else "No")),
         )
-        chain_names = " ï½œ ".join(supply_chain_group_label(key) for key in selected_keys)
+        chain_names = " ｜ ".join(supply_chain_group_label(key) for key in selected_keys)
         st.caption(
-            (f"ç›®å‰ç¯„åœï¼š{chain_names}" if lang_zh else f"Current chain scope: {chain_names}")
+            (f"目前範圍：{chain_names}" if lang_zh else f"Current chain scope: {chain_names}")
         )
         render_active_trend_lens(lens_meta)
 
     def _render_supply_chain_compare() -> None:
         if len(supply_chain_tickers) < 2:
-            st.info("ç›®å‰ä¾›æ‡‰éˆæˆåˆ†è‚¡ä¸è¶³å…©æª”ï¼Œç„¡æ³•é–‹å•Ÿæ¯”è¼ƒå€ã€‚" if lang_zh else "At least two supply-chain tickers are needed for comparison.")
+            st.info("目前供應鏈成分股不足兩檔，無法開啟比較區。" if lang_zh else "At least two supply-chain tickers are needed for comparison.")
             return
         render_global_scenario_planning_stack(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
         render_precomparison_target_and_brief_groups(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
@@ -19731,7 +19763,7 @@ def render_supply_chain_lab_dashboard(
             "dashboard_advanced_supply_chain_section",
             format_func=supply_chain_layout_section_label,
             helper_text=(
-                "é€™è£¡æœƒæŠŠä¾›æ‡‰éˆæˆ°åŠ›æ¿ã€�æ¯”è¼ƒèˆ‡å·¥ä½œå°åˆ†é–‹è¼‰å…¥ï¼Œé¿å…ä¸€æ¬¡é‡ç®—å…¨éƒ¨ã€‚"
+                "這裡會把供應鏈戰力板、比較與工作台分開載入，避免一次重算全部。"
                 if lang_zh else
                 "The chain boards, compare station, and workspaces are loaded separately here so the whole dashboard does not recalculate at once."
             ),
@@ -19757,7 +19789,7 @@ def render_supply_chain_lab_dashboard(
             "dashboard_expert_supply_chain_section",
             format_func=supply_chain_layout_section_label,
             helper_text=(
-                "ä¾›æ‡‰éˆå°ˆå®¶æ¨¡å¼æ”¹æˆå–®ç«™é»žæ¸²æŸ“ï¼Œåˆ‡æ›æˆ°åŠ›æ¿ã€�æ¯”è¼ƒå’Œå€‹è‚¡å·¥ä½œå°æœƒæ›´é †ã€‚"
+                "供應鏈專家模式改成單站點渲染，切換戰力板、比較和個股工作台會更順。"
                 if lang_zh else
                 "Supply Chain expert mode now renders one station at a time, so the board, compare desk, and workspaces switch more smoothly."
             ),
