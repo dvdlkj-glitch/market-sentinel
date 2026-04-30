@@ -1,0 +1,53 @@
+name: Prefetch Active ETF Snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: Optional comma-separated ETF tickers
+        required: false
+        type: string
+      period:
+        description: Optional market period override, for example 1y
+        required: false
+        type: string
+      interval:
+        description: Optional market interval override, for example 1d
+        required: false
+        type: string
+  schedule:
+    - cron: "12 8 * * 1-5"
+    - cron: "42 8 * * 1-5"
+
+jobs:
+  prefetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE: ${{ vars.SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE }}
+      ACTIVE_ETF_SNAPSHOT_TICKERS: ${{ github.event.inputs.tickers || vars.ACTIVE_ETF_SNAPSHOT_TICKERS }}
+      PREFETCH_PERIOD: ${{ github.event.inputs.period }}
+      PREFETCH_INTERVAL: ${{ github.event.inputs.interval }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prefetch active ETF snapshots
+        run: >
+          python scripts/prefetch_active_etf_snapshots.py
+          --period "${PREFETCH_PERIOD}"
+          --interval "${PREFETCH_INTERVAL}"
