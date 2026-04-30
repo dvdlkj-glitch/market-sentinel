@@ -50,13 +50,14 @@ DEFAULT_INTERVAL = "1d"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
 
-DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab", "Taiwan Futures Lab"]
+DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab", "Supply Chain Lab", "Taiwan Futures Lab"]
 
 
 def dashboard_mode_label(value: str) -> str:
     labels = {
         "General Market": t("dashboard_mode_main"),
         "Active ETF Lab": t("dashboard_mode_active_etf"),
+        "Supply Chain Lab": t("dashboard_mode_supply_chain"),
         "Taiwan Futures Lab": t("dashboard_mode_taiwan_futures"),
     }
     return labels.get(str(value), str(value))
@@ -107,6 +108,7 @@ def dashboard_layout_note() -> str:
 def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, object]:
     lang_zh = get_lang() == "繁體中文"
     is_active_etf = dashboard_mode == "Active ETF Lab"
+    is_supply_chain = dashboard_mode == "Supply Chain Lab"
     if lang_zh:
         profiles = {
             "Standard": {
@@ -125,6 +127,21 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
                 "steps": ["總覽", "規劃", "比較", "研究分頁"],
             },
         }
+    elif dashboard_mode == "Supply Chain Lab":
+        steps = (
+            [
+                ("01", "ä¾›æ‡‰éˆæ‘˜è¦" if lang_zh else "Chain Brief", "å…ˆçœ‹å°è‚¡ç¸½ç¶“èƒŒæ™¯ã€�ä¾›æ‡‰éˆç¯„åœèˆ‡å½“å‰å¿«ç…§ç‹€æ…‹ã€‚" if lang_zh else "Start with Taiwan macro context, the selected chain scope, and current snapshot status."),
+                ("02", "ä¾›æ‡‰éˆæˆ°åŠ›æ¿" if lang_zh else "Chain Boards", "å†é€²å…¥ä½Žè»Œã€ABFã€�è¨˜æ†¶é«”ã€�å°æ¸¬ã€�æ©Ÿå™¨äººç­‰ä¸»é¡Œæˆ°åŠ›æ¿ã€‚" if lang_zh else "Then move into the thematic boards for LEO, ABF, memory, packaging, robotics, and more."),
+                ("03", "å·¥ä½œå°" if lang_zh else "Workspace", "æœ€å¾Œé€²å…¥ç›¸é—œæˆåˆ†è‚¡çš„æ¯”è¼ƒèˆ‡å–®æª”ç ”ç©¶ã€‚" if lang_zh else "Finish in related-stock comparison and single-ticker workspaces."),
+            ]
+            if layout_mode == "Standard"
+            else [
+                ("01", "Overview", "å…ˆçœ‹ä¾›æ‡‰éˆç¯„åœã€�å¸‚å ´èƒŒæ™¯èˆ‡å¿«ç…§ç‹€æ…‹ã€‚" if lang_zh else "Start with chain scope, market backdrop, and snapshot status."),
+                ("02", "Chains", "ä¾›æ‡‰éˆæˆ°åŠ›æ¿ç¨ç«‹æˆç«™ã€‚" if lang_zh else "The thematic supply-chain boards get their own station."),
+                ("03", "Compare", "æŠŠç›¸é—œæˆåˆ†è‚¡æ”¾åˆ°åŒä¸€å€‹æ¯”è¼ƒç«™é»žã€‚" if lang_zh else "Keep the related constituent names in one comparison station."),
+                ("04", "Workspace", "æ¯æª”ä¾›æ‡‰éˆæˆåˆ†è‚¡ä¿ç•™å®Œæ•´å·¥ä½œå°ã€‚" if lang_zh else "Each supply-chain ticker keeps its full workspace."),
+            ]
+        )
     else:
         profiles = {
             "Standard": {
@@ -149,6 +166,11 @@ def dashboard_layout_intro(layout_mode: str, dashboard_mode: str) -> dict[str, o
             payload["copy"] += " 你現在看到的是主動式 ETF 專屬版本，會優先把比分板、雙 ETF 比較與單檔研究分開。"
         else:
             payload["copy"] += " This Active ETF version prioritizes the scoreboard, pair comparison, and single-ETF workspaces separately."
+    if is_supply_chain:
+        if lang_zh:
+            payload["copy"] += " ä½ ç¾åœ¨çœ‹åˆ°çš„æ˜¯ä¾›æ‡‰éˆå°ˆå±¬ç‰ˆæœ¬ï¼Œæœƒå„ªå…ˆæŠŠä¸»é¡Œä¾›æ‡‰éˆæˆ°åŠ›æ¿ã€ç›¸é—œæˆåˆ†è‚¡æ¯”è¼ƒèˆ‡å–®æª”å·¥ä½œå°æ‹†é–‹ã€‚"
+        else:
+            payload["copy"] += " This Supply Chain version prioritizes the thematic chain boards, related-stock comparison, and single-ticker workspaces separately."
     return payload
 
 
@@ -163,6 +185,8 @@ def render_dashboard_layout_intro(layout_mode: str, dashboard_mode: str, tickers
         if dashboard_mode == "Active ETF Lab"
         else ("已選標的" if get_lang() == "繁體中文" else "Selected tickers")
     )
+    if dashboard_mode == "Supply Chain Lab":
+        subject = "ä¾›æ‡‰éˆæˆåˆ†è‚¡" if get_lang() == "ç¹é«”ä¸­æ–‡" else "Supply-chain tickers"
     count_label = f"{len(tickers)} {subject}"
     render_html_block(
         f'''
@@ -3062,7 +3086,6 @@ def render_general_market_dashboard_layout(
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
-            render_thematic_supply_chain_sections(lens_meta=lens_meta)
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -3094,7 +3117,6 @@ def render_general_market_dashboard_layout(
             render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
-            render_thematic_supply_chain_sections(lens_meta=lens_meta)
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -3109,7 +3131,6 @@ def render_general_market_dashboard_layout(
         render_global_market_indicator(global_indicator)
         if show_taiwan_macro:
             render_taiwan_market_macro_strip(force_show=True)
-        render_thematic_supply_chain_sections(lens_meta=lens_meta)
         expert_sections = [
             "layout_research_flow_tab",
             "layout_comparison_desk_tab",
@@ -5199,9 +5220,10 @@ TRANSLATIONS["English"].update({
 
 TRANSLATIONS["English"].update({
     "dashboard_mode": "Dashboard mode",
-    "dashboard_mode_note": "Main Dashboard keeps the full market workflow. Active ETF Dashboard shows only active-ETF research. Taiwan Options Calculator focuses on TX options break-even planning with public TAIEX and front-month TX references.",
+    "dashboard_mode_note": "Main Dashboard keeps the full market workflow. Supply Chain Dashboard moves the thematic chain groups into their own research workspace. Active ETF Dashboard shows only active-ETF research. Taiwan Options Calculator focuses on TX options break-even planning with public TAIEX and front-month TX references.",
     "dashboard_mode_main": "Main Dashboard",
     "dashboard_mode_active_etf": "Active ETF Dashboard",
+    "dashboard_mode_supply_chain": "Supply Chain Dashboard",
     "dashboard_mode_taiwan_futures": "Taiwan Options Calculator",
     "taiwan_futures_vision_deck": "Taiwan Options Lab",
     "taiwan_futures_vision_deck_copy": "A focused TX-options planning workspace for strike, premium, break-even, and remaining-days pace checks using public TAIEX and front-month TX references.",
@@ -5295,6 +5317,8 @@ TRANSLATIONS["English"].update({
     "taiwan_futures_public_realtime_note": "For exact exchange-grade real-time TAIEX, you would need a licensed feed outside this public dashboard path.",
     "active_etf_vision_deck": "Active ETF Deck",
     "active_etf_vision_deck_copy": "A dedicated selector and after-close workspace for Taiwan active ETFs. Main Dashboard watchlists remain unchanged.",
+    "supply_chain_vision_deck": "Supply Chain Deck",
+    "supply_chain_vision_deck_copy": "Moves each thematic supply-chain stock group into its own dedicated dashboard while keeping the comparison desk and ticker workspaces intact.",
     "active_etf_universe": "Active ETF universe",
     "active_etf_selector_title": "Active ETF selector",
     "active_etf_selector_copy": "Search, add, and manage only Taiwan active ETFs here. This list is separate from the Main Dashboard watchlist.",
@@ -5312,6 +5336,7 @@ TRANSLATIONS["English"].update({
     "active_etf_watchlist_caption": "This selector is dedicated to Active ETF Dashboard and does not overwrite the Main Dashboard watchlist.",
     "active_etf_empty_state": "No active ETFs added yet. Add symbols from the sections above.",
     "active_etf_no_dashboard_data": "There are no active ETFs to display yet. Add Taiwan active ETF symbols from the left sidebar first.",
+    "supply_chain_no_dashboard_data": "There are no supply-chain constituents to display yet. Choose at least one supply-chain theme from the left sidebar first.",
     "active_etf_dashboard_kicker": "Dashboard mode",
     "active_etf_dashboard_title": "Taiwan active ETF after-close research deck",
     "active_etf_dashboard_copy": "A dedicated active-ETF workspace with the same news judgment, signal stack, and after-close tracker used in the Main Dashboard.",
@@ -5329,9 +5354,10 @@ TRANSLATIONS["English"].update({
 
 TRANSLATIONS["繁體中文"].update({
     "dashboard_mode": "Dashboard 模式",
-    "dashboard_mode_note": "主 Dashboard 保留目前完整市場研究流程；主動式 ETF Dashboard 只顯示主動式 ETF 相關研究；台股期貨試算 Dashboard 只聚焦加權指數、近月台指期與點數試算。",
+    "dashboard_mode_note": "主 Dashboard 保留目前完整市場研究流程；供應鏈 Dashboard 會把主題供應鏈整組搬到獨立研究工作區；主動式 ETF Dashboard 只顯示主動式 ETF 相關研究；台股期貨試算 Dashboard 只聚焦加權指數、近月台指期與點數試算。",
     "dashboard_mode_main": "主 Dashboard",
     "dashboard_mode_active_etf": "主動式 ETF Dashboard",
+    "dashboard_mode_supply_chain": "供應鏈 Dashboard",
     "dashboard_mode_taiwan_futures": "台指選擇權 試算Dashboard",
     "taiwan_futures_vision_deck": "台指選擇權試算專區",
     "taiwan_futures_vision_deck_copy": "聚焦台指選擇權履約價、權利金、回本價與剩餘交易日節奏的專用工作台，並用公開加權指數與近月台指期做參考。",
@@ -5431,6 +5457,8 @@ TRANSLATIONS["繁體中文"].update({
     "taiwan_futures_public_realtime_note": "若你要的是交易所級精確即時加權指數，必須改接正式授權的即時 feed。",
     "active_etf_vision_deck": "主動式 ETF 專區",
     "active_etf_vision_deck_copy": "專門給台股主動式 ETF 的選股與收盤後研究工作台，不會覆蓋主 Dashboard 的原本觀察清單。",
+    "supply_chain_vision_deck": "供應鏈專區",
+    "supply_chain_vision_deck_copy": "把低軌衛星、ABF、記憶體、封裝測試與機器人等主題鏈獨立成專屬 Dashboard，同時保留比較區與單檔工作台。",
     "active_etf_universe": "主動式 ETF 範圍",
     "active_etf_selector_title": "主動式 ETF 選股器",
     "active_etf_selector_copy": "這裡只搜尋、加入與管理台股主動式 ETF，並與主 Dashboard 的一般觀察清單分開保存。",
@@ -5448,6 +5476,7 @@ TRANSLATIONS["繁體中文"].update({
     "active_etf_watchlist_caption": "這個選股器專門給 Active ETF Dashboard 使用，不會覆蓋主 Dashboard 的原始觀察清單。",
     "active_etf_empty_state": "目前尚未加入主動式 ETF，請先從上方加入。",
     "active_etf_no_dashboard_data": "目前沒有可顯示的主動式 ETF。請先在左側加入台股主動式 ETF 代號。",
+    "supply_chain_no_dashboard_data": "目前沒有可顯示的供應鏈成分股。請先在左側至少選擇一條供應鏈主題。",
     "active_etf_dashboard_kicker": "Dashboard 模式",
     "active_etf_dashboard_title": "台股主動式 ETF 收盤後研究台",
     "active_etf_dashboard_copy": "把主 Dashboard 的新聞判別、訊號堆疊與主動式 ETF 收盤後追蹤，整合到同一個專屬工作台。",
@@ -6943,7 +6972,34 @@ def _query_param_first(key: str) -> str:
 
 
 def _current_query_param_map() -> dict[str, str]:
-    keys = ["lang", "devicectl", "device", "news", "scope", "groups", "picks", "custom", "search", "lens", "manual", "period", "interval"]
+    keys = [
+        "mode",
+        "lang",
+        "theme",
+        "layout",
+        "devicectl",
+        "device",
+        "news",
+        "scope",
+        "groups",
+        "picks",
+        "custom",
+        "search",
+        "etfpicks",
+        "etfcustom",
+        "etfsearch",
+        "scgroups",
+        "lens",
+        "manual",
+        "period",
+        "interval",
+        "txentry",
+        "txdays",
+        "txside",
+        "txpremium",
+        "txtarget",
+        "txdelta",
+    ]
     return {key: _query_param_first(key) for key in keys if _query_param_first(key)}
 
 
@@ -7488,6 +7544,15 @@ def load_dashboard_preferences() -> None:
     active_etf_custom_symbols = _query_param_first("etfcustom") or _profile_value("etfcustom") or st.session_state.get("dashboard_active_etf_custom_symbols", "")
     active_etf_symbol_search = _query_param_first("etfsearch") or _profile_value("etfsearch") or st.session_state.get("dashboard_active_etf_symbol_search", "")
 
+    supply_chain_groups_param_present = _query_param_exists("scgroups") or bool(_profile_value("scgroups"))
+    supply_chain_groups = [
+        key
+        for key in _csv_decode(_query_param_first("scgroups") or _profile_value("scgroups"), empty_sentinel=EMPTY_SELECTION_SENTINEL)
+        if key in SUPPLY_CHAIN_FOCUS_CONFIGS
+    ]
+    if not supply_chain_groups and not supply_chain_groups_param_present:
+        supply_chain_groups = [key for key in SUPPLY_CHAIN_FOCUS_ORDER if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
+
     lens_name = _query_param_first("lens") or _profile_value("lens") or st.session_state.get("dashboard_lens_name", DEFAULT_TREND_LENS)
     if lens_name not in TREND_LENSES:
         lens_name = DEFAULT_TREND_LENS
@@ -7537,6 +7602,7 @@ def load_dashboard_preferences() -> None:
     st.session_state["dashboard_active_etf_tickers_initialized"] = active_etf_picks_param_present or bool(active_etf_picks)
     st.session_state["dashboard_active_etf_custom_symbols"] = active_etf_custom_symbols
     st.session_state["dashboard_active_etf_symbol_search"] = active_etf_symbol_search
+    st.session_state["dashboard_supply_chain_groups"] = supply_chain_groups
     st.session_state["dashboard_lens_name"] = lens_name
     st.session_state["dashboard_manual_override"] = manual_override
     st.session_state["dashboard_manual_period"] = manual_period
@@ -19468,6 +19534,243 @@ def render_active_etf_lab_dashboard(
             render_bundle_workspace_tabs(active_etf_tickers, daily_data, intraday_data, lens_meta=lens_meta)
 
 
+def supply_chain_group_label(config_key: str) -> str:
+    config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(str(config_key), {})
+    title = str(config.get("title", config_key) or config_key)
+    if get_lang() == "ç¹é«”ä¸­æ–‡":
+        return title
+    english_labels = {
+        "low-orbit": "Low-Earth Orbit",
+        "abf": "ABF Substrates",
+        "memory": "Memory",
+        "packaging-test": "Packaging & Test",
+        "robotics": "Robotics",
+    }
+    return english_labels.get(str(config_key), title)
+
+
+def build_supply_chain_dashboard_tickers(config_keys: list[str] | None = None) -> list[str]:
+    selected_keys = [
+        key for key in dedupe_keep_order(config_keys or SUPPLY_CHAIN_FOCUS_ORDER)
+        if key in SUPPLY_CHAIN_FOCUS_CONFIGS
+    ]
+    tickers: list[str] = []
+    for config_key in selected_keys:
+        catalog = SUPPLY_CHAIN_FOCUS_CONFIGS[config_key]["catalog"]
+        for item in build_supply_chain_universe(catalog):
+            ticker = normalize_dashboard_ticker(item.get("ticker"))
+            if ticker:
+                tickers.append(ticker)
+    return dedupe_keep_order(tickers)
+
+
+def render_selected_supply_chain_sections(config_keys: list[str], lens_meta: dict | None = None) -> None:
+    ensure_supply_chain_panels_default_closed()
+    for config_key in config_keys:
+        if config_key in SUPPLY_CHAIN_FOCUS_CONFIGS:
+            render_supply_chain_focus_section(config_key, lens_meta=lens_meta)
+
+
+def supply_chain_layout_section_label(value: str) -> str:
+    lang_zh = get_lang() == "ç¹é«”ä¸­æ–‡"
+    labels = {
+        "layout_standard_supply_chain_brief_tab": "1. ä¾›æ‡‰éˆæ‘˜è¦" if lang_zh else "1. Chain Brief",
+        "layout_standard_supply_chain_compare_tab": "2. æ¯”è¼ƒèˆ‡è¦åŠƒ" if lang_zh else "2. Compare & Plan",
+        "layout_standard_supply_chain_workspace_tab": "3. ä¾›æ‡‰éˆå·¥ä½œå°" if lang_zh else "3. Supply Chain Workspace",
+        "layout_supply_chain_tab": "ä¾›æ‡‰éˆ" if lang_zh else "Chains",
+        "layout_overview_tab": "ç¸½è¦½" if lang_zh else "Overview",
+        "layout_compare_tab": "æ¯”è¼ƒ" if lang_zh else "Compare",
+        "layout_workspace_tab": "å·¥ä½œå°" if lang_zh else "Workspace",
+        "layout_comparison_desk_tab": "æ¯”è¼ƒ" if lang_zh else "Comparison Desk",
+        "layout_ticker_desks_tab": "å·¥ä½œå°" if lang_zh else "Ticker Desks",
+    }
+    return labels.get(str(value), standard_layout_section_label(value))
+
+
+def render_supply_chain_sidebar_selector(selected_lang: str) -> tuple[list[str], list[str]]:
+    is_zh = selected_lang == "ç¹é«”ä¸­æ–‡"
+    render_html_block(
+        f'<div class="side-group-label">{"ä¾›æ‡‰éˆä¸»é¡Œ" if is_zh else "Supply chain themes"}</div>'
+    )
+    available_keys = [key for key in SUPPLY_CHAIN_FOCUS_ORDER if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
+    stored_groups = [
+        key for key in st.session_state.get("dashboard_supply_chain_groups", available_keys)
+        if key in available_keys
+    ]
+    if not stored_groups:
+        stored_groups = available_keys.copy()
+
+    st.caption(
+        "é¸æ“‡è¦æ”¾é€²ç¨ç«‹ä¾›æ‡‰éˆ Dashboard çš„ä¸»é¡Œç¾¤çµ„ï¼Œä¸‹æ–¹çš„æ¯”è¼ƒèˆ‡å·¥ä½œå°æœƒè‡ªå‹•ä»¥é€™äº›æˆåˆ†è‚¡ç‚ºç¯„åœã€‚"
+        if is_zh else
+        "Choose which thematic chains belong in the dedicated Supply Chain Dashboard. Compare and Workspace will automatically scope to these constituent names."
+    )
+
+    selected_groups = st.multiselect(
+        "ä¾›æ‡‰éˆä¸»é¡Œ" if is_zh else "Supply chain themes",
+        options=available_keys,
+        default=stored_groups,
+        format_func=supply_chain_group_label,
+        label_visibility="collapsed",
+    )
+
+    action_cols = st.columns(2)
+    with action_cols[0]:
+        if st.button("å…¨é¸ä¸»é¡Œ" if is_zh else "Select all", use_container_width=True, key="supply_chain_select_all"):
+            selected_groups = available_keys.copy()
+    with action_cols[1]:
+        if st.button("æ¸…ç©ºä¸»é¡Œ" if is_zh else "Clear all", use_container_width=True, key="supply_chain_clear_all"):
+            selected_groups = []
+
+    st.session_state["dashboard_supply_chain_groups"] = selected_groups
+    tickers = build_supply_chain_dashboard_tickers(selected_groups)
+    st.caption(
+        (
+            f"ç›®å‰é¸å– {len(selected_groups)} æ¢ä¾›æ‡‰éˆï¼Œå…± {len(tickers)} æª”æˆåˆ†è‚¡ã€‚"
+            if is_zh else
+            f"{len(selected_groups)} chains selected, covering {len(tickers)} constituent tickers."
+        )
+    )
+    return tickers, selected_groups
+
+
+def render_supply_chain_lab_dashboard(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None = None,
+    layout_mode: str = "Advanced",
+    supply_chain_keys: list[str] | None = None,
+) -> None:
+    selected_keys = [
+        key for key in dedupe_keep_order(supply_chain_keys or st.session_state.get("dashboard_supply_chain_groups", SUPPLY_CHAIN_FOCUS_ORDER))
+        if key in SUPPLY_CHAIN_FOCUS_CONFIGS
+    ]
+    supply_chain_tickers = [ticker for ticker in dedupe_keep_order(tickers) if is_taiwan_ticker(ticker)]
+    lang_zh = get_language() == "zh_TW"
+
+    if not selected_keys or not supply_chain_tickers:
+        st.info(
+            "ç›®å‰é‚„æ²’æœ‰é¸å°ä¾›æ‡‰éˆä¸»é¡Œï¼Œè«‹å…ˆåœ¨å·¦å´å‹¾é¸è¦è§€å¯Ÿçš„ä¾›æ‡‰éˆç¾¤çµ„ã€‚"
+            if lang_zh
+            else "No supply-chain themes are selected yet. Choose the chains you want from the left sidebar first."
+        )
+        return
+
+    timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
+    chips = [
+        _tracker_status_chip("ä¾›æ‡‰éˆå°ˆå€" if lang_zh else "Supply Chain Lab", "info"),
+        _tracker_status_chip((f"æ›´æ–°æ™‚é–“ {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"), "neutral"),
+        _tracker_status_chip((f"{len(selected_keys)} æ¢ä¾›æ‡‰éˆ" if lang_zh else f"{len(selected_keys)} chains"), "up"),
+        _tracker_status_chip((f"{len(supply_chain_tickers)} æª”æˆåˆ†è‚¡" if lang_zh else f"{len(supply_chain_tickers)} constituents"), "neutral"),
+    ]
+    st.markdown(
+        f"""
+        <div class="guide-shell etf-tracker-shell">
+            <div class="section-header">{'ä¾›æ‡‰éˆå°ˆå±¬ Dashboard' if lang_zh else 'Supply Chain Dashboard'}</div>
+            <div class="guide-title">{'ä¸»é¡Œä¾›æ‡‰éˆç ”ç©¶å·¥ä½œå€' if lang_zh else 'Thematic supply-chain research workspace'}</div>
+            <div class="guide-copy">{'æŠŠä½Žè»Œã€ABFã€�è¨˜æ†¶é«”ã€�å°æ¸¬èˆ‡æ©Ÿå™¨äººç­‰ä¾›æ‡‰éˆæˆ°åŠ›æ¿ç¨ç«‹æˆä¸€å€‹ Dashboardï¼Œä¸¦ä¿ç•™æ¯”è¼ƒå€èˆ‡å–®æª”å·¥ä½œå°ã€‚' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard while keeping comparison and single-ticker workspaces intact.'}</div>
+            <div class="chip-row">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    render_dashboard_layout_intro(layout_mode, "Supply Chain Lab", supply_chain_tickers)
+    render_layout_flow_cards(layout_mode, "Supply Chain Lab")
+
+    def _render_supply_chain_briefing() -> None:
+        render_taiwan_market_macro_strip(force_show=True)
+        summary_cols = st.columns(3)
+        summary_cols[0].metric("ä¾›æ‡‰éˆä¸»é¡Œæ•¸" if lang_zh else "Chains selected", len(selected_keys))
+        summary_cols[1].metric("æˆåˆ†è‚¡æª”æ•¸" if lang_zh else "Constituent tickers", len(supply_chain_tickers))
+        summary_cols[2].metric(
+            "å¯åšæ¯”è¼ƒ" if lang_zh else "Compare ready",
+            "æ˜¯" if len(supply_chain_tickers) >= 2 and lang_zh else ("Yes" if len(supply_chain_tickers) >= 2 else ("å¦" if lang_zh else "No")),
+        )
+        chain_names = " ï½œ ".join(supply_chain_group_label(key) for key in selected_keys)
+        st.caption(
+            (f"ç›®å‰ç¯„åœï¼š{chain_names}" if lang_zh else f"Current chain scope: {chain_names}")
+        )
+        render_active_trend_lens(lens_meta)
+
+    def _render_supply_chain_compare() -> None:
+        if len(supply_chain_tickers) < 2:
+            st.info("ç›®å‰ä¾›æ‡‰éˆæˆåˆ†è‚¡ä¸è¶³å…©æª”ï¼Œç„¡æ³•é–‹å•Ÿæ¯”è¼ƒå€ã€‚" if lang_zh else "At least two supply-chain tickers are needed for comparison.")
+            return
+        render_global_scenario_planning_stack(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+        render_precomparison_target_and_brief_groups(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+        render_comparison_section(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+
+    if layout_mode == "Standard":
+        standard_sections = [
+            "layout_standard_supply_chain_brief_tab",
+            "layout_standard_supply_chain_compare_tab",
+            "layout_standard_supply_chain_workspace_tab",
+        ]
+        current_section = render_standard_step_navigator(
+            standard_sections,
+            state_key="dashboard_standard_supply_chain_section",
+        )
+        if current_section == "layout_standard_supply_chain_brief_tab":
+            _render_supply_chain_briefing()
+            render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
+        elif current_section == "layout_standard_supply_chain_compare_tab":
+            _render_supply_chain_compare()
+        else:
+            render_standard_workspace_picker(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+    elif layout_mode == "Advanced":
+        advanced_sections = [
+            "layout_overview_tab",
+            "layout_supply_chain_tab",
+            "layout_compare_tab",
+            "layout_workspace_tab",
+        ]
+        current_section = render_lightweight_option_selector(
+            advanced_sections,
+            "dashboard_advanced_supply_chain_section",
+            format_func=supply_chain_layout_section_label,
+            helper_text=(
+                "é€™è£¡æœƒæŠŠä¾›æ‡‰éˆæˆ°åŠ›æ¿ã€�æ¯”è¼ƒèˆ‡å·¥ä½œå°åˆ†é–‹è¼‰å…¥ï¼Œé¿å…ä¸€æ¬¡é‡ç®—å…¨éƒ¨ã€‚"
+                if lang_zh else
+                "The chain boards, compare station, and workspaces are loaded separately here so the whole dashboard does not recalculate at once."
+            ),
+            widget_label="dashboard-advanced-supply-chain-station",
+        )
+        if current_section == "layout_overview_tab":
+            _render_supply_chain_briefing()
+        elif current_section == "layout_supply_chain_tab":
+            render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
+        elif current_section == "layout_compare_tab":
+            _render_supply_chain_compare()
+        else:
+            render_ticker_workspace_tabs(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+    else:
+        _render_supply_chain_briefing()
+        expert_sections = [
+            "layout_supply_chain_tab",
+            "layout_comparison_desk_tab",
+            "layout_ticker_desks_tab",
+        ]
+        current_section = render_lightweight_option_selector(
+            expert_sections,
+            "dashboard_expert_supply_chain_section",
+            format_func=supply_chain_layout_section_label,
+            helper_text=(
+                "ä¾›æ‡‰éˆå°ˆå®¶æ¨¡å¼æ”¹æˆå–®ç«™é»žæ¸²æŸ“ï¼Œåˆ‡æ›æˆ°åŠ›æ¿ã€�æ¯”è¼ƒå’Œå€‹è‚¡å·¥ä½œå°æœƒæ›´é †ã€‚"
+                if lang_zh else
+                "Supply Chain expert mode now renders one station at a time, so the board, compare desk, and workspaces switch more smoothly."
+            ),
+            widget_label="dashboard-expert-supply-chain-station",
+        )
+        if current_section == "layout_supply_chain_tab":
+            render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
+        elif current_section == "layout_comparison_desk_tab":
+            _render_supply_chain_compare()
+        else:
+            render_ticker_workspace_tabs(daily_data, intraday_data, supply_chain_tickers, lens_meta=lens_meta)
+
+
 
 def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str], str, list[str], str, str]:
     render_html_block(f'<div class="side-group-label">{t("watchlist_universe")}</div>')
@@ -24655,6 +24958,9 @@ def generate_dashboard():
         if selected_dashboard_mode == "Active ETF Lab":
             side_title_key = "active_etf_vision_deck"
             side_copy_key = "active_etf_vision_deck_copy"
+        elif selected_dashboard_mode == "Supply Chain Lab":
+            side_title_key = "supply_chain_vision_deck"
+            side_copy_key = "supply_chain_vision_deck_copy"
         elif selected_dashboard_mode == "Taiwan Futures Lab":
             side_title_key = "taiwan_futures_vision_deck"
             side_copy_key = "taiwan_futures_vision_deck_copy"
@@ -24674,12 +24980,15 @@ def generate_dashboard():
 
         selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
         selected_groups = list(st.session_state.get("dashboard_selected_groups", MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]))
+        selected_supply_chain_groups = list(st.session_state.get("dashboard_supply_chain_groups", SUPPLY_CHAIN_FOCUS_ORDER))
         custom_ticker_text = str(st.session_state.get("dashboard_custom_symbols", "")).strip()
         symbol_search_query = str(st.session_state.get("dashboard_symbol_search", "")).strip()
         tickers = []
 
         if selected_dashboard_mode == "Active ETF Lab":
             tickers, selected_market_scope, selected_groups, custom_ticker_text, symbol_search_query = render_active_etf_sidebar_selector(selected_lang)
+        elif selected_dashboard_mode == "Supply Chain Lab":
+            tickers, selected_supply_chain_groups = render_supply_chain_sidebar_selector(selected_lang)
         elif selected_dashboard_mode == "Taiwan Futures Lab":
             render_html_block(f'<div class="side-group-label">{t("taiwan_futures_dashboard_title")}</div>')
 
@@ -24839,6 +25148,10 @@ def generate_dashboard():
                 ),
                 "etfcustom": str(st.session_state.get("dashboard_active_etf_custom_symbols", "")).strip(),
                 "etfsearch": str(st.session_state.get("dashboard_active_etf_symbol_search", "")).strip(),
+                "scgroups": _csv_encode(
+                    st.session_state.get("dashboard_supply_chain_groups", []),
+                    empty_sentinel=EMPTY_SELECTION_SENTINEL,
+                ),
                 "lens": lens_name,
                 "manual": "1" if manual_override else "0",
                 "period": manual_period,
@@ -24873,12 +25186,16 @@ def generate_dashboard():
     dashboard_tickers = (
         [ticker for ticker in tickers if is_taiwan_active_etf(ticker)]
         if dashboard_mode == "Active ETF Lab"
+        else [ticker for ticker in tickers if is_taiwan_ticker(ticker)]
+        if dashboard_mode == "Supply Chain Lab"
         else tickers
     )
 
     if not dashboard_tickers:
         if dashboard_mode == "Active ETF Lab":
             st.warning(t("active_etf_no_dashboard_data"))
+        elif dashboard_mode == "Supply Chain Lab":
+            st.warning(t("supply_chain_no_dashboard_data"))
         else:
             st.warning(t("please_select_ticker"))
         return
@@ -24898,6 +25215,15 @@ def generate_dashboard():
             dashboard_tickers,
             lens_meta=lens_meta,
             layout_mode=layout_mode,
+        )
+    elif dashboard_mode == "Supply Chain Lab":
+        render_supply_chain_lab_dashboard(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta=lens_meta,
+            layout_mode=layout_mode,
+            supply_chain_keys=selected_supply_chain_groups,
         )
     else:
         render_general_market_dashboard_layout(
