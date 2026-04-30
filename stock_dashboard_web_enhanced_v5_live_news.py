@@ -13632,11 +13632,12 @@ def render_comparison_overview_cards(digest_items: list[dict]):
             card_classes += " is-wide"
         if idx == 0:
             card_classes += " is-spotlight"
+        rank_badge = "Top 1" if idx == 0 else f"#{int(item['rank']):02d}"
         cards_html.append(
             "".join(
                 [
                     f'<div class="{card_classes}">',
-                    f'<div class="compare-digest-rank">{"Top 1" if idx == 0 else f"#{item["rank"]:02d}"}</div>',
+                    f'<div class="compare-digest-rank">{rank_badge}</div>',
                     '<div class="compare-digest-chip-row">',
                     f'<span class="crypto-signal {item["signal_class"]}">{escape(tr_signal(item["signal"]))}</span>',
                     f'<span class="compare-digest-soft-pill">{escape(tr_confidence(item["brief"]["confidence"]))}</span>',
