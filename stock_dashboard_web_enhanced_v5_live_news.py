@@ -12437,7 +12437,7 @@ def _strip_known_wrapper_tokens(html: str) -> str:
 
     return cleaned
 
-def render_html_block(html: str):
+def render_html_block(html: str, *_args, **_kwargs):
     if html is None:
         return
 
