@@ -224,7 +224,7 @@ def render_dashboard_layout_intro(layout_mode: str, dashboard_mode: str, tickers
 
 
 def inject_layout_profile_overrides() -> None:
-    st.markdown(
+    render_html_block(
         '''
         <style>
         .layout-profile-shell {
@@ -13210,7 +13210,7 @@ def render_candlestick_chart(
         top_meta.append(str(wave_snapshot.get("window_label")))
     meta_text = " · ".join(dict.fromkeys([item for item in top_meta if item]))
 
-    st.markdown(
+    render_html_block(
         f"""
         <div class="chart-shell">
             <div style="display:flex; gap:16px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap;">
@@ -13224,8 +13224,7 @@ def render_candlestick_chart(
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     base = alt.Chart(chart_df).encode(
@@ -14450,7 +14449,7 @@ def render_daily_briefing(ticker: str, news_items: list[dict]):
         st.info(t("no_recent_news", ticker=display_ticker_label(ticker)))
         return
     body = "".join(compact_story_line(item, ticker) for item in top_items)
-    st.markdown(
+    render_html_block(
         html_block(
             f"""
             <div class="news-brief-card">
@@ -14458,8 +14457,7 @@ def render_daily_briefing(ticker: str, news_items: list[dict]):
                 {body}
             </div>
             """
-        ),
-        unsafe_allow_html=True,
+        )
     )
 
 
@@ -14682,7 +14680,7 @@ def render_story_row(item: dict, ticker: str, idx: int):
     link_html = ""
     if item.get("url"):
         link_html = f'<a class="inline-link" href="{escape(str(item["url"]))}" target="_blank">{t("open_article")}</a>'
-    st.markdown(
+    render_html_block(
         f"""
         <div class="story-row">
             <div class="story-row-head">
@@ -14714,20 +14712,18 @@ def render_story_row(item: dict, ticker: str, idx: int):
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def render_news_stream(ticker: str, news_items: list[dict]):
-    st.markdown(
+    render_html_block(
         f"""
         <div class="news-board-shell">
             <div class="section-header" style="margin:0; color:#eef4ff;">{t("top_news_stories")}</div>
             <div class="news-board-copy">{t("news_board_copy")}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
     if not news_items:
         st.info(t("no_recent_news", ticker=display_ticker_label(ticker)))
@@ -22952,7 +22948,7 @@ def render_supply_chain_lab_dashboard(
         """
         for step, title, copy in timeline_items
     )
-    st.markdown(
+    render_html_block(
         f"""
         <div class="sc-lab-shell">
             <div class="sc-lab-head">
@@ -22988,8 +22984,7 @@ def render_supply_chain_lab_dashboard(
             </div>
             <div class="sc-lab-chip-row">{''.join(chips)}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     render_dashboard_layout_intro(layout_mode, "Supply Chain Lab", supply_chain_tickers)
@@ -26729,7 +26724,7 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
         }
         """
 
-    st.markdown(
+    render_html_block(
         f"""
         <style>
         {theme_vars}
@@ -27215,8 +27210,7 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
             padding-top: 10px;
         }}
         </style>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -28238,7 +28232,7 @@ def inject_taiwan_futures_dashboard_overrides(theme_mode: str = "Dark Horizon") 
     soft = "#35506f" if is_light else "#bfd2e8"
     badge_bg = "rgba(56,189,248,.12)" if is_light else "rgba(56,189,248,.14)"
 
-    st.markdown(
+    render_html_block(
         f"""
         <style>
         section[data-testid="stSidebar"] [data-baseweb="input"] input,
@@ -28659,8 +28653,7 @@ def inject_taiwan_futures_dashboard_overrides(theme_mode: str = "Dark Horizon") 
             }}
         }}
         </style>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
