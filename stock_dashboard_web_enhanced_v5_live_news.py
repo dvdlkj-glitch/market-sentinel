@@ -6714,6 +6714,8 @@ def news_mode_prefers_chinese_first() -> bool:
 def t(key: str, **kwargs) -> str:
     lang = get_lang()
     value = TRANSLATIONS.get(lang, {}).get(key, TRANSLATIONS["English"].get(key, key))
+    if value is None:
+        value = TRANSLATIONS["English"].get(key, key)
     return value.format(**kwargs) if kwargs else value
 
 
@@ -12442,11 +12444,11 @@ def render_html_block(html: str):
     cleaned = _strip_known_wrapper_tokens(html)
     if not cleaned:
         return
+    normalized = str(cleaned).strip().lower()
+    if normalized in {"none", "null", "</div>", "</section>", "</span>"}:
+        return
 
-    if hasattr(st, "html"):
-        st.html(cleaned)
-    else:
-        st.markdown(cleaned, unsafe_allow_html=True)
+    st.markdown(cleaned, unsafe_allow_html=True)
 
 
 def render_expander_meta(section: str, item_count: int | None, helper_base: str):
@@ -14421,7 +14423,12 @@ def compact_story_line(item: dict, ticker: str) -> str:
     link_html = ""
     if item.get("url"):
         link_html = f'<a class="brief-link" href="{escape(str(item["url"]))}" target="_blank">{t("open_article")}</a>'
-    helper_chip = f'<span class="news-helper-chip">{t("news_mode_bilingual")}</span>' if news_mode_prefers_helper() else ""
+    helper_label = str(t("news_mode_bilingual") or "").strip()
+    helper_chip = (
+        f'<span class="news-helper-chip">{escape(helper_label)}</span>'
+        if news_mode_prefers_helper() and helper_label and helper_label.lower() != "none"
+        else ""
+    )
     return (
         f'<div class="brief-item">'
         f'<div class="brief-meta">{provider} · {us_time}</div>'
