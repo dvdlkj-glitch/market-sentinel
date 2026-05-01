@@ -12867,6 +12867,19 @@ def wave_default_bar_count(ohlc: pd.DataFrame | None, interval_hint: str = "") -
     return 126
 
 
+def wave_year_bar_count(ohlc: pd.DataFrame | None, interval_hint: str = "") -> int:
+    hint = str(interval_hint or "").strip().lower()
+    if hint == "1wk":
+        return 52
+    if ohlc is not None and not ohlc.empty and "Date" in ohlc.columns:
+        dates = pd.to_datetime(ohlc["Date"], errors="coerce").dropna()
+        if len(dates) >= 3:
+            median_gap = dates.sort_values().diff().dropna().median()
+            if pd.notna(median_gap) and median_gap >= pd.Timedelta(days=5):
+                return 52
+    return 252
+
+
 def _wave_lang_zh() -> bool:
     return get_language() == "zh_TW" or get_lang() == "繁體中文"
 
@@ -14686,6 +14699,9 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
     wave_bar_count = wave_default_bar_count(daily_ohlc, interval_hint)
     wave_ohlc = daily_ohlc.tail(wave_bar_count).copy() if daily_ohlc is not None and not daily_ohlc.empty else pd.DataFrame()
     wave_snapshot = build_wave_snapshot(wave_ohlc, interval_hint)
+    annual_bar_count = wave_year_bar_count(daily_ohlc, interval_hint)
+    annual_wave_ohlc = daily_ohlc.tail(annual_bar_count).copy() if daily_ohlc is not None and not daily_ohlc.empty else pd.DataFrame()
+    annual_wave_snapshot = build_wave_snapshot(annual_wave_ohlc, interval_hint)
     zh = _wave_lang_zh()
     trend_base_label = (
         "Trend Lab 與 K 線確認"
@@ -14745,14 +14761,19 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
             window_label=_wave_window_label(interval_hint),
         )
 
-        if intraday.get("available") and intraday_ohlc is not None and not intraday_ohlc.empty:
+        if annual_wave_ohlc is not None and not annual_wave_ohlc.empty:
             render_candlestick_chart(
-                intraday_ohlc.tail(78),
-                "Live intraday candlestick tape (5m)" if get_lang() == "English" else "即時盤中 K 線 (5 分)",
-                "Latest intraday price action in the same dark premium theme." if get_lang() == "English" else "以相同高級深色主題呈現最新盤中價格結構。",
-                height=300,
-                show_ma=False,
-                show_wave=False,
+                annual_wave_ohlc,
+                "年度 K 線結構 · 波浪延伸" if zh else "1-year structure · wave extension",
+                (
+                    "第二區改看近 1 年主結構，用同一套波浪理論回看推動波、修正波與延伸節點，讓中期趨勢也能直接判讀。"
+                    if zh else
+                    "The second chart now steps back to a 1-year structure view, using the same wave-theory lens to read impulse legs, corrections, and extension points across the medium-term trend."
+                ),
+                height=360,
+                show_ma=True,
+                wave_snapshot=annual_wave_snapshot,
+                window_label="近 1 年日線" if zh else "1-year daily lens",
             )
 
         st.markdown(
