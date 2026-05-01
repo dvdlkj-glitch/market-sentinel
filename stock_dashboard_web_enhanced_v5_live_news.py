@@ -2724,7 +2724,12 @@ def _supply_chain_move_summary(rows: list[dict]) -> dict:
     }
 
 
-def _supply_chain_official_flow_snapshot(ticker: str) -> dict:
+def _supply_chain_official_flow_snapshot(
+    ticker: str,
+    *,
+    fetch_if_missing: bool = False,
+    force_refresh: bool = False,
+) -> dict:
     normalized = normalize_dashboard_ticker(ticker)
     if not normalized or not is_taiwan_ticker(normalized):
         return {}
@@ -2733,17 +2738,40 @@ def _supply_chain_official_flow_snapshot(ticker: str) -> dict:
         snapshot = peek_func(normalized) if callable(peek_func) else None
     except Exception:
         snapshot = None
+
+    flow = (snapshot.get("flow", {}) if isinstance(snapshot, dict) else {}) or {}
+    if isinstance(flow, dict) and pd.notna(_safe_float(flow.get("foreign_net"))):
+        return flow
+
+    if not fetch_if_missing:
+        return flow if isinstance(flow, dict) else {}
+
+    try:
+        get_func = globals().get("get_taiwan_official_ticker_snapshot")
+        snapshot = get_func(normalized, force_refresh=force_refresh) if callable(get_func) else None
+    except Exception:
+        snapshot = None
+
     if not isinstance(snapshot, dict):
-        return {}
+        return flow if isinstance(flow, dict) else {}
     flow = snapshot.get("flow", {}) or {}
     return flow if isinstance(flow, dict) else {}
 
 
-def _supply_chain_foreign_flow_summary(rows: list[dict]) -> dict:
+def _supply_chain_foreign_flow_summary(
+    rows: list[dict],
+    *,
+    fetch_if_missing: bool = False,
+    force_refresh: bool = False,
+) -> dict:
     entries: list[dict] = []
     for row in rows or []:
         ticker = normalize_dashboard_ticker(row.get("ticker"))
-        flow = _supply_chain_official_flow_snapshot(ticker)
+        flow = _supply_chain_official_flow_snapshot(
+            ticker,
+            fetch_if_missing=fetch_if_missing,
+            force_refresh=force_refresh,
+        )
         foreign_net = _safe_float(flow.get("foreign_net"))
         if pd.isna(foreign_net):
             continue
@@ -20419,7 +20447,11 @@ def build_supply_chain_overview_rows(
         foreign_net = _safe_float(snapshot.get("foreign_net_total"))
         foreign_count = _coerce_snapshot_int(snapshot.get("foreign_net_count"), default=0)
         if pd.isna(foreign_net) or not foreign_count:
-            foreign_summary = _supply_chain_foreign_flow_summary(rows)
+            foreign_summary = _supply_chain_foreign_flow_summary(
+                rows,
+                fetch_if_missing=force_refresh,
+                force_refresh=force_refresh,
+            )
             foreign_net = foreign_summary.get("foreign_net_total", float("nan"))
             foreign_count = int(foreign_summary.get("foreign_net_count", 0) or 0)
             foreign_leader_name = str(foreign_summary.get("foreign_leader_name", "") or "")
@@ -21123,6 +21155,12 @@ def _render_supply_chain_dashboard_overview(
     foreign_sell_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) < 0]
     top_buy = max(foreign_buy_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_buy_rows else {}
     top_sell = min(foreign_sell_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_sell_rows else {}
+    foreign_missing_title = "等待外資快照" if lang_zh else "Awaiting flow snapshot"
+    foreign_missing_note = (
+        "按「刷新 Overall」會補抓 TWSE/TPEx 三大法人外資買賣超。"
+        if lang_zh
+        else "Use Refresh Overall to fetch TWSE/TPEx 3-inst foreign flow."
+    )
     leader = rows[0]
     weakest = rows[-1]
     fetched_texts = [format_supply_chain_snapshot_fetched_at(row.get("fetched_at")) for row in rows if row.get("fetched_at")]
@@ -21139,17 +21177,25 @@ def _render_supply_chain_dashboard_overview(
             ),
             _render_supply_chain_metric_tile(
                 "Foreign Bid" if not lang_zh else "外資主攻",
-                str((top_buy or {}).get("title", "—")),
+                str((top_buy or {}).get("title") or foreign_missing_title),
                 _format_supply_chain_foreign_flow((top_buy or {}).get("foreign_net_total"), lang_zh),
                 _supply_chain_move_tone((top_buy or {}).get("foreign_net_total")),
-                "Largest net buy in the selected chains" if not lang_zh else "所選供應鏈中外資買超最大",
+                (
+                    "Largest net buy in the selected chains" if not lang_zh else "所選供應鏈中外資買超最大"
+                )
+                if top_buy
+                else foreign_missing_note,
             ),
             _render_supply_chain_metric_tile(
                 "Foreign Offer" if not lang_zh else "外資調節",
-                str((top_sell or {}).get("title", "—")),
+                str((top_sell or {}).get("title") or foreign_missing_title),
                 _format_supply_chain_foreign_flow((top_sell or {}).get("foreign_net_total"), lang_zh),
                 _supply_chain_move_tone((top_sell or {}).get("foreign_net_total")),
-                "Largest net sell in the selected chains" if not lang_zh else "所選供應鏈中外資賣超最大",
+                (
+                    "Largest net sell in the selected chains" if not lang_zh else "所選供應鏈中外資賣超最大"
+                )
+                if top_sell
+                else foreign_missing_note,
             ),
             _render_supply_chain_metric_tile(
                 "Breadth" if not lang_zh else "上漲廣度",
@@ -21217,6 +21263,7 @@ def _render_supply_chain_dashboard_overview(
     chips = [
         f"{len(rows)} {'chains' if not lang_zh else '條供應鏈'}",
         f"{total_tickers} {'constituents' if not lang_zh else '檔成分股'}",
+        f"{'Foreign flow' if not lang_zh else '外資資料'} {len(valid_foreign_rows)} / {len(rows)}",
         f"{'Snapshot' if not lang_zh else '快照'} {last_update_text}",
         f"{'Weakest' if not lang_zh else '相對弱勢'} {weakest.get('title', '—')} {format_percent(weakest.get('aggregate_move_sum'))}",
     ]
@@ -21283,9 +21330,9 @@ def render_supply_chain_overall_summary(
         else "Uses the current supply-chain Overall comparison data to put aggregate move, breadth, foreign flow, and leading constituent on one overview screen."
     )
     basis = (
-        "整組漲幅 = 目前快照中可用成分股漲跌幅加總；外資合計優先讀官方快照。"
+        "整組漲幅 = 目前快照中可用成分股漲跌幅加總；外資合計讀 TWSE/TPEx 三大法人外資買賣超。若外資卡片仍為空，請按「刷新 Overall」補抓官方外資快照。"
         if lang_zh
-        else "Aggregate move sums available constituent moves in the current snapshot; foreign flow uses official snapshots first."
+        else "Aggregate move sums available constituent moves in the current snapshot; foreign flow uses TWSE/TPEx 3-inst foreign net flow. If foreign cards are still empty, use Refresh Overall to fetch official flow snapshots."
     )
 
     render_html_block(_render_supply_chain_dashboard_overview(rows, show_icons=show_icons, title=title, copy=copy, basis=basis))
@@ -21790,6 +21837,653 @@ def render_supply_chain_lab_dashboard(
                 intraday_data,
                 lens_meta=lens_meta,
             )
+
+
+EDITOR_ANALYSIS_PATH = Path(__file__).with_name("editor_analysis_items.json")
+
+
+def _news_briefing_is_zh() -> bool:
+    return get_language() == "zh_TW"
+
+
+def _ticker_move_from_data(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    ticker: str,
+) -> dict:
+    ticker = normalize_dashboard_ticker(ticker)
+    if not ticker:
+        return {}
+    snapshot = build_taiwan_display_price_snapshot(daily_data, intraday_data, ticker) if is_taiwan_ticker(ticker) else {}
+    latest_move = _safe_float(snapshot.get("latest_move"))
+    latest_price = snapshot.get("latest_price", pd.NA)
+    price_source = str(snapshot.get("price_source", "") or "")
+    last_updated = snapshot.get("last_updated")
+    price_series, _ = get_price_series(daily_data, ticker)
+    volume_series = get_series(daily_data, "Volume", ticker)
+
+    if pd.isna(latest_move) and price_series is not None and len(price_series.dropna()) >= 2:
+        clean_prices = price_series.dropna()
+        latest_move = float(clean_prices.pct_change().iloc[-1] * 100.0)
+        latest_price = clean_prices.iloc[-1]
+        price_source = price_source or "daily_close"
+
+    volume_ratio = float("nan")
+    if volume_series is not None and len(volume_series.dropna()) >= 5:
+        clean_volume = volume_series.dropna()
+        recent_base = clean_volume.tail(20)
+        baseline = float(recent_base.mean()) if not recent_base.empty else float("nan")
+        if baseline > 0:
+            volume_ratio = float(clean_volume.iloc[-1]) / baseline
+
+    return {
+        "ticker": ticker,
+        "label": display_ticker_label(ticker),
+        "move": latest_move,
+        "price": latest_price,
+        "price_source": price_source,
+        "last_updated": last_updated,
+        "volume_ratio": volume_ratio,
+        "price_series": price_series,
+        "volume_series": volume_series,
+    }
+
+
+def _build_snapshot_taiwan_movers(config_keys: list[str], *, limit: int = 3) -> list[dict]:
+    rows: list[dict] = []
+    for config_key in config_keys or []:
+        snapshot = peek_supply_chain_focus_snapshot(config_key)
+        if not isinstance(snapshot, dict):
+            continue
+        for row in _supply_chain_snapshot_rows(snapshot):
+            ticker = normalize_dashboard_ticker(row.get("ticker"))
+            if not ticker or not is_taiwan_ticker(ticker) or is_taiwan_active_etf(ticker):
+                continue
+            move = _safe_float(row.get("latest_move"))
+            if pd.isna(move):
+                continue
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "label": str(row.get("name") or display_ticker_label(ticker)),
+                    "move": float(move),
+                    "price": row.get("latest_price", pd.NA),
+                    "source": supply_chain_group_label(config_key),
+                }
+            )
+    rows.sort(key=lambda item: float(item.get("move", -10**9)), reverse=True)
+    return rows[:limit]
+
+
+def build_home_news_top_taiwan_movers(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    selected_supply_chain_groups: list[str],
+    *,
+    limit: int = 3,
+) -> list[dict]:
+    candidates: list[dict] = []
+    seen: set[str] = set()
+    for ticker in dedupe_keep_order(tickers):
+        normalized = normalize_dashboard_ticker(ticker)
+        if not normalized or normalized in seen or not is_taiwan_ticker(normalized) or is_taiwan_active_etf(normalized):
+            continue
+        seen.add(normalized)
+        item = _ticker_move_from_data(daily_data, intraday_data, normalized)
+        move = _safe_float(item.get("move"))
+        if pd.notna(move):
+            candidates.append({**item, "move": float(move), "source": "live"})
+
+    if len(candidates) < limit:
+        for item in _build_snapshot_taiwan_movers(selected_supply_chain_groups, limit=limit * 2):
+            ticker = normalize_dashboard_ticker(item.get("ticker"))
+            if ticker and ticker not in seen:
+                seen.add(ticker)
+                candidates.append(item)
+
+    candidates.sort(key=lambda item: float(item.get("move", -10**9)), reverse=True)
+    return candidates[:limit]
+
+
+def build_home_news_supply_chain_leader(
+    selected_supply_chain_groups: list[str],
+    lens_meta: dict | None = None,
+) -> dict:
+    selected_keys = [
+        key for key in dedupe_keep_order(selected_supply_chain_groups or SUPPLY_CHAIN_FOCUS_ORDER)
+        if key in SUPPLY_CHAIN_FOCUS_CONFIGS
+    ]
+    if not selected_keys:
+        return {}
+    try:
+        rows = build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=False)
+    except Exception:
+        rows = []
+    if not rows:
+        return {}
+    leader = rows[0]
+    return {
+        "title": str(leader.get("title") or supply_chain_group_label(str(leader.get("config_key", ""))) or "—"),
+        "move": leader.get("aggregate_move_sum", pd.NA),
+        "rising_count": int(leader.get("rising_count", 0) or 0),
+        "ticker_count": int(leader.get("ticker_count", 0) or 0),
+        "leader_name": str(leader.get("leader_name", "") or "—"),
+        "leader_move": leader.get("leader_move", pd.NA),
+        "foreign_net_total": leader.get("foreign_net_total", pd.NA),
+    }
+
+
+def _home_news_active_etf_candidates(dashboard_mode: str, tickers: list[str]) -> list[str]:
+    if dashboard_mode == "Active ETF Lab":
+        return filter_active_etf_tickers(tickers)
+    selected = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+    if selected:
+        return selected
+    return build_active_etf_quick_picks()
+
+
+def build_home_news_active_etf_spotlight(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    tickers: list[str],
+    lens_meta: dict | None,
+    dashboard_mode: str,
+    *,
+    limit: int = 3,
+) -> list[dict]:
+    etf_tickers = dedupe_keep_order(_home_news_active_etf_candidates(dashboard_mode, tickers))[:8]
+    if not etf_tickers:
+        return []
+
+    period = str((lens_meta or {}).get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD)
+    interval = str((lens_meta or {}).get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL)
+    etf_daily_data = daily_data
+    etf_intraday_data = intraday_data if dashboard_mode == "Active ETF Lab" else None
+    if dashboard_mode != "Active ETF Lab":
+        try:
+            etf_daily_data = fetch_daily_data(etf_tickers, period, interval)
+        except Exception:
+            etf_daily_data = None
+
+    rows: list[dict] = []
+    for ticker in etf_tickers:
+        item = _ticker_move_from_data(etf_daily_data, etf_intraday_data, ticker)
+        move = _safe_float(item.get("move"))
+        price_series = item.get("price_series")
+        volume_series = item.get("volume_series")
+        if price_series is None or price_series.empty:
+            continue
+        analysis = analyze_market_sentinel(price_series, volume_series, [], ticker)
+        volume_ratio = _safe_float(item.get("volume_ratio"))
+        volume_score = min(max(volume_ratio, 0.0), 5.0) * 3.0 if pd.notna(volume_ratio) else 0.0
+        move_score = abs(float(move)) * 1.6 if pd.notna(move) else 0.0
+        positive_bonus = max(float(move), 0.0) * 0.8 if pd.notna(move) else 0.0
+        trend_score = max(float(_safe_float(analysis.get("score"), default=0.0)), 0.0)
+        attention_score = move_score + positive_bonus + volume_score + trend_score
+        rows.append(
+            {
+                "ticker": ticker,
+                "label": active_etf_selector_label(ticker),
+                "move": move,
+                "volume_ratio": volume_ratio,
+                "trend": analysis.get("trend", "N/A"),
+                "signal": analysis.get("signal", "HOLD"),
+                "attention_score": attention_score,
+            }
+        )
+
+    rows.sort(key=lambda row: float(row.get("attention_score", 0.0)), reverse=True)
+    return rows[:limit]
+
+
+def load_editor_analysis_items(*, max_items: int = 4) -> list[dict]:
+    fallback_items = [
+        {
+            "title": "AI 供應鏈先看資金續航",
+            "summary": "若強勢鏈漲幅擴大但外資沒有同步回補，短線可先用分批與停利帶管理追價風險。",
+            "tags": ["AI", "供應鏈", "外資"],
+            "priority": "高",
+            "stance": "觀察",
+        },
+        {
+            "title": "主動式 ETF 適合看題材純度",
+            "summary": "主動式 ETF 的熱度不要只看單日漲幅，還要搭配持股題材、成交量變化與外資是否連續進場。",
+            "tags": ["主動式ETF", "題材", "成交量"],
+            "priority": "中",
+            "stance": "研究",
+        },
+    ]
+    try:
+        if EDITOR_ANALYSIS_PATH.exists():
+            payload = json.loads(EDITOR_ANALYSIS_PATH.read_text(encoding="utf-8"))
+            raw_items = payload.get("items", payload) if isinstance(payload, dict) else payload
+            if isinstance(raw_items, list):
+                items = [item for item in raw_items if isinstance(item, dict)]
+                if items:
+                    return items[:max_items]
+    except Exception:
+        pass
+    return fallback_items[:max_items]
+
+
+def inject_home_news_briefing_css() -> None:
+    render_html_block(
+        """
+        <style>
+        .home-news-shell {
+            margin: 18px 0 20px;
+            padding: 18px;
+            border-radius: 22px;
+            border: 1px solid rgba(72, 215, 255, .22);
+            background:
+                linear-gradient(135deg, rgba(15, 23, 74, .96), rgba(20, 16, 70, .92)),
+                radial-gradient(circle at 16% 0%, rgba(52,245,197,.18), transparent 32%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 22px 56px rgba(4, 9, 28, .24);
+        }
+        .home-news-head {
+            display: flex;
+            gap: 14px;
+            align-items: flex-end;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .home-news-title {
+            margin-top: 6px;
+            font-size: 25px;
+            line-height: 1.15;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-copy {
+            max-width: 760px;
+            margin-top: 7px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: rgba(225,239,255,.76);
+        }
+        .home-news-pill {
+            display: inline-flex;
+            align-items: center;
+            min-height: 30px;
+            padding: 6px 11px;
+            border-radius: 999px;
+            border: 1px solid rgba(89,240,255,.25);
+            background: rgba(9, 16, 53, .68);
+            color: rgba(238,247,255,.88);
+            font-size: 11px;
+            font-weight: 850;
+            white-space: nowrap;
+        }
+        .home-news-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.36fr) minmax(320px, .82fr);
+            gap: 14px;
+        }
+        .home-news-column {
+            min-width: 0;
+            border-radius: 18px;
+            padding: 15px;
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(7, 13, 44, .66);
+        }
+        .home-news-column-title {
+            font-size: 15px;
+            line-height: 1.25;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-column-copy {
+            margin-top: 6px;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: rgba(225,239,255,.7);
+        }
+        .home-news-card-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 13px;
+        }
+        .home-news-card,
+        .home-editor-card {
+            min-width: 0;
+            border-radius: 16px;
+            padding: 13px;
+            border: 1px solid rgba(72,215,255,.16);
+            background: linear-gradient(150deg, rgba(31,34,97,.9), rgba(14,19,62,.86));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+        }
+        .home-news-card-label,
+        .home-editor-label {
+            font-size: 10.5px;
+            line-height: 1.2;
+            letter-spacing: .11em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(89,240,255,.82);
+        }
+        .home-news-card-title,
+        .home-editor-title {
+            margin-top: 7px;
+            font-size: 15px;
+            line-height: 1.28;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-card-value {
+            margin-top: 10px;
+            font-size: 22px;
+            line-height: 1;
+            font-weight: 950;
+            color: #34f5c5;
+        }
+        .home-news-card-value.down {
+            color: #ff8fa3;
+        }
+        .home-news-card-note,
+        .home-editor-summary {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.52;
+            color: rgba(225,239,255,.72);
+        }
+        .home-news-list {
+            display: grid;
+            gap: 9px;
+            margin-top: 12px;
+        }
+        .home-news-row {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 10px;
+            align-items: center;
+            padding: 10px 11px;
+            border-radius: 14px;
+            background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.06);
+        }
+        .home-news-rank {
+            width: 30px;
+            height: 30px;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 999px;
+            background: rgba(52,245,197,.12);
+            color: #34f5c5;
+            font-size: 12px;
+            font-weight: 950;
+        }
+        .home-news-row-title {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 13px;
+            font-weight: 900;
+            color: rgba(244,251,255,.94);
+        }
+        .home-news-row-sub {
+            margin-top: 3px;
+            font-size: 11.5px;
+            color: rgba(225,239,255,.62);
+        }
+        .home-news-row-value {
+            font-size: 13px;
+            font-weight: 950;
+            color: #34f5c5;
+            white-space: nowrap;
+        }
+        .home-editor-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 13px;
+        }
+        .home-editor-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+        .home-editor-tag {
+            display: inline-flex;
+            align-items: center;
+            min-height: 23px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(52,245,197,.2);
+            background: rgba(52,245,197,.08);
+            color: rgba(238,247,255,.82);
+            font-size: 11px;
+            font-weight: 800;
+        }
+        @media (max-width: 980px) {
+            .home-news-head,
+            .home-news-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+            .home-news-card-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 640px) {
+            .home-news-shell {
+                padding: 12px;
+                border-radius: 18px;
+            }
+            .home-news-row {
+                grid-template-columns: auto 1fr;
+            }
+            .home-news-row-value {
+                grid-column: 2;
+                text-align: left;
+            }
+        }
+        </style>
+        """
+    )
+
+
+def _home_news_empty(label: str, title: str, note: str) -> str:
+    return f'''
+    <div class="home-news-card">
+        <div class="home-news-card-label">{escape(label)}</div>
+        <div class="home-news-card-title">{escape(title)}</div>
+        <div class="home-news-card-value">—</div>
+        <div class="home-news-card-note">{escape(note)}</div>
+    </div>
+    '''
+
+
+def _render_home_news_top_movers_html(rows: list[dict], *, lang_zh: bool) -> str:
+    if not rows:
+        return _home_news_empty(
+            "Top Movers",
+            "等待台股排行" if lang_zh else "Awaiting Taiwan movers",
+            "目前選取範圍不足或快照尚未建立。" if lang_zh else "The selected universe is too small or snapshots are not ready yet.",
+        )
+    list_html = []
+    for rank, row in enumerate(rows, start=1):
+        move = _safe_float(row.get("move"))
+        list_html.append(
+            f'''
+            <div class="home-news-row">
+                <div class="home-news-rank">{rank}</div>
+                <div>
+                    <div class="home-news-row-title">{escape(str(row.get("label") or display_ticker_label(row.get("ticker", ""))))}</div>
+                    <div class="home-news-row-sub">{escape(str(row.get("ticker", "")))} · {escape(str(row.get("source", "live")))}</div>
+                </div>
+                <div class="home-news-row-value">{escape(format_percent(move))}</div>
+            </div>
+            '''
+        )
+    return f'''
+    <div class="home-news-card">
+        <div class="home-news-card-label">{"Taiwan Top 3" if not lang_zh else "台股漲幅 Top 3"}</div>
+        <div class="home-news-card-title">{"Fastest movers in scope" if not lang_zh else "目前範圍內最強三檔"}</div>
+        <div class="home-news-list">{"".join(list_html)}</div>
+    </div>
+    '''
+
+
+def _render_home_news_supply_chain_html(row: dict, *, lang_zh: bool) -> str:
+    if not row:
+        return _home_news_empty(
+            "Supply Chain",
+            "等待供應鏈快照" if lang_zh else "Awaiting chain snapshot",
+            "展開或刷新供應鏈 Overall 後會顯示最強組別。" if lang_zh else "Build or refresh Supply Chain Overall to show the strongest group.",
+        )
+    move = row.get("move", pd.NA)
+    foreign_text = _format_supply_chain_foreign_flow(row.get("foreign_net_total"), lang_zh)
+    return f'''
+    <div class="home-news-card">
+        <div class="home-news-card-label">{"Strongest Chain" if not lang_zh else "最強供應鏈"}</div>
+        <div class="home-news-card-title">{escape(str(row.get("title", "—")))}</div>
+        <div class="home-news-card-value">{escape(format_percent(move))}</div>
+        <div class="home-news-card-note">
+            {escape(str(row.get("rising_count", 0)))} / {escape(str(row.get("ticker_count", 0)))} {"risers" if not lang_zh else "檔上漲"} ·
+            {"Leader" if not lang_zh else "最強成分股"} {escape(str(row.get("leader_name", "—")))} {escape(format_percent(row.get("leader_move")))}
+            <br>{"Foreign flow" if not lang_zh else "外資合計"} {escape(foreign_text)}
+        </div>
+    </div>
+    '''
+
+
+def _render_home_news_active_etf_html(rows: list[dict], *, lang_zh: bool) -> str:
+    if not rows:
+        return _home_news_empty(
+            "Active ETF",
+            "等待 ETF 焦點" if lang_zh else "Awaiting ETF focus",
+            "選取主動式 ETF 後會依漲幅、量能與趨勢分數排序。" if lang_zh else "Select active ETFs to rank them by move, volume, and trend score.",
+        )
+    list_html = []
+    for rank, row in enumerate(rows, start=1):
+        move = _safe_float(row.get("move"))
+        attention_score = _safe_float(row.get("attention_score"), default=0.0)
+        list_html.append(
+            f'''
+            <div class="home-news-row">
+                <div class="home-news-rank">{rank}</div>
+                <div>
+                    <div class="home-news-row-title">{escape(str(row.get("label", "—")))}</div>
+                    <div class="home-news-row-sub">{escape(str(row.get("ticker", "")))} · {escape(tr_term(row.get("trend", "N/A")))}</div>
+                </div>
+                <div class="home-news-row-value">{escape(format_percent(move))} · {attention_score:.1f}</div>
+            </div>
+            '''
+        )
+    return f'''
+    <div class="home-news-card">
+        <div class="home-news-card-label">{"Active ETF Top 3" if not lang_zh else "主動式 ETF 焦點 Top 3"}</div>
+        <div class="home-news-card-title">{"Attention score leaders" if not lang_zh else "最受矚目的三檔"}</div>
+        <div class="home-news-list">{"".join(list_html)}</div>
+    </div>
+    '''
+
+
+def _render_editor_analysis_html(items: list[dict], *, lang_zh: bool) -> str:
+    cards = []
+    for item in items:
+        tags = item.get("tags", []) or []
+        if not isinstance(tags, list):
+            tags = [str(tags)]
+        tag_html = "".join(f'<span class="home-editor-tag">{escape(str(tag))}</span>' for tag in tags[:5])
+        label_parts = [
+            str(item.get("stance", "觀點" if lang_zh else "View") or ""),
+            str(item.get("priority", "") or ""),
+        ]
+        label = " · ".join(part for part in label_parts if part)
+        cards.append(
+            f'''
+            <div class="home-editor-card">
+                <div class="home-editor-label">{escape(label or ("Editor" if not lang_zh else "版主"))}</div>
+                <div class="home-editor-title">{escape(str(item.get("title", "—")))}</div>
+                <div class="home-editor-summary">{escape(str(item.get("summary", "—")))}</div>
+                <div class="home-editor-tags">{tag_html}</div>
+            </div>
+            '''
+        )
+    if not cards:
+        cards.append(
+            _home_news_empty(
+                "Editor",
+                "等待版主分析" if lang_zh else "Awaiting editor analysis",
+                "可在 editor_analysis_items.json 新增內容。" if lang_zh else "Add items in editor_analysis_items.json.",
+            )
+        )
+    return "".join(cards)
+
+
+def render_home_news_briefing(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    dashboard_tickers: list[str],
+    lens_meta: dict | None,
+    *,
+    dashboard_mode: str,
+    selected_supply_chain_groups: list[str],
+) -> None:
+    lang_zh = _news_briefing_is_zh()
+    inject_home_news_briefing_css()
+
+    top_movers = build_home_news_top_taiwan_movers(
+        daily_data,
+        intraday_data,
+        dashboard_tickers,
+        selected_supply_chain_groups,
+    )
+    chain_leader = build_home_news_supply_chain_leader(selected_supply_chain_groups, lens_meta=lens_meta)
+    active_etfs = build_home_news_active_etf_spotlight(
+        daily_data,
+        intraday_data,
+        dashboard_tickers,
+        lens_meta,
+        dashboard_mode,
+    )
+    editor_items = load_editor_analysis_items(max_items=4)
+
+    auto_cards = "".join(
+        [
+            _render_home_news_top_movers_html(top_movers, lang_zh=lang_zh),
+            _render_home_news_supply_chain_html(chain_leader, lang_zh=lang_zh),
+            _render_home_news_active_etf_html(active_etfs, lang_zh=lang_zh),
+        ]
+    )
+    editor_cards = _render_editor_analysis_html(editor_items, lang_zh=lang_zh)
+    timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M")
+    render_html_block(
+        f'''
+        <div class="home-news-shell">
+            <div class="home-news-head">
+                <div>
+                    <div class="section-header">{"News Briefing" if not lang_zh else "今日情報專欄"}</div>
+                    <div class="home-news-title">{"Market first-read desk" if not lang_zh else "進場第一眼：市場摘要與版主觀點"}</div>
+                    <div class="home-news-copy">
+                        {escape("Auto brief ranks Taiwan movers, the strongest supply-chain group, and active ETF focus names; editor notes keep your extra analysis visible at the top." if not lang_zh else "自動摘要會整理台股漲幅、最強供應鏈與主動式 ETF 焦點；版主分析則放你的額外判讀，讓使用者一進來先讀重點。")}
+                    </div>
+                </div>
+                <span class="home-news-pill">{"Updated" if not lang_zh else "更新"} {escape(timestamp_text)}</span>
+            </div>
+            <div class="home-news-grid">
+                <div class="home-news-column">
+                    <div class="home-news-column-title">{"Auto Market Summary" if not lang_zh else "摘要：系統自動整理"}</div>
+                    <div class="home-news-column-copy">
+                        {escape("Generated from current dashboard data and saved snapshots." if not lang_zh else "使用目前 Dashboard 資料與已建立快照產生。")}
+                    </div>
+                    <div class="home-news-card-grid">{auto_cards}</div>
+                </div>
+                <div class="home-news-column">
+                    <div class="home-news-column-title">{"Editor Analysis" if not lang_zh else "版主特別分析"}</div>
+                    <div class="home-news-column-copy">
+                        {escape("Curated notes from the dashboard owner." if not lang_zh else "由版主提供的額外分析內容。")}
+                    </div>
+                    <div class="home-editor-list">{editor_cards}</div>
+                </div>
+            </div>
+        </div>
+        '''
+    )
 
 
 
@@ -27253,6 +27947,15 @@ def generate_dashboard():
     if daily_data is None or daily_data.empty:
         st.error(t("no_market_data"))
         return
+
+    render_home_news_briefing(
+        daily_data,
+        intraday_data,
+        dashboard_tickers,
+        lens_meta,
+        dashboard_mode=dashboard_mode,
+        selected_supply_chain_groups=selected_supply_chain_groups,
+    )
 
     if dashboard_mode == "Active ETF Lab":
         render_active_etf_lab_dashboard(
