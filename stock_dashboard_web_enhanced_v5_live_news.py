@@ -12880,6 +12880,35 @@ def wave_year_bar_count(ohlc: pd.DataFrame | None, interval_hint: str = "") -> i
     return 252
 
 
+def _wave_span_days(ohlc: pd.DataFrame | None) -> float:
+    if ohlc is None or ohlc.empty or "Date" not in ohlc.columns:
+        return 0.0
+    dates = pd.to_datetime(ohlc["Date"], errors="coerce").dropna()
+    if len(dates) < 2:
+        return 0.0
+    return float((dates.max() - dates.min()).days)
+
+
+def resolve_wave_ohlc_window(
+    base_ohlc: pd.DataFrame | None,
+    ticker: str,
+    period: str,
+    interval_hint: str,
+    bar_count: int,
+    min_span_days: int,
+) -> pd.DataFrame:
+    window = base_ohlc.tail(bar_count).copy() if base_ohlc is not None and not base_ohlc.empty else pd.DataFrame()
+    if _wave_span_days(window) >= float(min_span_days):
+        return window
+    if not str(ticker or "").strip():
+        return window
+    fetched = fetch_daily_data([ticker], str(period or DEFAULT_PERIOD or "1y"), str(interval_hint or DEFAULT_INTERVAL or "1d"))
+    fetched_ohlc = get_ohlc_frame(fetched, ticker, tail=bar_count)
+    if fetched_ohlc is not None and not fetched_ohlc.empty:
+        return fetched_ohlc
+    return window
+
+
 def _wave_lang_zh() -> bool:
     return get_language() == "zh_TW" or get_lang() == "繁體中文"
 
@@ -12889,6 +12918,13 @@ def _wave_window_label(interval_hint: str = "") -> str:
     if str(interval_hint or "").strip().lower() == "1wk":
         return "近 6 個月週線" if zh else "6-month weekly lens"
     return "近 6 個月日線" if zh else "6-month daily lens"
+
+
+def _wave_year_window_label(interval_hint: str = "") -> str:
+    zh = _wave_lang_zh()
+    if str(interval_hint or "").strip().lower() == "1wk":
+        return "近 1 年週線" if zh else "1-year weekly lens"
+    return "近 1 年日線" if zh else "1-year daily lens"
 
 
 def _extract_wave_turning_points(ohlc: pd.DataFrame) -> list[dict]:
@@ -14696,11 +14732,12 @@ def render_news_stream(ticker: str, news_items: list[dict]):
 def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None, selected_count: int = 1):
     lens_display = tr_lens_meta(lens_meta or {"title": "Position View", "how_to_read": "Use this view to confirm structure."})
     interval_hint = str((lens_meta or {}).get("interval", "") or "")
+    ticker = str(analysis.get("ticker") or "").strip().upper()
     wave_bar_count = wave_default_bar_count(daily_ohlc, interval_hint)
-    wave_ohlc = daily_ohlc.tail(wave_bar_count).copy() if daily_ohlc is not None and not daily_ohlc.empty else pd.DataFrame()
+    wave_ohlc = resolve_wave_ohlc_window(daily_ohlc, ticker, DEFAULT_WAVE_PERIOD, interval_hint, wave_bar_count, min_span_days=150)
     wave_snapshot = build_wave_snapshot(wave_ohlc, interval_hint)
     annual_bar_count = wave_year_bar_count(daily_ohlc, interval_hint)
-    annual_wave_ohlc = daily_ohlc.tail(annual_bar_count).copy() if daily_ohlc is not None and not daily_ohlc.empty else pd.DataFrame()
+    annual_wave_ohlc = resolve_wave_ohlc_window(daily_ohlc, ticker, "1y", interval_hint, annual_bar_count, min_span_days=300)
     annual_wave_snapshot = build_wave_snapshot(annual_wave_ohlc, interval_hint)
     zh = _wave_lang_zh()
     trend_base_label = (
@@ -14773,7 +14810,7 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
                 height=360,
                 show_ma=True,
                 wave_snapshot=annual_wave_snapshot,
-                window_label="近 1 年日線" if zh else "1-year daily lens",
+                window_label=_wave_year_window_label(interval_hint),
             )
 
         st.markdown(
