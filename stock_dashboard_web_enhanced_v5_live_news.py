@@ -21889,7 +21889,7 @@ def _ticker_move_from_data(
     }
 
 
-def _build_snapshot_taiwan_movers(config_keys: list[str], *, limit: int = 3) -> list[dict]:
+def _build_snapshot_taiwan_movers(config_keys: list[str], *, limit: int = 5) -> list[dict]:
     rows: list[dict] = []
     for config_key in config_keys or []:
         snapshot = peek_supply_chain_focus_snapshot(config_key)
@@ -21921,7 +21921,7 @@ def build_home_news_top_taiwan_movers(
     tickers: list[str],
     selected_supply_chain_groups: list[str],
     *,
-    limit: int = 3,
+    limit: int = 5,
 ) -> list[dict]:
     candidates: list[dict] = []
     seen: set[str] = set()
@@ -22195,7 +22195,7 @@ def inject_home_news_briefing_css() -> None:
         }
         .home-news-row {
             display: grid;
-            grid-template-columns: auto 1fr auto;
+            grid-template-columns: auto minmax(0, 1fr) auto;
             gap: 10px;
             align-items: center;
             padding: 10px 11px;
@@ -22216,23 +22216,30 @@ def inject_home_news_briefing_css() -> None:
         }
         .home-news-row-title {
             min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
             font-size: 13px;
+            line-height: 1.35;
             font-weight: 900;
             color: rgba(244,251,255,.94);
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            word-break: break-word;
         }
         .home-news-row-sub {
             margin-top: 3px;
             font-size: 11.5px;
+            line-height: 1.4;
             color: rgba(225,239,255,.62);
+            white-space: normal;
+            word-break: break-word;
         }
         .home-news-row-value {
             font-size: 13px;
             font-weight: 950;
             color: #34f5c5;
             white-space: nowrap;
+            align-self: center;
         }
         .home-editor-list {
             display: grid;
@@ -22320,8 +22327,8 @@ def _render_home_news_top_movers_html(rows: list[dict], *, lang_zh: bool) -> str
         )
     return f'''
     <div class="home-news-card">
-        <div class="home-news-card-label">{"Taiwan Top 3" if not lang_zh else "台股漲幅 Top 3"}</div>
-        <div class="home-news-card-title">{"Fastest movers in scope" if not lang_zh else "目前範圍內最強三檔"}</div>
+        <div class="home-news-card-label">{"Taiwan Top 5" if not lang_zh else "台股漲幅 Top 5"}</div>
+        <div class="home-news-card-title">{"Fastest movers in scope" if not lang_zh else "目前範圍內最強五檔"}</div>
         <div class="home-news-list">{"".join(list_html)}</div>
     </div>
     '''
