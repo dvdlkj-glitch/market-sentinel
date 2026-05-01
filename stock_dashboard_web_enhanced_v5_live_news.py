@@ -14782,9 +14782,9 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
         c3.metric("RSI 14", "N/A" if pd.isna(analysis["rsi14"]) else f"{analysis['rsi14']:.2f}")
         c4.metric(t("intraday_move"), format_percent(intraday["change_pct"]) if intraday.get("available") else "N/A")
 
-        render_trading_lab_panel(analysis)
+        _ = render_trading_lab_panel(analysis)
 
-        render_candlestick_chart(
+        _ = render_candlestick_chart(
             wave_ohlc,
             f"{t('candlestick_confirmation')} · {'波浪結構' if zh else 'Wave structure'}",
             (
@@ -14799,7 +14799,7 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
         )
 
         if annual_wave_ohlc is not None and not annual_wave_ohlc.empty:
-            render_candlestick_chart(
+            _ = render_candlestick_chart(
                 annual_wave_ohlc,
                 "年度 K 線結構 · 波浪延伸" if zh else "1-year structure · wave extension",
                 (
@@ -14817,7 +14817,6 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
             f'<div class="footer-note">{t("research_view_only")}</div>',
             unsafe_allow_html=True,
         )
-    render_html_block('</div>')
 
 def build_snapshot_row(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | None, ticker: str, lens_meta: dict | None = None):
     price_series, field_name = get_price_series(daily_data, ticker)
