@@ -22,11 +22,11 @@ on:
 jobs:
   prefetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [0, 1, 2, 3]
+        shard_index: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -36,7 +36,7 @@ jobs:
       PREFETCH_PERIOD: ${{ github.event.inputs.period }}
       PREFETCH_INTERVAL: ${{ github.event.inputs.interval }}
       PREFETCH_SHARD_INDEX: ${{ matrix.shard_index }}
-      PREFETCH_SHARD_COUNT: "4"
+      PREFETCH_SHARD_COUNT: "8"
       PYTHONIOENCODING: utf-8
     steps:
       - name: Checkout
