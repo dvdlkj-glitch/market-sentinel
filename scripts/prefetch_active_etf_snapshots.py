@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -31,6 +33,34 @@ def configure_cli_logging() -> None:
         logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 
+NOISY_LOG_PATTERNS = (
+    "No runtime found, using MemoryCacheStorageManager",
+    "missing ScriptRunContext",
+    "Session state does not function when running a script without `streamlit run`",
+    "HTTP Error 404:",
+    "possibly delisted; no price data found",
+)
+
+
+def run_quietly(func):
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+        result = func()
+    return result, stdout_buffer.getvalue(), stderr_buffer.getvalue()
+
+
+def emit_filtered_output(*chunks: str) -> None:
+    for chunk in chunks:
+        for raw_line in str(chunk or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if any(pattern in line for pattern in NOISY_LOG_PATTERNS):
+                continue
+            print(line, file=sys.stderr)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prefetch Active ETF dashboard snapshots into Supabase/local cache."
@@ -57,16 +87,20 @@ def main() -> int:
     if not dashboard_file.exists():
         raise FileNotFoundError(f"Dashboard file not found: {dashboard_file}")
 
-    module = load_dashboard_module(dashboard_file)
+    module, import_stdout, import_stderr = run_quietly(lambda: load_dashboard_module(dashboard_file))
+    emit_filtered_output(import_stdout, import_stderr)
     tickers = None
     if str(args.tickers or "").strip():
         tickers = module.parse_active_etf_snapshot_tickers(args.tickers)
 
-    result = module.prefetch_active_etf_snapshots_job(
-        tickers=tickers,
-        period=str(args.period or "").strip() or None,
-        interval=str(args.interval or "").strip() or None,
+    result, job_stdout, job_stderr = run_quietly(
+        lambda: module.prefetch_active_etf_snapshots_job(
+            tickers=tickers,
+            period=str(args.period or "").strip() or None,
+            interval=str(args.interval or "").strip() or None,
+        )
     )
+    emit_filtered_output(job_stdout, job_stderr)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if str(result.get("status", "") or "") in {"ok", "skipped"} else 1
 

@@ -10,6 +10,7 @@ Highlights:
 from __future__ import annotations
 
 import os
+import contextlib
 import io
 import json
 import ssl
@@ -4984,7 +4985,7 @@ ACTIVE_ETF_METADATA = {
         "group_key": "taiwan-core",
         "aliases": ["群益台灣強棒", "台灣強棒"],
     },
-    "00983A.TWO": {
+    "00983A.TW": {
         "code": "00983A",
         "zh": "主動中信ARK創新",
         "en": "CTBC ARK Innovation Active ETF",
@@ -7287,8 +7288,10 @@ def scope_allows_ticker(scope: str, ticker: str) -> bool:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def yahoo_symbol_has_history(symbol: str) -> bool:
+    sink = io.StringIO()
     try:
-        history = yf.Ticker(symbol).history(period="1mo", interval="1d", auto_adjust=False)
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            history = yf.Ticker(symbol).history(period="1mo", interval="1d", auto_adjust=False)
         return history is not None and not history.empty
     except Exception:
         return False
@@ -7472,6 +7475,10 @@ def normalize_taiwan_active_etf_symbol(raw_symbol: str) -> str:
     base = symbol.split(".", 1)[0]
     if symbol.endswith(".TW") or symbol.endswith(".TWO"):
         return symbol
+    for suffix in (".TW", ".TWO"):
+        candidate = f"{base}{suffix}"
+        if candidate in ACTIVE_ETF_METADATA:
+            return candidate
     for suffix in (".TW", ".TWO"):
         candidate = f"{base}{suffix}"
         if yahoo_symbol_has_history(candidate):
@@ -12456,30 +12463,34 @@ def render_expander_meta(section: str, item_count: int | None, helper_base: str)
 # ---------------------------
 @st.cache_data(ttl=300)
 def fetch_daily_data(tickers: list[str], period: str, interval: str):
-    return yf.download(
-        tickers=tickers,
-        period=period,
-        interval=interval,
-        progress=False,
-        auto_adjust=False,
-        group_by="column",
-        threads=True,
-        prepost=False,
-    )
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        return yf.download(
+            tickers=tickers,
+            period=period,
+            interval=interval,
+            progress=False,
+            auto_adjust=False,
+            group_by="column",
+            threads=True,
+            prepost=False,
+        )
 
 
 @st.cache_data(ttl=120)
 def fetch_intraday_data(tickers: list[str]):
-    return yf.download(
-        tickers=tickers,
-        period=INTRADAY_PERIOD,
-        interval=INTRADAY_INTERVAL,
-        progress=False,
-        auto_adjust=False,
-        group_by="column",
-        threads=True,
-        prepost=True,
-    )
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        return yf.download(
+            tickers=tickers,
+            period=INTRADAY_PERIOD,
+            interval=INTRADAY_INTERVAL,
+            progress=False,
+            auto_adjust=False,
+            group_by="column",
+            threads=True,
+            prepost=True,
+        )
 
 
 @st.cache_data(ttl=600)
