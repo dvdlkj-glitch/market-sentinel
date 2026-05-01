@@ -4035,6 +4035,17 @@ def peek_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = Non
     return snapshot
 
 
+def _peek_active_etf_workspace_snapshot_exact(ticker: str, lens_meta: dict | None = None) -> dict | None:
+    remote_snapshot = _load_supabase_active_etf_snapshot(ticker, lens_meta=lens_meta)
+    if _active_etf_lab_snapshot_ready(remote_snapshot):
+        return remote_snapshot
+    store = _active_etf_lab_snapshot_store()
+    snapshot = (store.get("items", {}) or {}).get(_active_etf_workspace_snapshot_key(ticker, lens_meta))
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        return None
+    return snapshot
+
+
 def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
     left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
     right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
@@ -4263,12 +4274,49 @@ def parse_active_etf_snapshot_tickers(raw_value: str | None = None) -> list[str]
     return [ticker for ticker in dedupe_keep_order(ACTIVE_ETF_QUICK_PICK_SYMBOLS) if is_taiwan_active_etf(ticker)]
 
 
+def _normalize_prefetch_shard_value(value: object, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        parsed = default
+    return parsed
+
+
+def _slice_prefetch_shard(items: list[str], shard_index: int | None = None, shard_count: int | None = None) -> list[str]:
+    values = list(items or [])
+    resolved_shard_count = _normalize_prefetch_shard_value(
+        shard_count if shard_count is not None else os.environ.get("PREFETCH_SHARD_COUNT", ""),
+        1,
+    )
+    if resolved_shard_count <= 1:
+        return values
+
+    resolved_shard_index = _normalize_prefetch_shard_value(
+        shard_index if shard_index is not None else os.environ.get("PREFETCH_SHARD_INDEX", ""),
+        0,
+    )
+    if resolved_shard_index < 0 or resolved_shard_index >= resolved_shard_count:
+        return values
+    return [item for idx, item in enumerate(values) if idx % resolved_shard_count == resolved_shard_index]
+
+
+def _active_etf_snapshot_is_fresh_for_today(snapshot: dict | None) -> bool:
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        return False
+    fetched_ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
+    if fetched_ts is None:
+        return False
+    return fetched_ts.date() == datetime.now(TW_TZ).date()
+
+
 def prefetch_active_etf_snapshots_job(
     tickers: list[str] | None = None,
     *,
     lens_meta: dict | None = None,
     period: str | None = None,
     interval: str | None = None,
+    shard_index: int | None = None,
+    shard_count: int | None = None,
 ) -> dict:
     requested_tickers = [
         ticker for ticker in dedupe_keep_order(tickers or parse_active_etf_snapshot_tickers())
@@ -4304,12 +4352,66 @@ def prefetch_active_etf_snapshots_job(
             "title": DEFAULT_TREND_LENS,
         }
 
-    _clear_active_etf_lab_refresh_caches()
-    daily_data = fetch_daily_data(selected_tickers, str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD), str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL))
-    intraday_data = fetch_intraday_data(selected_tickers)
+    sharded_tickers = _slice_prefetch_shard(selected_tickers, shard_index=shard_index, shard_count=shard_count)
+    resolved_shard_count = _normalize_prefetch_shard_value(
+        shard_count if shard_count is not None else os.environ.get("PREFETCH_SHARD_COUNT", ""),
+        1,
+    )
+    resolved_shard_index = _normalize_prefetch_shard_value(
+        shard_index if shard_index is not None else os.environ.get("PREFETCH_SHARD_INDEX", ""),
+        0,
+    )
+    if not sharded_tickers:
+        return {
+            "status": "skipped",
+            "reason": "No active ETF tickers assigned to this shard.",
+            "tickers": [],
+            "requested_tickers": requested_tickers,
+            "selected_tickers": selected_tickers,
+            "skipped_tickers": skipped_tickers,
+            "shard_index": resolved_shard_index,
+            "shard_count": resolved_shard_count,
+        }
 
-    built_rows: list[dict] = []
-    for ticker in selected_tickers:
+    fresh_skipped_rows: list[dict] = []
+    build_tickers: list[str] = []
+    for ticker in sharded_tickers:
+        existing_snapshot = _peek_active_etf_workspace_snapshot_exact(ticker, lens_meta=lens_meta)
+        if _active_etf_snapshot_is_fresh_for_today(existing_snapshot):
+            fresh_skipped_rows.append(
+                {
+                    "ticker": ticker,
+                    "status": "fresh_skip",
+                    "fetched_at": str((existing_snapshot or {}).get("fetched_at", "") or ""),
+                }
+            )
+            continue
+        build_tickers.append(ticker)
+
+    if not build_tickers:
+        return {
+            "status": "ok",
+            "tickers": sharded_tickers,
+            "requested_tickers": requested_tickers,
+            "selected_tickers": selected_tickers,
+            "skipped_tickers": skipped_tickers,
+            "rows": fresh_skipped_rows,
+            "fresh_skipped_tickers": [row["ticker"] for row in fresh_skipped_rows],
+            "built_tickers": [],
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "lens_title": str(lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
+            "period": str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
+            "interval": str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+            "shard_index": resolved_shard_index,
+            "shard_count": resolved_shard_count,
+        }
+
+    _clear_active_etf_lab_refresh_caches()
+    daily_data = fetch_daily_data(build_tickers, str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD), str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL))
+    intraday_data = fetch_intraday_data(build_tickers)
+
+    built_rows: list[dict] = list(fresh_skipped_rows)
+    for ticker in build_tickers:
         snapshot = _build_active_etf_workspace_snapshot(daily_data, intraday_data, ticker, lens_meta=lens_meta, force_market_refresh=False)
         _persist_active_etf_workspace_snapshot(snapshot)
         built_rows.append(
@@ -4322,14 +4424,19 @@ def prefetch_active_etf_snapshots_job(
 
     return {
         "status": "ok",
-        "tickers": selected_tickers,
+        "tickers": sharded_tickers,
         "requested_tickers": requested_tickers,
+        "selected_tickers": selected_tickers,
         "skipped_tickers": skipped_tickers,
         "rows": built_rows,
+        "fresh_skipped_tickers": [row["ticker"] for row in fresh_skipped_rows],
+        "built_tickers": build_tickers,
         "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
         "lens_title": str(lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
         "period": str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
         "interval": str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+        "shard_index": resolved_shard_index,
+        "shard_count": resolved_shard_count,
     }
 
 

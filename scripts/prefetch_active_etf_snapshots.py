@@ -61,6 +61,16 @@ def emit_filtered_output(*chunks: str) -> None:
             print(line, file=sys.stderr)
 
 
+def parse_optional_int(value: object) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except Exception:
+        return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prefetch Active ETF dashboard snapshots into Supabase/local cache."
@@ -77,6 +87,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--period", default="", help="Optional market period override, for example 1y.")
     parser.add_argument("--interval", default="", help="Optional market interval override, for example 1d.")
+    parser.add_argument(
+        "--shard-index",
+        default="",
+        help="Optional zero-based shard index for splitting the ETF list across multiple workflow jobs.",
+    )
+    parser.add_argument(
+        "--shard-count",
+        default="",
+        help="Optional shard count for splitting the ETF list across multiple workflow jobs.",
+    )
     return parser.parse_args()
 
 
@@ -98,6 +118,8 @@ def main() -> int:
             tickers=tickers,
             period=str(args.period or "").strip() or None,
             interval=str(args.interval or "").strip() or None,
+            shard_index=parse_optional_int(args.shard_index),
+            shard_count=parse_optional_int(args.shard_count),
         )
     )
     emit_filtered_output(job_stdout, job_stderr)
