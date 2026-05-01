@@ -26215,142 +26215,97 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
     if is_light:
         theme_vars = """
         :root {
-            --page: #eff7ff;
-            --page-2: #f8fbff;
-            --paper: rgba(255, 255, 255, 0.84);
-            --card: rgba(255, 255, 255, 0.90);
-            --card-soft: rgba(56, 189, 248, 0.08);
-            --ink: #091423;
-            --ink-soft: #35506f;
-            --ink-muted: #59779c;
-            --line: rgba(56, 189, 248, 0.22);
-            --line-strong: rgba(56, 189, 248, 0.42);
-            --navy: #eff7ff;
-            --navy-2: #f8fbff;
-            --brand: #0ea5e9;
-            --brand-2: #6366f1;
-            --accent: #6366f1;
-            --green: #10b981;
+            --page: #e9f4ff;
+            --page-2: #f6fbff;
+            --paper: rgba(255, 255, 255, 0.86);
+            --card: rgba(255, 255, 255, 0.92);
+            --card-soft: rgba(56, 189, 248, 0.10);
+            --ink: #0a1630;
+            --ink-soft: #2b4568;
+            --ink-muted: #5d789d;
+            --line: rgba(56, 189, 248, 0.18);
+            --line-strong: rgba(99, 102, 241, 0.34);
+            --navy: #e9f4ff;
+            --navy-2: #f6fbff;
+            --brand: #14b8ff;
+            --brand-2: #7c3aed;
+            --accent: #5b7cfa;
+            --green: #0fbf97;
             --red: #fb7185;
-            --amber: #06b6d4;
-            --shadow-lg: 0 30px 90px rgba(56, 189, 248, 0.12);
-            --shadow-md: 0 18px 44px rgba(56, 189, 248, 0.10);
+            --amber: #22d3ee;
+            --shadow-lg: 0 32px 90px rgba(56, 189, 248, 0.14);
+            --shadow-md: 0 18px 44px rgba(56, 189, 248, 0.12);
         }
 
         .stApp {
             background:
-                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0) 24%),
-                radial-gradient(circle at 88% 10%, rgba(129, 140, 248, 0.12) 0%, rgba(129, 140, 248, 0) 24%),
-                linear-gradient(180deg, #eff7ff 0%, #f8fbff 100%) !important;
+                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 24%),
+                radial-gradient(circle at 88% 10%, rgba(129, 140, 248, 0.14) 0%, rgba(129, 140, 248, 0) 24%),
+                linear-gradient(180deg, #e9f4ff 0%, #f6fbff 100%) !important;
             color: var(--ink) !important;
         }
 
         section[data-testid="stSidebar"] {
             background:
-                radial-gradient(circle at top left, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0) 30%),
-                radial-gradient(circle at top right, rgba(129, 140, 248, 0.14) 0%, rgba(129, 140, 248, 0) 26%),
-                linear-gradient(180deg, rgba(237, 247, 255, 0.97) 0%, rgba(248, 251, 255, 0.99) 100%) !important;
-            border-right: 1px solid rgba(56, 189, 248, 0.16);
-            box-shadow: inset -1px 0 0 rgba(129, 140, 248, 0.06);
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 30%),
+                radial-gradient(circle at top right, rgba(129, 140, 248, 0.16) 0%, rgba(129, 140, 248, 0) 26%),
+                linear-gradient(180deg, rgba(237, 247, 255, 0.98) 0%, rgba(248, 251, 255, 0.99) 100%) !important;
+            border-right: 1px solid rgba(56, 189, 248, 0.18);
+            box-shadow: inset -1px 0 0 rgba(129, 140, 248, 0.08);
+        }
+        """
+    else:
+        theme_vars = """
+        :root {
+            --page: #020816;
+            --page-2: #050d1f;
+            --paper: rgba(7, 15, 36, 0.82);
+            --card: rgba(8, 20, 44, 0.86);
+            --card-soft: rgba(56, 189, 248, 0.06);
+            --ink: #eef7ff;
+            --ink-soft: #c9d7ec;
+            --ink-muted: #87a1c3;
+            --line: rgba(96, 231, 255, 0.16);
+            --line-strong: rgba(129, 140, 248, 0.42);
+            --navy: #020816;
+            --navy-2: #050d1f;
+            --brand: #38bdf8;
+            --brand-2: #8b5cf6;
+            --accent: #22d3ee;
+            --green: #36f0c2;
+            --red: #ff8ea1;
+            --amber: #72f6ff;
+            --shadow-lg: 0 34px 98px rgba(1, 7, 18, 0.56);
+            --shadow-md: 0 20px 48px rgba(1, 9, 22, 0.38);
         }
 
-        .sidebar-auth-shell,
-        .editorial-hero, .guide-shell, .lens-shell, .compare-shell, .reference-shell,
-        .winner-shell, .catalyst-shell, .alert-shell, .lab-shell, .explorer-nav-shell,
-        .trend-shell, .compare-table-shell, .compare-chart-shell, .chart-shell,
-        .story-stream-shell, .news-board-shell, .lead-story, .crypto-card,
-        .news-brief-card, .compare-card, .mini-candle-card,
-        .etf-tracker-shell, .etf-tracker-panel-shell,
-        .global-indicator-shell, .target-watch-headline, .target-watch-card,
-        div[data-testid="stMetric"] {
+        .stApp {
             background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 250, 255, 0.92) 100%) !important;
-            border: 1px solid rgba(56, 189, 248, 0.18) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.60),
-                0 0 0 1px rgba(56, 189, 248, 0.06),
-                0 16px 36px rgba(56, 189, 248, 0.10),
-                0 0 20px rgba(56, 189, 248, 0.06) !important;
+                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.20) 0%, rgba(56, 189, 248, 0) 24%),
+                radial-gradient(circle at 88% 10%, rgba(139, 92, 246, 0.22) 0%, rgba(139, 92, 246, 0) 24%),
+                radial-gradient(circle at 50% 100%, rgba(34, 211, 238, 0.11) 0%, rgba(34, 211, 238, 0) 28%),
+                linear-gradient(180deg, #020816 0%, #051120 48%, #050d1f 100%) !important;
+            color: var(--ink) !important;
         }
+        """
 
-        .guide-card, .reference-card, .compare-hero-tile, .winner-mini,
-        .catalyst-box, .alert-box, .lab-box, .lens-card, .explorer-nav-panel,
-        .compare-table-row, .highlight-shell, .highlight-row, .story-row, .prob-box {
-            background:
-                linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(246,250,255,0.96) 100%) !important;
-            border: 1px solid rgba(56, 189, 248, 0.14) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.60),
-                0 16px 34px rgba(56, 189, 248, 0.08),
-                0 0 18px rgba(56, 189, 248, 0.05) !important;
-        }
+    st.markdown(
+        f"""
+        <style>
+        {theme_vars}
 
-        section[data-testid="stSidebar"] * {
-            color: #091423 !important;
-        }
-
-        section[data-testid="stSidebar"] .stCaption,
-        section[data-testid="stSidebar"] p,
-        section[data-testid="stSidebar"] label,
-        .top-intro,
-        .hero-copy,
-        .guide-copy,
-        .reference-copy,
-        .lens-copy,
-        .compare-copy,
-        .winner-copy,
-        .catalyst-copy,
-        .alert-copy,
-        .lab-copy,
-        .trend-sub,
-        .chart-copy,
-        .explorer-nav-copy,
-        .news-board-copy,
-        .global-indicator-copy,
-        .target-watch-copy,
-        .scenario-intro-copy,
-        .planner-decision-copy,
-        .footer-note,
-        .disclaimer {
-            color: #35506f !important;
-        }
-
-        .hero-chip, .chip, .compare-table-chip, .explorer-nav-chip, .small-pill, .impact-tag, .pro-tag, .lens-alert-chip {
-            background: linear-gradient(180deg, rgba(56,189,248,0.10) 0%, rgba(255,255,255,0.92) 100%) !important;
-            border: 1px solid rgba(56, 189, 248, 0.18) !important;
-            color: #0f172a !important;
-        }
-
-        .stTabs [data-baseweb="tab-list"] {
-            background: rgba(255,255,255,0.72) !important;
-            border-bottom: 1px solid rgba(56,189,248,0.16) !important;
-        }
-
-        .stTabs [data-baseweb="tab"] {
-            color: #35506f !important;
-        }
-
-        .stTabs [data-baseweb="tab"][aria-selected="true"] {
-            color: #0f172a !important;
-        }
-
-        .side-hero,
-        .editorial-hero.hero-neon-bar,
-        .active-etf-hero.hero-neon-bar {
-            color: #000000 !important;
-        }
+        .block-container {{
+            max-width: 1520px;
+        }}
 
         .stApp,
         .stApp p,
         .stApp span,
         .stApp label,
         .stApp li,
-        .stApp div,
         .stMarkdown,
         .stMarkdown p,
         .stCaption,
-        .top-kicker,
-        .top-intro,
         .hero-title,
         .hero-copy,
         .guide-title,
@@ -26384,14 +26339,21 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
         .planner-decision-copy,
         .footer-note,
         .disclaimer,
-        .hero-chip,
-        .chip,
-        .compare-table-chip,
-        .explorer-nav-chip,
-        .small-pill,
-        .impact-tag,
-        .pro-tag,
-        .lens-alert-chip,
+        .compare-card-title,
+        .compare-card-price,
+        .compare-table-ticker,
+        .compare-table-value,
+        .crypto-main-number,
+        .crypto-mini-value,
+        .global-indicator-main-number,
+        .target-watch-value,
+        div[data-testid="stMetric"] [data-testid="stMetricLabel"],
+        div[data-testid="stMetric"] [data-testid="stMetricValue"],
+        div[data-testid="stMetric"] [data-testid="stMetricDelta"] {{
+            color: var(--ink) !important;
+        }}
+
+        .top-kicker,
         .hero-kicker,
         .guide-label,
         .section-header,
@@ -26417,134 +26379,162 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
         .global-indicator-mini-label,
         .guide-head,
         .reference-head,
-        .lens-head,
-        .winner-main-title,
-        .compare-card-title,
-        .compare-card-price,
-        .compare-table-ticker,
-        .compare-table-value,
-        .winner-mini-value,
-        .catalyst-value,
-        .alert-value,
-        .lab-value,
-        .explorer-nav-panel-value,
-        .compare-hero-value,
-        .lead-panel-value,
-        .mini-candle-name,
-        .crypto-main-number,
-        .crypto-mini-value,
-        .global-indicator-main-number,
-        .target-watch-value,
-        div[data-testid="stMetric"] label,
-        div[data-testid="stMetric"] [data-testid="stMetricLabel"],
-        div[data-testid="stMetric"] [data-testid="stMetricValue"],
-        div[data-testid="stMetric"] [data-testid="stMetricDelta"],
-        .stTabs [data-baseweb="tab"],
-        .stTabs [data-baseweb="tab"] *,
-        .stButton button,
-        .stDownloadButton button,
-        .stToggle label,
-        .stCheckbox label,
-        .stRadio label,
-        .stSelectbox label,
-        .stMultiSelect label,
-        .stTextInput label,
-        .stNumberInput label,
-        .stTextArea label,
-        .stDateInput label,
-        [data-baseweb="select"] *,
-        [data-baseweb="input"] *,
-        .stDataFrame *,
-        table *,
-        th,
-        td {
-            color: #000000 !important;
-        }
-
-        .stApp a,
-        .stApp a:visited,
-        .stApp a:hover,
-        .stApp a:active {
-            color: #000000 !important;
-        }
-
-        .guide-card .guide-label::before,
-        .guide-card::after {
-            color: #000000 !important;
-        }
-        """
-    else:
-        theme_vars = """
-        :root {
-            --page: #030a14;
-            --page-2: #050c1a;
-            --paper: rgba(7, 15, 30, 0.76);
-            --card: rgba(8, 19, 37, 0.78);
-            --card-soft: rgba(56, 189, 248, 0.05);
-            --ink: #edf6ff;
-            --ink-soft: #bfd2e8;
-            --ink-muted: #7e97b8;
-            --line: rgba(102, 214, 255, 0.16);
-            --line-strong: rgba(56, 189, 248, 0.42);
-            --navy: #030a14;
-            --navy-2: #050c1a;
-            --brand: #38bdf8;
-            --brand-2: #818cf8;
-            --accent: #818cf8;
-            --green: #34d399;
-            --red: #f87171;
-            --amber: #67e8f9;
-            --shadow-lg: 0 30px 90px rgba(1, 7, 18, 0.52);
-            --shadow-md: 0 18px 44px rgba(1, 9, 22, 0.34);
-        }
-
-        .stApp {
-            background:
-                radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0) 24%),
-                radial-gradient(circle at 88% 10%, rgba(129, 140, 248, 0.20) 0%, rgba(129, 140, 248, 0) 24%),
-                radial-gradient(circle at 50% 100%, rgba(56, 189, 248, 0.10) 0%, rgba(56, 189, 248, 0) 28%),
-                linear-gradient(180deg, #030a14 0%, #04101d 48%, #050c1a 100%) !important;
-            color: var(--ink) !important;
-        }
-        """
-
-    st.markdown(
-        f"""
-        <style>
-        {theme_vars}
-
-        .side-hero,
-        .editorial-hero.hero-neon-bar,
-        .active-etf-hero.hero-neon-bar {{
-            position: relative;
-            overflow: hidden;
-            border-radius: 28px;
-            border: 1px solid rgba(56, 189, 248, 0.22) !important;
-            background:
-                linear-gradient(135deg, rgba(4, 16, 29, 0.94) 0%, rgba(5, 12, 26, 0.88) 38%, rgba(12, 25, 48, 0.92) 100%) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.05),
-                0 20px 48px rgba(1, 9, 22, 0.34),
-                0 0 0 1px rgba(56, 189, 248, 0.08),
-                0 0 32px rgba(56, 189, 248, 0.12) !important;
+        .lens-head {{
+            color: color-mix(in srgb, var(--brand, #38bdf8) 78%, #dff8ff) !important;
+            letter-spacing: 0.16em !important;
         }}
 
-        .side-hero::before,
-        .editorial-hero.hero-neon-bar::before,
-        .active-etf-hero.hero-neon-bar::before {{
+        .section-header,
+        .hero-kicker,
+        .guide-label,
+        .reference-label,
+        .lens-label,
+        .compare-hero-label,
+        .lead-kicker {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }}
+
+        .section-header::before,
+        .hero-kicker::before,
+        .guide-label::before,
+        .reference-label::before,
+        .lens-label::before,
+        .compare-hero-label::before,
+        .lead-kicker::before {{
+            content: "";
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+            background: linear-gradient(135deg, var(--brand, #38bdf8), var(--brand-2, #8b5cf6));
+            box-shadow: 0 0 16px color-mix(in srgb, var(--brand, #38bdf8) 48%, transparent);
+        }}
+
+        .hero-title,
+        .guide-title,
+        .reference-title,
+        .lens-title,
+        .compare-title,
+        .winner-title,
+        .catalyst-title,
+        .alert-title,
+        .lab-title,
+        .trend-title,
+        .chart-title,
+        .explorer-nav-title,
+        .lead-title,
+        .highlight-title,
+        .brief-headline,
+        .winner-main-title,
+        .global-indicator-title,
+        .target-watch-title {{
+            text-shadow: 0 0 22px rgba(56, 189, 248, 0.14);
+        }}
+
+        .top-intro,
+        .hero-copy,
+        .guide-copy,
+        .reference-copy,
+        .lens-copy,
+        .compare-copy,
+        .winner-copy,
+        .catalyst-copy,
+        .alert-copy,
+        .lab-copy,
+        .trend-sub,
+        .chart-copy,
+        .explorer-nav-copy,
+        .news-board-copy,
+        .global-indicator-copy,
+        .target-watch-copy,
+        .scenario-intro-copy,
+        .planner-decision-copy,
+        .footer-note,
+        .disclaimer,
+        .soft-note {{
+            color: var(--ink-soft) !important;
+        }}
+
+        section[data-testid="stSidebar"] {{
+            position: relative;
+            border-right: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 22%, transparent) !important;
+            box-shadow: inset -1px 0 0 rgba(255,255,255,0.04);
+        }}
+
+        section[data-testid="stSidebar"]::before {{
             content: "";
             position: absolute;
             inset: 0;
-            background:
-                radial-gradient(circle at 10% 18%, rgba(56, 189, 248, 0.22) 0%, rgba(56, 189, 248, 0) 28%),
-                radial-gradient(circle at 86% 12%, rgba(129, 140, 248, 0.22) 0%, rgba(129, 140, 248, 0) 28%),
-                linear-gradient(90deg, rgba(56, 189, 248, 0.10) 0%, rgba(129, 140, 248, 0.08) 100%);
             pointer-events: none;
+            background:
+                radial-gradient(circle at 14% 12%, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0) 24%),
+                linear-gradient(rgba(96, 231, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(96, 231, 255, 0.05) 1px, transparent 1px);
+            background-size: auto, 22px 22px, 22px 22px;
+            opacity: 0.42;
         }}
 
+        .sidebar-auth-shell,
+        .editorial-hero, .guide-shell, .lens-shell, .compare-shell, .reference-shell,
+        .winner-shell, .catalyst-shell, .alert-shell, .lab-shell, .explorer-nav-shell,
+        .trend-shell, .compare-table-shell, .compare-chart-shell, .chart-shell,
+        .story-stream-shell, .news-board-shell, .lead-story, .crypto-card,
+        .news-brief-card, .compare-card, .mini-candle-card,
+        .etf-tracker-shell, .etf-tracker-panel-shell,
+        .global-indicator-shell, .target-watch-headline, .target-watch-card,
+        .planner-shell, .planner-decision-shell, .tf-pressure-shell,
+        .side-hero,
+        div[data-testid="stMetric"] {{
+            position: relative;
+            overflow: hidden;
+            border-radius: 24px;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 24%, transparent) !important;
+            background:
+                linear-gradient(145deg, color-mix(in srgb, var(--navy, #020816) 92%, white 8%) 0%, color-mix(in srgb, var(--navy-2, #050d1f) 94%, black 6%) 52%, color-mix(in srgb, var(--card, rgba(8,20,44,0.86)) 98%, transparent) 100%) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 18px 48px rgba(1, 9, 22, 0.26),
+                0 0 0 1px rgba(56, 189, 248, 0.05),
+                0 0 32px rgba(56, 189, 248, 0.08) !important;
+            backdrop-filter: blur(16px);
+        }}
+
+        .sidebar-auth-shell::before,
+        .editorial-hero::before, .guide-shell::before, .lens-shell::before, .compare-shell::before, .reference-shell::before,
+        .winner-shell::before, .catalyst-shell::before, .alert-shell::before, .lab-shell::before, .explorer-nav-shell::before,
+        .trend-shell::before, .compare-table-shell::before, .compare-chart-shell::before, .chart-shell::before,
+        .story-stream-shell::before, .news-board-shell::before, .lead-story::before, .crypto-card::before,
+        .news-brief-card::before, .compare-card::before, .mini-candle-card::before,
+        .etf-tracker-shell::before, .etf-tracker-panel-shell::before,
+        .global-indicator-shell::before, .target-watch-headline::before, .target-watch-card::before,
+        .planner-shell::before, .planner-decision-shell::before, .tf-pressure-shell::before,
+        .side-hero::before,
+        div[data-testid="stMetric"]::before {{
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 10% 16%, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0) 28%),
+                radial-gradient(circle at 88% 12%, rgba(139, 92, 246, 0.18) 0%, rgba(139, 92, 246, 0) 24%),
+                linear-gradient(rgba(96, 231, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(96, 231, 255, 0.05) 1px, transparent 1px);
+            background-size: auto, auto, 24px 24px, 24px 24px;
+            opacity: 0.55;
+        }}
+
+        .sidebar-auth-shell::after,
+        .editorial-hero::after, .guide-shell::after, .lens-shell::after, .compare-shell::after, .reference-shell::after,
+        .winner-shell::after, .catalyst-shell::after, .alert-shell::after, .lab-shell::after, .explorer-nav-shell::after,
+        .trend-shell::after, .compare-table-shell::after, .compare-chart-shell::after, .chart-shell::after,
+        .story-stream-shell::after, .news-board-shell::after, .lead-story::after, .crypto-card::after,
+        .news-brief-card::after, .compare-card::after, .mini-candle-card::after,
+        .etf-tracker-shell::after, .etf-tracker-panel-shell::after,
+        .global-indicator-shell::after, .target-watch-headline::after, .target-watch-card::after,
+        .planner-shell::after, .planner-decision-shell::after, .tf-pressure-shell::after,
         .side-hero::after,
-        .editorial-hero.hero-neon-bar::after,
-        .active-etf-hero.hero-neon-bar::after {{
+        div[data-testid="stMetric"]::after {{
             content: "";
             position: absolute;
             left: 18px;
@@ -26552,40 +26542,237 @@ def inject_horizon_theme_mode_overrides(theme_mode: str = "Dark Horizon") -> Non
             top: 0;
             height: 2px;
             border-radius: 999px;
-            background: linear-gradient(90deg, rgba(56,189,248,0.0) 0%, rgba(56,189,248,0.90) 18%, rgba(129,140,248,0.90) 72%, rgba(129,140,248,0.0) 100%);
-            box-shadow: 0 0 24px rgba(56, 189, 248, 0.50);
+            background: linear-gradient(90deg, rgba(56,189,248,0.0) 0%, rgba(56,189,248,0.92) 20%, rgba(139,92,246,0.90) 74%, rgba(139,92,246,0.0) 100%);
+            box-shadow: 0 0 24px rgba(56, 189, 248, 0.34);
+            pointer-events: none;
         }}
 
-        .editorial-hero.hero-neon-bar .hero-title,
-        .active-etf-hero.hero-neon-bar .guide-title,
-        .side-hero .side-title {{
-            text-shadow: 0 0 22px rgba(56, 189, 248, 0.16);
+        .guide-card, .reference-card, .compare-hero-tile, .winner-mini,
+        .catalyst-box, .alert-box, .lab-box, .lens-card, .explorer-nav-panel,
+        .compare-table-row, .highlight-shell, .highlight-row, .story-row, .prob-box,
+        .global-indicator-card, .target-watch-mini-card {{
+            position: relative;
+            overflow: hidden;
+            border-radius: 20px;
+            padding: 18px 18px 16px 18px;
+            background:
+                linear-gradient(145deg, color-mix(in srgb, var(--card, rgba(8,20,44,0.86)) 96%, white 4%) 0%, color-mix(in srgb, var(--navy, #020816) 94%, black 6%) 100%) !important;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 18%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 16px 38px rgba(1, 9, 22, 0.22),
+                0 0 20px rgba(56, 189, 248, 0.05) !important;
+            backdrop-filter: blur(14px);
+            min-height: 100%;
         }}
 
-        .editorial-hero.hero-neon-bar .hero-chip,
-        .active-etf-hero.hero-neon-bar .chip,
-        .side-hero .side-lens-chip,
-        .side-hero .chip {{
-            background: linear-gradient(180deg, rgba(56, 189, 248, 0.16) 0%, rgba(8, 19, 37, 0.40) 100%) !important;
-            border: 1px solid rgba(56, 189, 248, 0.24) !important;
-            color: #e6f8ff !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px rgba(56, 189, 248, 0.10);
+        .hero-chip, .chip, .compare-table-chip, .explorer-nav-chip, .small-pill, .impact-tag, .pro-tag, .lens-alert-chip,
+        .side-lens-chip, .tracker-status-chip, .planner-decision-action-pill {{
+            background: linear-gradient(180deg, rgba(56, 189, 248, 0.14) 0%, rgba(8, 20, 44, 0.46) 100%) !important;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 26%, transparent) !important;
+            color: color-mix(in srgb, var(--ink, #eef7ff) 96%, white 4%) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px rgba(56, 189, 248, 0.08);
+            backdrop-filter: blur(10px);
         }}
 
-        .side-group-label {{
-            border-top: 1px solid rgba(45, 212, 191, 0.22);
-            color: rgba(94, 234, 212, 0.92) !important;
+        .chip-buy, .crypto-buy, .pro-tag-up, .lens-alert-bull,
+        .highlight-up, .winner-badge {{
+            background: linear-gradient(180deg, rgba(54, 240, 194, 0.18) 0%, rgba(7, 24, 34, 0.50) 100%) !important;
+            border-color: rgba(54, 240, 194, 0.26) !important;
+            color: #9ef8df !important;
+        }}
+
+        .chip-hold, .crypto-hold, .pro-tag-neutral, .lens-alert-neutral,
+        .highlight-mixed {{
+            background: linear-gradient(180deg, rgba(114, 246, 255, 0.16) 0%, rgba(7, 19, 34, 0.48) 100%) !important;
+            border-color: rgba(114, 246, 255, 0.24) !important;
+            color: #d8fbff !important;
+        }}
+
+        .chip-sell, .crypto-sell, .pro-tag-down, .lens-alert-bear,
+        .highlight-down {{
+            background: linear-gradient(180deg, rgba(255, 142, 161, 0.16) 0%, rgba(33, 11, 21, 0.48) 100%) !important;
+            border-color: rgba(255, 142, 161, 0.24) !important;
+            color: #ffd3db !important;
+        }}
+
+        .chip-info {{
+            background: linear-gradient(180deg, rgba(139, 92, 246, 0.16) 0%, rgba(16, 15, 44, 0.50) 100%) !important;
+            border-color: rgba(139, 92, 246, 0.26) !important;
+            color: #ece7ff !important;
+        }}
+
+        .stButton > button,
+        .stDownloadButton > button,
+        section[data-testid="stSidebar"] .stButton > button {{
+            border-radius: 16px !important;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 26%, transparent) !important;
+            background:
+                linear-gradient(135deg, rgba(22, 38, 102, 0.88) 0%, rgba(10, 20, 52, 0.94) 58%, rgba(35, 18, 95, 0.90) 100%) !important;
+            color: #f8fcff !important;
+            font-weight: 850 !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 16px 34px rgba(1, 9, 22, 0.24),
+                0 0 20px rgba(56, 189, 248, 0.08) !important;
+            transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease !important;
+        }}
+
+        .stButton > button:hover,
+        .stDownloadButton > button:hover,
+        section[data-testid="stSidebar"] .stButton > button:hover {{
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--brand, #38bdf8) 54%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 18px 38px rgba(1, 9, 22, 0.28),
+                0 0 24px rgba(56, 189, 248, 0.14) !important;
+        }}
+
+        .stMultiSelect [data-baseweb="select"] > div,
+        .stSelectbox [data-baseweb="select"] > div,
+        .stTextInput > div > div,
+        .stNumberInput > div > div,
+        .stTextArea > div > div,
+        .stDateInput > div > div {{
+            background: linear-gradient(180deg, rgba(14, 24, 56, 0.92) 0%, rgba(8, 16, 39, 0.98) 100%) !important;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 20%, transparent) !important;
+            border-radius: 18px !important;
+            min-height: 52px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 28px rgba(0,0,0,.18);
+            transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+        }}
+
+        .stMultiSelect [data-baseweb="select"] > div:hover,
+        .stSelectbox [data-baseweb="select"] > div:hover,
+        .stTextInput > div > div:hover,
+        .stNumberInput > div > div:hover,
+        .stTextArea > div > div:hover,
+        .stDateInput > div > div:hover {{
+            border-color: color-mix(in srgb, var(--brand, #38bdf8) 44%, transparent) !important;
+            box-shadow: 0 14px 30px rgba(0,0,0,.22), 0 0 20px rgba(56, 189, 248, 0.08);
+            transform: translateY(-1px);
+        }}
+
+        .stMultiSelect [data-baseweb="tag"],
+        .stSelectbox [data-baseweb="tag"] {{
+            background: linear-gradient(180deg, rgba(56, 189, 248, 0.16) 0%, rgba(8, 20, 44, 0.42) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.22) !important;
+            color: #eaf8ff !important;
+            border-radius: 999px !important;
+            font-weight: 800 !important;
+        }}
+
+        .stMultiSelect [data-baseweb="select"] input,
+        .stSelectbox [data-baseweb="select"] input,
+        .stTextInput input,
+        .stNumberInput input,
+        .stTextArea textarea,
+        .stDateInput input,
+        [data-baseweb="select"] *,
+        [data-baseweb="input"] * {{
+            color: var(--ink) !important;
+            -webkit-text-fill-color: var(--ink) !important;
+            caret-color: var(--ink) !important;
+        }}
+
+        div[data-baseweb="popover"] [role="listbox"],
+        div[data-baseweb="menu"] {{
+            background: linear-gradient(180deg, rgba(10, 19, 48, 0.98) 0%, rgba(6, 12, 28, 1) 100%) !important;
+            border: 1px solid rgba(56, 189, 248, 0.18) !important;
+            border-radius: 18px !important;
+            box-shadow: 0 24px 60px rgba(0,0,0,.30), 0 0 18px rgba(56, 189, 248, 0.10) !important;
+        }}
+
+        div[data-baseweb="popover"] [role="option"],
+        div[data-baseweb="menu"] [role="option"] {{
+            color: var(--ink) !important;
+            background: transparent !important;
+        }}
+
+        div[data-baseweb="popover"] [role="option"][aria-selected="true"],
+        div[data-baseweb="menu"] [role="option"][aria-selected="true"] {{
+            background: rgba(56, 189, 248, 0.12) !important;
+            color: #f8fdff !important;
+        }}
+
+        div[data-baseweb="popover"] [role="option"]:hover,
+        div[data-baseweb="menu"] [role="option"]:hover {{
+            background: rgba(129, 140, 248, 0.10) !important;
+        }}
+
+        .stTabs [data-baseweb="tab-list"] {{
+            position: sticky;
+            top: 0.55rem;
+            z-index: 5;
+            background: color-mix(in srgb, var(--paper, rgba(7,15,36,0.82)) 92%, transparent) !important;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 18%, transparent) !important;
+            border-radius: 18px !important;
+            box-shadow: 0 18px 42px rgba(0,0,0,.18), 0 0 20px rgba(56, 189, 248, 0.06) !important;
+            padding: 0.18rem 0.35rem !important;
+            backdrop-filter: blur(16px);
+        }}
+
+        .stTabs [data-baseweb="tab"] {{
+            min-height: 44px;
+            border-radius: 14px !important;
+            color: var(--ink-soft) !important;
+            font-weight: 800 !important;
         }}
 
         .stTabs [data-baseweb="tab-highlight"] {{
-            background: linear-gradient(90deg, rgba(56,189,248,0.86) 0%, rgba(129,140,248,0.90) 100%) !important;
-            box-shadow: 0 0 18px rgba(56, 189, 248, 0.34);
+            background: linear-gradient(90deg, rgba(56,189,248,0.88) 0%, rgba(139,92,246,0.92) 100%) !important;
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.30);
             height: 3px !important;
             border-radius: 999px !important;
         }}
 
         .stTabs [data-baseweb="tab"][aria-selected="true"] {{
-            box-shadow: inset 0 -2px 0 rgba(56, 189, 248, 0.0), 0 8px 18px rgba(56, 189, 248, 0.06);
+            color: #f8fdff !important;
+            background: linear-gradient(180deg, rgba(56, 189, 248, 0.14) 0%, rgba(139, 92, 246, 0.10) 100%) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 18px rgba(56, 189, 248, 0.08);
+        }}
+
+        .stDataFrame,
+        [data-testid="stDataFrame"] {{
+            border-radius: 20px !important;
+            overflow: hidden !important;
+            border: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 18%, transparent) !important;
+            box-shadow: 0 18px 36px rgba(1, 9, 22, 0.20), 0 0 20px rgba(56, 189, 248, 0.05) !important;
+            background: color-mix(in srgb, var(--paper, rgba(7,15,36,0.82)) 96%, transparent) !important;
+        }}
+
+        .stDataFrame * {{
+            color: var(--ink) !important;
+        }}
+
+        .stDataFrame thead tr,
+        .stTable thead tr,
+        table thead tr {{
+            background: linear-gradient(90deg, rgba(56, 189, 248, 0.12) 0%, rgba(139, 92, 246, 0.10) 100%) !important;
+        }}
+
+        .stDataFrame tbody tr:nth-child(even),
+        .stTable tbody tr:nth-child(even),
+        table tbody tr:nth-child(even) {{
+            background: rgba(255,255,255,0.02) !important;
+        }}
+
+        .stDataFrame tbody tr:hover,
+        .stTable tbody tr:hover,
+        table tbody tr:hover {{
+            background: rgba(56, 189, 248, 0.08) !important;
+        }}
+
+        .side-hero,
+        .editorial-hero.hero-neon-bar,
+        .active-etf-hero.hero-neon-bar {{
+            border-radius: 28px;
+        }}
+
+        .side-group-label {{
+            border-top: 1px solid color-mix(in srgb, var(--brand, #38bdf8) 24%, transparent);
+            padding-top: 10px;
         }}
         </style>
         """,
