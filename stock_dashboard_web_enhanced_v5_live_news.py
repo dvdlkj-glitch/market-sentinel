@@ -21946,32 +21946,37 @@ def build_home_news_top_taiwan_movers(
     return candidates[:limit]
 
 
-def build_home_news_supply_chain_leader(
+def build_home_news_supply_chain_rankings(
     selected_supply_chain_groups: list[str],
     lens_meta: dict | None = None,
-) -> dict:
+) -> list[dict]:
     selected_keys = [
         key for key in dedupe_keep_order(selected_supply_chain_groups or SUPPLY_CHAIN_FOCUS_ORDER)
         if key in SUPPLY_CHAIN_FOCUS_CONFIGS
     ]
     if not selected_keys:
-        return {}
+        return []
     try:
         rows = build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=False)
     except Exception:
         rows = []
     if not rows:
-        return {}
-    leader = rows[0]
-    return {
-        "title": str(leader.get("title") or supply_chain_group_label(str(leader.get("config_key", ""))) or "—"),
-        "move": leader.get("aggregate_move_sum", pd.NA),
-        "rising_count": int(leader.get("rising_count", 0) or 0),
-        "ticker_count": int(leader.get("ticker_count", 0) or 0),
-        "leader_name": str(leader.get("leader_name", "") or "—"),
-        "leader_move": leader.get("leader_move", pd.NA),
-        "foreign_net_total": leader.get("foreign_net_total", pd.NA),
-    }
+        return []
+    rankings: list[dict] = []
+    for row in rows[:3]:
+        rankings.append(
+            {
+                "title": str(row.get("title") or supply_chain_group_label(str(row.get("config_key", ""))) or "—"),
+                "move": row.get("aggregate_move_sum", pd.NA),
+                "rising_count": int(row.get("rising_count", 0) or 0),
+                "ticker_count": int(row.get("ticker_count", 0) or 0),
+                "leader_name": str(row.get("leader_name", "") or "—"),
+                "leader_move": row.get("leader_move", pd.NA),
+                "foreign_net_total": row.get("foreign_net_total", pd.NA),
+                "rank": int(row.get("rank", 0) or 0),
+            }
+        )
+    return rankings
 
 
 def _home_news_active_etf_candidates(dashboard_mode: str, tickers: list[str]) -> list[str]:
@@ -22241,6 +22246,57 @@ def inject_home_news_briefing_css() -> None:
             white-space: nowrap;
             align-self: center;
         }
+        .home-news-row-value.down {
+            color: #ff8fa3;
+        }
+        .home-news-compact-list {
+            display: grid;
+            gap: 8px;
+            margin-top: 14px;
+        }
+        .home-news-compact-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: center;
+            padding: 9px 10px;
+            border-radius: 12px;
+            background: rgba(255,255,255,.035);
+            border: 1px solid rgba(255,255,255,.055);
+        }
+        .home-news-compact-rank {
+            width: 24px;
+            height: 24px;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 999px;
+            background: rgba(52,245,197,.12);
+            color: #34f5c5;
+            font-size: 11px;
+            font-weight: 950;
+        }
+        .home-news-compact-title {
+            min-width: 0;
+            font-size: 12px;
+            line-height: 1.35;
+            font-weight: 900;
+            color: rgba(244,251,255,.92);
+        }
+        .home-news-compact-sub {
+            margin-top: 2px;
+            font-size: 11px;
+            line-height: 1.35;
+            color: rgba(225,239,255,.62);
+        }
+        .home-news-compact-value {
+            font-size: 12px;
+            font-weight: 950;
+            color: #34f5c5;
+            white-space: nowrap;
+        }
+        .home-news-compact-value.down {
+            color: #ff8fa3;
+        }
         .home-editor-list {
             display: grid;
             gap: 10px;
@@ -22334,25 +22390,41 @@ def _render_home_news_top_movers_html(rows: list[dict], *, lang_zh: bool) -> str
     '''
 
 
-def _render_home_news_supply_chain_html(row: dict, *, lang_zh: bool) -> str:
-    if not row:
+def _render_home_news_supply_chain_html(rows: list[dict], *, lang_zh: bool) -> str:
+    if not rows:
         return _home_news_empty(
             "Supply Chain",
             "等待供應鏈快照" if lang_zh else "Awaiting chain snapshot",
             "展開或刷新供應鏈 Overall 後會顯示最強組別。" if lang_zh else "Build or refresh Supply Chain Overall to show the strongest group.",
         )
-    move = row.get("move", pd.NA)
-    foreign_text = _format_supply_chain_foreign_flow(row.get("foreign_net_total"), lang_zh)
+    leader = rows[0]
+    compact_rows = []
+    for row in rows:
+        compact_rows.append(
+            f'''
+            <div class="home-news-compact-row">
+                <div class="home-news-compact-rank">{escape(str(row.get("rank", "—")))}</div>
+                <div>
+                    <div class="home-news-compact-title">{escape(str(row.get("title", "—")))}</div>
+                    <div class="home-news-compact-sub">{escape(str(row.get("leader_name", "—")))} · {escape(str(row.get("rising_count", 0)))} / {escape(str(row.get("ticker_count", 0)))} {"檔上漲" if lang_zh else "risers"}</div>
+                </div>
+                <div class="home-news-compact-value {_supply_chain_move_tone(row.get("move"))}">{escape(format_percent(row.get("move")))}</div>
+            </div>
+            '''
+        )
+    move = leader.get("move", pd.NA)
+    foreign_text = _format_supply_chain_foreign_flow(leader.get("foreign_net_total"), lang_zh)
     return f'''
     <div class="home-news-card">
         <div class="home-news-card-label">{"Strongest Chain" if not lang_zh else "最強供應鏈"}</div>
-        <div class="home-news-card-title">{escape(str(row.get("title", "—")))}</div>
-        <div class="home-news-card-value">{escape(format_percent(move))}</div>
+        <div class="home-news-card-title">{escape(str(leader.get("title", "—")))}</div>
+        <div class="home-news-card-value {_supply_chain_move_tone(move)}">{escape(format_percent(move))}</div>
         <div class="home-news-card-note">
-            {escape(str(row.get("rising_count", 0)))} / {escape(str(row.get("ticker_count", 0)))} {"risers" if not lang_zh else "檔上漲"} ·
-            {"Leader" if not lang_zh else "最強成分股"} {escape(str(row.get("leader_name", "—")))} {escape(format_percent(row.get("leader_move")))}
+            {escape(str(leader.get("rising_count", 0)))} / {escape(str(leader.get("ticker_count", 0)))} {"risers" if not lang_zh else "檔上漲"} ·
+            {"Leader" if not lang_zh else "最強成分股"} {escape(str(leader.get("leader_name", "—")))} {escape(format_percent(leader.get("leader_move")))}
             <br>{"Foreign flow" if not lang_zh else "外資合計"} {escape(foreign_text)}
         </div>
+        <div class="home-news-compact-list">{"".join(compact_rows)}</div>
     </div>
     '''
 
@@ -22440,7 +22512,7 @@ def render_home_news_briefing(
         dashboard_tickers,
         selected_supply_chain_groups,
     )
-    chain_leader = build_home_news_supply_chain_leader(selected_supply_chain_groups, lens_meta=lens_meta)
+    chain_leader = build_home_news_supply_chain_rankings(selected_supply_chain_groups, lens_meta=lens_meta)
     active_etfs = build_home_news_active_etf_spotlight(
         daily_data,
         intraday_data,
