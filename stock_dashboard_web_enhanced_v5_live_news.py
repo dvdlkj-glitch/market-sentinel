@@ -48,6 +48,7 @@ except Exception:
 DEFAULT_TICKERS = ["NVDA", "2330.TW", "2454.TW"]
 DEFAULT_PERIOD = "1y"
 DEFAULT_INTERVAL = "1d"
+DEFAULT_WAVE_PERIOD = "6mo"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
 
@@ -12853,7 +12854,284 @@ def get_ohlc_frame(data: pd.DataFrame | None, ticker: str, tail: int | None = No
     return frame
 
 
-def render_candlestick_chart(ohlc: pd.DataFrame, title: str, subtitle: str = "", height: int = 420, show_ma: bool = False):
+def wave_default_bar_count(ohlc: pd.DataFrame | None, interval_hint: str = "") -> int:
+    hint = str(interval_hint or "").strip().lower()
+    if hint == "1wk":
+        return 26
+    if ohlc is not None and not ohlc.empty and "Date" in ohlc.columns:
+        dates = pd.to_datetime(ohlc["Date"], errors="coerce").dropna()
+        if len(dates) >= 3:
+            median_gap = dates.sort_values().diff().dropna().median()
+            if pd.notna(median_gap) and median_gap >= pd.Timedelta(days=5):
+                return 26
+    return 126
+
+
+def _wave_lang_zh() -> bool:
+    return get_language() == "zh_TW" or get_lang() == "繁體中文"
+
+
+def _wave_window_label(interval_hint: str = "") -> str:
+    zh = _wave_lang_zh()
+    if str(interval_hint or "").strip().lower() == "1wk":
+        return "近 6 個月週線" if zh else "6-month weekly lens"
+    return "近 6 個月日線" if zh else "6-month daily lens"
+
+
+def _extract_wave_turning_points(ohlc: pd.DataFrame) -> list[dict]:
+    if ohlc is None or ohlc.empty or len(ohlc) < 14:
+        return []
+
+    frame = ohlc.copy().reset_index(drop=True)
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date", "Open", "High", "Low", "Close"]).reset_index(drop=True)
+    if len(frame) < 14:
+        return []
+
+    closes = pd.to_numeric(frame["Close"], errors="coerce").to_numpy(dtype=float)
+    highs = pd.to_numeric(frame["High"], errors="coerce").to_numpy(dtype=float)
+    lows = pd.to_numeric(frame["Low"], errors="coerce").to_numpy(dtype=float)
+    valid_moves = pd.Series(closes).pct_change().abs().dropna()
+    move_threshold = float(np.clip(valid_moves.median() * 100 * 8 if not valid_moves.empty else 5.0, 3.5, 13.0))
+    window = int(np.clip(len(frame) // 18, 2, 6))
+
+    points: list[dict] = []
+    overall_up = bool(closes[-1] >= closes[0])
+    points.append(
+        {
+            "index": 0,
+            "Date": frame.at[0, "Date"],
+            "Price": float(lows[0] if overall_up else highs[0]),
+            "kind": "low" if overall_up else "high",
+        }
+    )
+
+    for idx in range(window, len(frame) - window):
+        segment = closes[idx - window : idx + window + 1]
+        if np.isnan(segment).any():
+            continue
+        if closes[idx] >= float(segment.max()):
+            points.append(
+                {
+                    "index": idx,
+                    "Date": frame.at[idx, "Date"],
+                    "Price": float(highs[idx]),
+                    "kind": "high",
+                }
+            )
+        if closes[idx] <= float(segment.min()):
+            points.append(
+                {
+                    "index": idx,
+                    "Date": frame.at[idx, "Date"],
+                    "Price": float(lows[idx]),
+                    "kind": "low",
+                }
+            )
+
+    last_kind = "high" if closes[-1] >= closes[-2] else "low"
+    points.append(
+        {
+            "index": len(frame) - 1,
+            "Date": frame.at[len(frame) - 1, "Date"],
+            "Price": float(highs[-1] if last_kind == "high" else lows[-1]),
+            "kind": last_kind,
+        }
+    )
+
+    points = sorted(points, key=lambda item: (int(item["index"]), 0 if item["kind"] == "low" else 1))
+    compressed: list[dict] = []
+    for point in points:
+        if not compressed:
+            compressed.append(point)
+            continue
+        last = compressed[-1]
+        if point["kind"] == last["kind"]:
+            if point["kind"] == "high" and point["Price"] >= last["Price"]:
+                compressed[-1] = point
+            elif point["kind"] == "low" and point["Price"] <= last["Price"]:
+                compressed[-1] = point
+            continue
+        compressed.append(point)
+
+    filtered: list[dict] = []
+    for idx, point in enumerate(compressed):
+        if not filtered:
+            filtered.append(point)
+            continue
+        last = filtered[-1]
+        if point["kind"] == last["kind"]:
+            if point["kind"] == "high" and point["Price"] >= last["Price"]:
+                filtered[-1] = point
+            elif point["kind"] == "low" and point["Price"] <= last["Price"]:
+                filtered[-1] = point
+            continue
+        move_pct = abs((float(point["Price"]) - float(last["Price"])) / float(last["Price"])) * 100 if float(last["Price"]) else 0.0
+        if move_pct >= move_threshold or idx == len(compressed) - 1:
+            filtered.append(point)
+
+    return filtered[-9:] if len(filtered) > 9 else filtered
+
+
+def build_wave_snapshot(ohlc: pd.DataFrame | None, interval_hint: str = "") -> dict:
+    if ohlc is None or ohlc.empty:
+        return {}
+
+    frame = ohlc.copy().reset_index(drop=True)
+    if len(frame) < 12:
+        return {}
+
+    points = _extract_wave_turning_points(frame)
+    if len(points) < 4:
+        return {}
+
+    trend_up = bool(pd.to_numeric(frame["Close"], errors="coerce").iloc[-1] >= pd.to_numeric(frame["Close"], errors="coerce").iloc[0])
+    desired_start = "low" if trend_up else "high"
+    while len(points) >= 4 and points[0]["kind"] != desired_start:
+        points = points[1:]
+    if len(points) > 9:
+        points = points[-9:]
+    if len(points) < 4:
+        return {}
+
+    labels = ["0", "1", "2", "3", "4", "5", "A", "B", "C"][: len(points)]
+    points_df = pd.DataFrame(points).copy()
+    points_df["Label"] = labels
+    points_df["Date"] = pd.to_datetime(points_df["Date"], errors="coerce")
+    points_df["Phase"] = points_df["Label"].map(
+        {
+            "0": "Origin",
+            "1": "Wave 1",
+            "2": "Wave 2",
+            "3": "Wave 3",
+            "4": "Wave 4",
+            "5": "Wave 5",
+            "A": "Wave A",
+            "B": "Wave B",
+            "C": "Wave C",
+        }
+    )
+
+    zh = _wave_lang_zh()
+    current_label = labels[-1]
+    current_phase = (
+        {
+            "0": "起漲原點",
+            "1": "Wave 1 啟動",
+            "2": "Wave 2 回撤",
+            "3": "Wave 3 推進",
+            "4": "Wave 4 整理",
+            "5": "Wave 5 末段",
+            "A": "A 浪修正",
+            "B": "B 浪反彈",
+            "C": "C 浪確認",
+        }.get(current_label, "波段推進")
+        if zh else
+        {
+            "0": "origin build",
+            "1": "Wave 1 launch",
+            "2": "Wave 2 retracement",
+            "3": "Wave 3 expansion",
+            "4": "Wave 4 consolidation",
+            "5": "Wave 5 extension",
+            "A": "Wave A correction",
+            "B": "Wave B rebound",
+            "C": "Wave C confirmation",
+        }.get(current_label, "wave structure")
+    )
+
+    def _swing(start_idx: int, end_idx: int) -> float:
+        if max(start_idx, end_idx) >= len(points_df):
+            return float("nan")
+        return float(points_df.iloc[end_idx]["Price"] - points_df.iloc[start_idx]["Price"])
+
+    notes: list[str] = []
+    rule_badges: list[str] = []
+
+    wave1 = abs(_swing(0, 1))
+    wave2 = abs(_swing(1, 2))
+    wave3 = abs(_swing(2, 3))
+    wave4 = abs(_swing(3, 4))
+
+    if len(points_df) >= 3 and wave1 > 0:
+        retrace = wave2 / wave1 if not pd.isna(wave2) else float("nan")
+        if pd.notna(retrace):
+            if 0.5 <= retrace <= 0.75:
+                notes.append(
+                    f"Wave 2 回撤約 {retrace:.2f} 倍，接近 0.618 常見區。" if zh else
+                    f"Wave 2 retraced about {retrace:.2f}x, close to the common 0.618 zone."
+                )
+            else:
+                notes.append(
+                    f"Wave 2 回撤約 {retrace:.2f} 倍，屬於可觀察的修正幅度。" if zh else
+                    f"Wave 2 retraced about {retrace:.2f}x, which gives us a readable corrective depth."
+                )
+        invalid_wave2 = points_df.iloc[2]["Price"] < points_df.iloc[0]["Price"] if trend_up else points_df.iloc[2]["Price"] > points_df.iloc[0]["Price"]
+        rule_badges.append("Wave 2 未跌破原點" if zh else "Wave 2 origin intact") if not invalid_wave2 else rule_badges.append("Wave 2 跌破原點" if zh else "Wave 2 broke origin")
+
+    if len(points_df) >= 4 and wave1 > 0 and pd.notna(wave3):
+        wave3_ratio = wave3 / wave1
+        if wave3_ratio >= 1.5:
+            notes.append(
+                f"Wave 3 延伸約 {wave3_ratio:.2f} 倍，接近強勢推動波特徵。" if zh else
+                f"Wave 3 is extending at roughly {wave3_ratio:.2f}x Wave 1, which fits a stronger impulse profile."
+            )
+            rule_badges.append("Wave 3 延伸" if zh else "Wave 3 extended")
+        else:
+            notes.append(
+                f"Wave 3 約為 Wave 1 的 {wave3_ratio:.2f} 倍，暫時沒有極端延伸。" if zh else
+                f"Wave 3 is about {wave3_ratio:.2f}x Wave 1, so extension is present but not extreme."
+            )
+
+    if len(points_df) >= 5 and pd.notna(wave4):
+        invalid_wave4 = points_df.iloc[4]["Price"] <= points_df.iloc[1]["Price"] if trend_up else points_df.iloc[4]["Price"] >= points_df.iloc[1]["Price"]
+        rule_badges.append("Wave 4 未重疊 Wave 1" if zh else "Wave 4 avoids Wave 1 overlap") if not invalid_wave4 else rule_badges.append("Wave 4 重疊 Wave 1" if zh else "Wave 4 overlaps Wave 1")
+        if current_label in {"4", "5", "A", "B", "C"}:
+            notes.append(
+                "Wave 4 偏整理，適合搭配量能與均線看延續。" if zh else
+                "Wave 4 looks more sideways, so volume and moving averages matter more for the next confirmation."
+            )
+
+    headline = (
+        f"{_wave_window_label(interval_hint)}波浪結構偏向{'上升推動' if trend_up else '下降推動'}，目前落在 {current_phase}。"
+        if zh else
+        f"The {_wave_window_label(interval_hint)} wave map leans {'upward impulse' if trend_up else 'downward impulse'}, with price currently sitting in {current_phase}."
+    )
+    if current_label in {"A", "B", "C"}:
+        headline = (
+            f"{_wave_window_label(interval_hint)}已進入修正段，現在較像 {current_phase}。"
+            if zh else
+            f"The {_wave_window_label(interval_hint)} structure has moved into correction, and the current read is closer to {current_phase}."
+        )
+
+    guidance = (
+        "這是依近 6 個月主要轉折點做的波浪標註，適合拿來判讀結構，不適合單獨當成精準進出場訊號；請搭配均線、MACD、量能一起看。"
+        if zh else
+        "These labels are heuristic wave annotations built from the main turning points in the last six months. They are useful for structure, but should still be paired with moving averages, MACD, and volume."
+    )
+
+    return {
+        "points": points_df,
+        "headline": headline,
+        "notes": notes[:3],
+        "rule_badges": rule_badges[:3],
+        "guidance": guidance,
+        "current_label": current_label,
+        "trend_up": trend_up,
+        "window_label": _wave_window_label(interval_hint),
+    }
+
+
+def render_candlestick_chart(
+    ohlc: pd.DataFrame,
+    title: str,
+    subtitle: str = "",
+    height: int = 420,
+    show_ma: bool = False,
+    wave_snapshot: dict | None = None,
+    window_label: str = "",
+    show_wave: bool = True,
+):
     if ohlc is None or ohlc.empty:
         st.info("Chart data is not available.")
         return
@@ -12867,11 +13145,33 @@ def render_candlestick_chart(ohlc: pd.DataFrame, title: str, subtitle: str = "",
         chart_df["SMA 20"] = chart_df["Close"].rolling(20).mean()
         chart_df["SMA 50"] = chart_df["Close"].rolling(50).mean()
 
+    wave_snapshot = (wave_snapshot or build_wave_snapshot(chart_df)) if show_wave else {}
+    rule_badges = wave_snapshot.get("rule_badges", []) if isinstance(wave_snapshot, dict) else []
+    badge_html = "".join(
+        f'<span style="display:inline-flex;align-items:center;justify-content:center;padding:7px 12px;border-radius:999px;background:rgba(84,214,255,.12);border:1px solid rgba(84,214,255,.20);color:#9ae9ff;font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;">{escape(str(item))}</span>'
+        for item in rule_badges
+        if str(item).strip()
+    )
+    top_meta = []
+    if window_label:
+        top_meta.append(window_label)
+    if isinstance(wave_snapshot, dict) and wave_snapshot.get("window_label"):
+        top_meta.append(str(wave_snapshot.get("window_label")))
+    meta_text = " · ".join(dict.fromkeys([item for item in top_meta if item]))
+
     st.markdown(
         f"""
         <div class="chart-shell">
-            <div class="chart-title">{escape(title)}</div>
-            <div class="chart-copy">{escape(subtitle)}</div>
+            <div style="display:flex; gap:16px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap;">
+                <div>
+                    <div class="chart-title">{escape(title)}</div>
+                    <div class="chart-copy">{escape(subtitle)}</div>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;">
+                    {f'<span style="display:inline-flex;align-items:center;justify-content:center;padding:7px 12px;border-radius:999px;background:rgba(188,120,255,.13);border:1px solid rgba(188,120,255,.18);color:#e7c8ff;font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;">{escape(meta_text)}</span>' if meta_text else ''}
+                    {badge_html}
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -12896,6 +13196,19 @@ def render_candlestick_chart(ohlc: pd.DataFrame, title: str, subtitle: str = "",
             alt.Tooltip("Low:Q", format=",.2f"),
             alt.Tooltip("Close:Q", format=",.2f"),
         ],
+    )
+
+    close_curve = base.mark_line(color="rgba(111,203,255,0.34)", strokeWidth=1.5, interpolate="monotone").encode(
+        y=alt.Y(
+            "Close:Q",
+            axis=alt.Axis(
+                title=None,
+                labelColor="#c9d4f0",
+                gridColor="rgba(201,212,240,0.12)",
+                domain=False,
+                tickColor="#334155",
+            ),
+        )
     )
 
     wick = base.mark_rule(strokeWidth=1.3).encode(
@@ -12928,12 +13241,40 @@ def render_candlestick_chart(ohlc: pd.DataFrame, title: str, subtitle: str = "",
         color=alt.Color("Color:N", scale=None, legend=None),
     )
 
-    layers = [wick, body]
+    layers = [close_curve, wick, body]
 
     if show_ma:
         sma20 = base.mark_line(color="#7cc7ff", strokeWidth=1.6).encode(y="SMA 20:Q")
         sma50 = base.mark_line(color="#f3b94d", strokeWidth=1.6).encode(y="SMA 50:Q")
         layers.extend([sma20, sma50])
+
+    if isinstance(wave_snapshot, dict):
+        wave_points = wave_snapshot.get("points")
+        if isinstance(wave_points, pd.DataFrame) and not wave_points.empty:
+            wave_base = alt.Chart(wave_points).encode(
+                x=alt.X("Date:T"),
+                y=alt.Y("Price:Q"),
+                tooltip=[
+                    alt.Tooltip("Date:T", title="Date"),
+                    alt.Tooltip("Phase:N", title="Wave"),
+                    alt.Tooltip("Price:Q", format=",.2f"),
+                ],
+            )
+            wave_line = wave_base.mark_line(color="#63e6ff", strokeWidth=3.0, interpolate="monotone").encode()
+            wave_points_layer = wave_base.mark_point(
+                filled=True,
+                size=100,
+                color="#86efff",
+                stroke="#081220",
+                strokeWidth=1.5,
+            ).encode()
+            wave_labels = wave_base.mark_text(
+                dy=-14,
+                fontSize=13,
+                fontWeight="bold",
+                color="#f5f1ff",
+            ).encode(text="Label:N")
+            layers.extend([wave_line, wave_points_layer, wave_labels])
 
     chart = (
         alt.layer(*layers)
@@ -12951,6 +13292,28 @@ def render_candlestick_chart(ohlc: pd.DataFrame, title: str, subtitle: str = "",
     )
 
     st.altair_chart(chart, use_container_width=True)
+
+    if isinstance(wave_snapshot, dict) and wave_snapshot:
+        notes = wave_snapshot.get("notes", []) or []
+        note_html = "".join(
+            f'<li style="margin:0 0 8px 18px; color:rgba(229,236,255,.84); line-height:1.62;">{escape(str(item))}</li>'
+            for item in notes
+            if str(item).strip()
+        )
+        st.markdown(
+            f"""
+            <div style="margin-top:14px; padding:18px 20px; border-radius:20px; border:1px solid rgba(84,214,255,.14); background:
+                radial-gradient(circle at top left, rgba(84,214,255,.10) 0%, rgba(84,214,255,0) 30%),
+                linear-gradient(180deg, rgba(9,18,34,.96) 0%, rgba(11,20,38,.98) 100%);
+                box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 14px 34px rgba(0,0,0,.16);">
+                <div style="font-size:12px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; color:#63e6ff;">Wave Lens</div>
+                <div style="font-size:26px; font-weight:900; line-height:1.18; color:#f7fbff; margin-top:6px;">{escape(str(wave_snapshot.get("headline", "")))}</div>
+                {f'<ul style="margin:14px 0 0 0; padding:0;">{note_html}</ul>' if note_html else ''}
+                <div style="margin-top:12px; color:rgba(201,212,240,.74); line-height:1.62;">{escape(str(wave_snapshot.get("guidance", "")))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def get_intraday_snapshot(intraday_data: pd.DataFrame | None, ticker: str):
@@ -14319,6 +14682,11 @@ def render_news_stream(ticker: str, news_items: list[dict]):
 
 def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None = None, daily_ohlc: pd.DataFrame | None = None, intraday_ohlc: pd.DataFrame | None = None, selected_count: int = 1):
     lens_display = tr_lens_meta(lens_meta or {"title": "Position View", "how_to_read": "Use this view to confirm structure."})
+    interval_hint = str((lens_meta or {}).get("interval", "") or "")
+    wave_bar_count = wave_default_bar_count(daily_ohlc, interval_hint)
+    wave_ohlc = daily_ohlc.tail(wave_bar_count).copy() if daily_ohlc is not None and not daily_ohlc.empty else pd.DataFrame()
+    wave_snapshot = build_wave_snapshot(wave_ohlc, interval_hint)
+    zh = _wave_lang_zh()
     trend_base_label = (
         "Trend Lab 與 K 線確認"
         if get_language() == "zh_TW"
@@ -14364,11 +14732,17 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
         render_trading_lab_panel(analysis)
 
         render_candlestick_chart(
-            daily_ohlc.tail(252) if daily_ohlc is not None else pd.DataFrame(),
-            t("candlestick_confirmation"),
-            f"{lens_display.get('title', tr_lens_name((lens_meta or {}).get('title', 'Trend Lens')))}: {lens_display.get('how_to_read', (lens_meta or {}).get('how_to_read', 'Use this view to confirm structure.'))}" if lens_meta else "Daily candlesticks with SMA 20 and SMA 50 overlays for structure confirmation.",
+            wave_ohlc,
+            f"{t('candlestick_confirmation')} · {'波浪結構' if zh else 'Wave structure'}",
+            (
+                "預設以近 6 個月為主，直接把波浪理論標回 K 線，搭配 SMA 20 / 50、MACD 與量能判讀趨勢。"
+                if zh else
+                "Defaulting to the last six months, this chart layers wave-theory structure directly onto the candles and pairs it with SMA 20 / 50, MACD, and volume context."
+            ),
             height=440,
             show_ma=True,
+            wave_snapshot=wave_snapshot,
+            window_label=_wave_window_label(interval_hint),
         )
 
         if intraday.get("available") and intraday_ohlc is not None and not intraday_ohlc.empty:
@@ -14378,6 +14752,7 @@ def render_trend_section(analysis: dict, intraday: dict, lens_meta: dict | None 
                 "Latest intraday price action in the same dark premium theme." if get_lang() == "English" else "以相同高級深色主題呈現最新盤中價格結構。",
                 height=300,
                 show_ma=False,
+                show_wave=False,
             )
 
         st.markdown(
