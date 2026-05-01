@@ -14565,12 +14565,12 @@ def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items:
 def render_news_first_section(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
     left, center, right = st.columns([0.95, 1.95, 1.0], gap="large")
     with left:
-        render_daily_briefing(ticker, news_items)
+        _ = render_daily_briefing(ticker, news_items)
     with center:
-        render_feature_story(ticker, analysis, news_items)
+        _ = render_feature_story(ticker, analysis, news_items)
     with right:
-        render_signal_panel(ticker, analysis, intraday, news_items)
-    render_catalyst_engine(analysis, ticker)
+        _ = render_signal_panel(ticker, analysis, intraday, news_items)
+    _ = render_catalyst_engine(analysis, ticker)
 
 
 
