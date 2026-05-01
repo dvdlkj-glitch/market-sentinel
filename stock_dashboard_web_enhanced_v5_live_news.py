@@ -21429,6 +21429,383 @@ def inject_supply_chain_overview_css() -> None:
     )
 
 
+def inject_supply_chain_lab_css() -> None:
+    render_html_block(
+        """
+        <style>
+        .sc-lab-shell,
+        .sc-station-shell {
+            position: relative;
+            overflow: hidden;
+            border-radius: 26px;
+            border: 1px solid rgba(96, 231, 255, 0.20);
+            background:
+                linear-gradient(145deg, rgba(7, 15, 40, 0.96) 0%, rgba(15, 21, 68, 0.94) 48%, rgba(30, 14, 78, 0.94) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.07),
+                0 28px 80px rgba(2, 8, 24, 0.42),
+                0 0 0 1px rgba(96, 231, 255, 0.05);
+            color: #edf7ff;
+        }
+        .sc-lab-shell::before,
+        .sc-station-shell::before,
+        .sc-overall-shell::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 12% 18%, rgba(56, 189, 248, 0.20), transparent 30%),
+                radial-gradient(circle at 88% 12%, rgba(129, 140, 248, 0.18), transparent 26%),
+                linear-gradient(rgba(92, 228, 255, 0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(92, 228, 255, 0.08) 1px, transparent 1px);
+            background-size: auto, auto, 24px 24px, 24px 24px;
+            opacity: 0.55;
+        }
+        .sc-lab-shell {
+            margin: 12px 0 18px;
+            padding: 26px 26px 22px;
+        }
+        .sc-lab-head {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr);
+            gap: 18px;
+            align-items: stretch;
+            z-index: 1;
+        }
+        .sc-lab-copy-wrap,
+        .sc-lab-aside {
+            position: relative;
+            z-index: 1;
+        }
+        .sc-lab-kicker,
+        .sc-station-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            line-height: 1;
+            font-weight: 900;
+            text-transform: uppercase;
+            color: #73efff;
+            letter-spacing: 0.12em;
+        }
+        .sc-lab-kicker::before,
+        .sc-station-kicker::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+            background: linear-gradient(135deg, #6ae7ff, #6df7c8);
+            box-shadow: 0 0 14px rgba(106, 231, 255, 0.72);
+        }
+        .sc-lab-title {
+            margin-top: 12px;
+            font-size: clamp(30px, 3vw, 46px);
+            line-height: 1.04;
+            font-weight: 950;
+            color: #f7fbff;
+        }
+        .sc-lab-copy {
+            margin-top: 10px;
+            max-width: 860px;
+            font-size: 15px;
+            line-height: 1.72;
+            color: rgba(227, 240, 255, 0.80);
+        }
+        .sc-lab-chip-row {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 18px;
+        }
+        .sc-lab-chip-row .tracker-status-chip {
+            border-color: rgba(96, 231, 255, 0.22) !important;
+            background: rgba(10, 22, 61, 0.60) !important;
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.10);
+        }
+        .sc-lab-chip-row .tracker-status-chip span,
+        .sc-lab-chip-row .tracker-status-chip {
+            color: #eef9ff !important;
+        }
+        .sc-lab-timeline {
+            display: grid;
+            gap: 10px;
+            margin-top: 18px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .sc-lab-node {
+            position: relative;
+            min-height: 126px;
+            padding: 16px 16px 14px 18px;
+            border-radius: 18px;
+            border: 1px solid rgba(108, 227, 255, 0.20);
+            background: linear-gradient(160deg, rgba(18, 31, 88, 0.62), rgba(12, 19, 57, 0.70));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+        .sc-lab-node::before {
+            content: "";
+            position: absolute;
+            top: 18px;
+            left: 18px;
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            background: #63e9ff;
+            box-shadow: 0 0 18px rgba(99, 233, 255, 0.88);
+        }
+        .sc-lab-node::after {
+            content: "";
+            position: absolute;
+            top: 31px;
+            left: 24px;
+            width: 2px;
+            height: calc(100% - 48px);
+            background: linear-gradient(rgba(99, 233, 255, 0.92), rgba(99, 233, 255, 0.06));
+        }
+        .sc-lab-node-step {
+            margin-left: 24px;
+            font-size: 11px;
+            font-weight: 900;
+            text-transform: uppercase;
+            color: #74f4ff;
+            letter-spacing: 0.12em;
+        }
+        .sc-lab-node-title {
+            margin: 10px 0 0 24px;
+            font-size: 16px;
+            line-height: 1.28;
+            font-weight: 900;
+            color: #f7fbff;
+        }
+        .sc-lab-node-copy {
+            margin: 8px 0 0 24px;
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(224, 236, 255, 0.74);
+        }
+        .sc-lab-aside {
+            padding: 18px;
+            border-radius: 20px;
+            border: 1px solid rgba(111, 227, 255, 0.18);
+            background:
+                linear-gradient(160deg, rgba(16, 33, 92, 0.68), rgba(14, 19, 54, 0.72)),
+                radial-gradient(circle at 68% 32%, rgba(119, 87, 255, 0.18), transparent 32%);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                0 18px 34px rgba(7, 12, 32, 0.26);
+        }
+        .sc-lab-aside-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .sc-lab-chip-icon {
+            position: relative;
+            width: 72px;
+            aspect-ratio: 1;
+            border-radius: 20px;
+            border: 1px solid rgba(109, 228, 255, 0.24);
+            background:
+                linear-gradient(145deg, rgba(26, 46, 122, 0.82), rgba(17, 23, 67, 0.92));
+            box-shadow:
+                inset 0 0 0 1px rgba(255,255,255,0.04),
+                0 0 30px rgba(96, 231, 255, 0.14);
+        }
+        .sc-lab-chip-icon::before,
+        .sc-lab-chip-icon::after {
+            content: "";
+            position: absolute;
+            inset: 17px;
+            border-radius: 12px;
+            border: 1px solid rgba(109, 228, 255, 0.46);
+        }
+        .sc-lab-chip-icon::after {
+            inset: 28px;
+            border-radius: 7px;
+            background: radial-gradient(circle at center, rgba(96, 231, 255, 0.28), rgba(96, 231, 255, 0.04));
+            box-shadow: 0 0 22px rgba(96, 231, 255, 0.20);
+        }
+        .sc-lab-chip-lines {
+            margin-top: 14px;
+            display: grid;
+            gap: 10px;
+        }
+        .sc-lab-chip-line {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: baseline;
+        }
+        .sc-lab-chip-label {
+            font-size: 11px;
+            line-height: 1.2;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(112, 241, 255, 0.74);
+        }
+        .sc-lab-chip-value {
+            font-size: 18px;
+            line-height: 1.1;
+            font-weight: 900;
+            color: #f7fbff;
+        }
+        .sc-lab-chip-value.is-accent {
+            color: #71ffe0;
+            text-shadow: 0 0 16px rgba(113, 255, 224, 0.24);
+        }
+        .sc-station-shell {
+            margin: 14px 0 10px;
+            padding: 18px 20px;
+        }
+        .sc-station-head {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .sc-station-title {
+            margin-top: 8px;
+            font-size: 24px;
+            line-height: 1.12;
+            font-weight: 950;
+            color: #f7fbff;
+        }
+        .sc-station-copy {
+            margin-top: 8px;
+            max-width: 880px;
+            font-size: 13px;
+            line-height: 1.65;
+            color: rgba(226, 238, 255, 0.76);
+        }
+        .sc-station-badges {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+            min-width: 180px;
+        }
+        .sc-station-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 6px 11px;
+            border-radius: 999px;
+            border: 1px solid rgba(109, 228, 255, 0.20);
+            background: rgba(7, 24, 61, 0.58);
+            color: rgba(239, 247, 255, 0.90);
+            font-size: 11px;
+            font-weight: 850;
+            white-space: nowrap;
+        }
+        .sc-station-badge.is-accent {
+            color: #72ffe2;
+            border-color: rgba(114, 255, 226, 0.26);
+            box-shadow: 0 0 18px rgba(114, 255, 226, 0.12);
+        }
+        .sc-overall-shell {
+            margin-top: 10px;
+            border-color: rgba(104, 231, 255, 0.24);
+            background:
+                linear-gradient(90deg, rgba(56, 68, 196, 0.24), rgba(22, 223, 202, 0.05) 46%, rgba(103, 64, 255, 0.20)),
+                linear-gradient(145deg, rgba(10, 18, 50, 0.96) 0%, rgba(14, 21, 62, 0.94) 48%, rgba(24, 14, 72, 0.94) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.08),
+                0 26px 68px rgba(5, 12, 36, .42),
+                0 0 36px rgba(56, 189, 248, 0.06);
+        }
+        .sc-overall-shell::after {
+            content: "";
+            position: absolute;
+            inset: 12px;
+            border: 1px solid rgba(111, 227, 255, 0.08);
+            border-radius: 18px;
+            pointer-events: none;
+        }
+        .st-key-supply_chain_overall_refresh button,
+        .st-key-supply_chain_group_compare_refresh button {
+            min-height: 3rem !important;
+            border-radius: 999px !important;
+            border: 1px solid rgba(107, 229, 255, 0.26) !important;
+            background:
+                linear-gradient(135deg, rgba(20, 34, 96, 0.82) 0%, rgba(12, 18, 52, 0.94) 100%) !important;
+            color: #eff9ff !important;
+            font-weight: 850 !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 16px 34px rgba(56, 189, 248, 0.14) !important;
+        }
+        .st-key-supply_chain_overall_refresh button:hover,
+        .st-key-supply_chain_group_compare_refresh button:hover {
+            border-color: rgba(107, 229, 255, 0.52) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 18px 38px rgba(56, 189, 248, 0.22) !important;
+        }
+        @media (max-width: 1100px) {
+            .sc-lab-head {
+                grid-template-columns: 1fr;
+            }
+            .sc-station-head {
+                flex-direction: column;
+            }
+            .sc-station-badges {
+                justify-content: flex-start;
+            }
+        }
+        @media (max-width: 820px) {
+            .sc-lab-shell {
+                padding: 20px 18px 18px;
+            }
+            .sc-lab-title {
+                font-size: 30px;
+            }
+            .sc-lab-timeline {
+                grid-template-columns: 1fr;
+            }
+            .sc-station-title {
+                font-size: 22px;
+            }
+        }
+        </style>
+        """
+    )
+
+
+def render_supply_chain_station_banner(
+    kicker: str,
+    title: str,
+    copy: str,
+    badges: list[str] | None = None,
+) -> None:
+    badge_html = "".join(
+        f'<span class="sc-station-badge{" is-accent" if idx == 0 else ""}">{escape(str(badge))}</span>'
+        for idx, badge in enumerate(badges or [])
+        if str(badge).strip()
+    )
+    render_html_block(
+        f"""
+        <div class="sc-station-shell">
+            <div class="sc-station-head">
+                <div>
+                    <div class="sc-station-kicker">{escape(kicker)}</div>
+                    <div class="sc-station-title">{escape(title)}</div>
+                    <div class="sc-station-copy">{escape(copy)}</div>
+                </div>
+                {f'<div class="sc-station-badges">{badge_html}</div>' if badge_html else ''}
+            </div>
+        </div>
+        """
+    )
+
+
 def _render_supply_chain_overview_cards(rows: list[dict], *, show_icons: bool) -> str:
     cards: list[str] = []
     lang_zh = get_language() == "zh_TW"
@@ -21731,13 +22108,14 @@ def inject_supply_chain_compare_button_css(config_keys: list[str], active_key: s
         {base_selectors} {{
             min-height: 3.05rem !important;
             border-radius: 999px !important;
-            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 36%, transparent) !important;
+            border: 1px solid rgba(108, 229, 255, 0.28) !important;
             background:
-                linear-gradient(135deg, color-mix(in srgb, var(--card-soft, rgba(10,18,34,0.82)) 94%, transparent) 0%, color-mix(in srgb, var(--card, rgba(8,16,28,0.92)) 99%, transparent) 100%) !important;
-            color: #f2d18b !important;
+                linear-gradient(135deg, rgba(22, 36, 96, 0.78) 0%, rgba(11, 17, 51, 0.94) 100%) !important;
+            color: #eff9ff !important;
             box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.04),
-                0 12px 26px rgba(3, 10, 20, 0.12) !important;
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 0 0 1px rgba(108, 229, 255, 0.05),
+                0 16px 30px rgba(3, 10, 20, 0.22) !important;
             font-weight: 850 !important;
             letter-spacing: 0 !important;
             white-space: normal !important;
@@ -21745,20 +22123,22 @@ def inject_supply_chain_compare_button_css(config_keys: list[str], active_key: s
         }}
         {base_selectors}:hover {{
             transform: translateY(-1px);
-            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 76%, transparent) !important;
-            color: #ffe5aa !important;
+            border-color: rgba(108, 229, 255, 0.64) !important;
+            color: #ffffff !important;
             box-shadow:
                 inset 0 1px 0 rgba(255,255,255,0.06),
-                0 16px 34px rgba(56, 189, 248, 0.16) !important;
+                0 0 24px rgba(56, 189, 248, 0.14),
+                0 16px 34px rgba(56, 189, 248, 0.18) !important;
         }}
         {active_selector} {{
             background:
-                linear-gradient(135deg, color-mix(in srgb, var(--brand-2, #38bdf8) 30%, var(--card, rgba(8,16,28,0.92))) 0%, color-mix(in srgb, var(--brand, #818cf8) 18%, var(--card, rgba(8,16,28,0.92))) 100%) !important;
-            border-color: color-mix(in srgb, var(--brand-2, #38bdf8) 90%, transparent) !important;
-            color: #fff7df !important;
+                linear-gradient(135deg, rgba(36, 72, 180, 0.92) 0%, rgba(56, 189, 248, 0.28) 52%, rgba(103, 64, 255, 0.86) 100%) !important;
+            border-color: rgba(108, 229, 255, 0.88) !important;
+            color: #ffffff !important;
             box-shadow:
-                0 0 0 1px color-mix(in srgb, var(--brand-2, #38bdf8) 24%, transparent),
-                0 18px 38px rgba(56, 189, 248, 0.22),
+                0 0 0 1px rgba(108, 229, 255, 0.26),
+                0 0 28px rgba(56, 189, 248, 0.20),
+                0 18px 38px rgba(56, 189, 248, 0.24),
                 inset 0 1px 0 rgba(255,255,255,0.08) !important;
         }}
         </style>
@@ -21890,11 +22270,18 @@ def render_supply_chain_workspace_picker(
     lens_meta: dict | None = None,
 ) -> None:
     lang_zh = get_language() == "zh_TW"
-    st.markdown("#### 供應鏈工作台" if lang_zh else "#### Supply-Chain Workspace")
-    st.caption(
-        "先選供應鏈區塊，再只載入該區塊的成分股工作台；切到其他供應鏈時，會保留各自最後看的股票。"
-        if lang_zh
-        else "Choose a chain block first, then load workspaces only for that chain. Each chain remembers the last ticker you viewed."
+    render_supply_chain_station_banner(
+        "Ticker Desk Matrix" if not lang_zh else "個股工作站",
+        "供應鏈工作台" if lang_zh else "Supply-Chain Workspace",
+        (
+            "先選供應鏈區塊，再只載入該區塊的成分股工作台；切到其他供應鏈時，會保留各自最後看的股票。"
+            if lang_zh
+            else "Choose a chain block first, then load workspaces only for that chain. Each chain remembers the last ticker you viewed."
+        ),
+        badges=[
+            f"{len(selected_keys)} 條供應鏈" if lang_zh else f"{len(selected_keys)} chains",
+            "單鏈載入" if lang_zh else "Single-chain load",
+        ],
     )
 
     chain_options = [key for key in selected_keys if key in SUPPLY_CHAIN_FOCUS_CONFIGS]
@@ -21949,6 +22336,19 @@ def render_supply_chain_group_compare(
     lens_meta: dict | None = None,
 ) -> None:
     lang_zh = get_language() == "zh_TW"
+    render_supply_chain_station_banner(
+        "Network Compare" if not lang_zh else "鏈群對比站",
+        "供應鏈比較" if lang_zh else "Supply-Chain Compare",
+        (
+            "上半段先比較整組供應鏈；下半段可自行展開區塊，手動挑股票做股票對股票比較。"
+            if lang_zh
+            else "The top section compares whole chains; the lower section lets you open chain blocks and manually choose stocks for stock-to-stock comparison."
+        ),
+        badges=[
+            f"{len(selected_keys)} 條主題" if lang_zh else f"{len(selected_keys)} themes",
+            "整組 + 個股" if lang_zh else "Chain + stock",
+        ],
+    )
     refresh_cols = st.columns([3, 1])
     with refresh_cols[0]:
         st.caption(
@@ -22068,6 +22468,7 @@ def render_supply_chain_lab_dashboard(
     ]
     supply_chain_tickers = [ticker for ticker in dedupe_keep_order(tickers) if is_taiwan_ticker(ticker)]
     lang_zh = get_language() == "zh_TW"
+    inject_supply_chain_lab_css()
 
     if not selected_keys or not supply_chain_tickers:
         st.info(
@@ -22084,13 +22485,68 @@ def render_supply_chain_lab_dashboard(
         _tracker_status_chip((f"{len(selected_keys)} 條供應鏈" if lang_zh else f"{len(selected_keys)} chains"), "up"),
         _tracker_status_chip((f"{len(supply_chain_tickers)} 檔成分股" if lang_zh else f"{len(supply_chain_tickers)} constituents"), "neutral"),
     ]
+    timeline_items = [
+        (
+            "01 / Overall",
+            "整體鏈群總覽" if lang_zh else "Chain-wide overview",
+            "先看哪條供應鏈的動能、外資與上漲廣度最強。" if lang_zh else "Start with the chain showing the strongest breadth, move, and foreign flow.",
+        ),
+        (
+            "02 / Compare",
+            "鏈群對比站" if lang_zh else "Network compare",
+            "切到整組對整組，再下鑽到你手動挑選的個股對比。" if lang_zh else "Move from full-chain compare into the hand-picked stock compare layer.",
+        ),
+        (
+            "03 / Desk",
+            "個股工作台" if lang_zh else "Ticker workspaces",
+            "保留每條供應鏈最後看的股票，讓研究動線像時間軸一樣接續。" if lang_zh else "Each chain remembers its last viewed ticker so the research flow continues like a timeline.",
+        ),
+    ]
+    timeline_html = "".join(
+        f"""
+        <div class="sc-lab-node">
+            <div class="sc-lab-node-step">{escape(step)}</div>
+            <div class="sc-lab-node-title">{escape(title)}</div>
+            <div class="sc-lab-node-copy">{escape(copy)}</div>
+        </div>
+        """
+        for step, title, copy in timeline_items
+    )
     st.markdown(
         f"""
-        <div class="guide-shell etf-tracker-shell">
-            <div class="section-header">{'供應鏈專屬 Dashboard' if lang_zh else 'Supply Chain Dashboard'}</div>
-            <div class="guide-title">{'主題供應鏈研究工作區' if lang_zh else 'Thematic supply-chain research workspace'}</div>
-            <div class="guide-copy">{'把低軌、ABF、記憶體、封測與機器人等供應鏈戰力板獨立成一個 Dashboard，並改成整組供應鏈之間的比較。' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard and compares whole chains instead of large stock lists.'}</div>
-            <div class="chip-row">{''.join(chips)}</div>
+        <div class="sc-lab-shell">
+            <div class="sc-lab-head">
+                <div class="sc-lab-copy-wrap">
+                    <div class="sc-lab-kicker">{'AI Supply Chain Command Center' if not lang_zh else 'AI 供應鏈指揮站'}</div>
+                    <div class="sc-lab-title">{'主題供應鏈研究工作區' if lang_zh else 'Thematic supply-chain research workspace'}</div>
+                    <div class="sc-lab-copy">{'把低軌、ABF、記憶體、封測與機器人等供應鏈戰力板獨立成一個 Dashboard，並改成整組供應鏈之間的比較。' if lang_zh else 'Moves the thematic supply-chain boards into their own dashboard and compares whole chains instead of large stock lists.'}</div>
+                    <div class="sc-lab-timeline">{timeline_html}</div>
+                </div>
+                <div class="sc-lab-aside">
+                    <div class="sc-lab-aside-top">
+                        <div>
+                            <div class="sc-lab-kicker">{'HUD Telemetry' if not lang_zh else 'HUD 遙測'}</div>
+                            <div class="sc-lab-node-title" style="margin:10px 0 0 0;">{'Supply Chain Dashboard' if not lang_zh else '供應鏈專屬 Dashboard'}</div>
+                        </div>
+                        <div class="sc-lab-chip-icon"></div>
+                    </div>
+                    <div class="sc-lab-chip-lines">
+                        <div class="sc-lab-chip-line">
+                            <span class="sc-lab-chip-label">{'Active chains' if not lang_zh else '追蹤鏈數'}</span>
+                            <span class="sc-lab-chip-value is-accent">{len(selected_keys)}</span>
+                        </div>
+                        <div class="sc-lab-chip-line">
+                            <span class="sc-lab-chip-label">{'Constituents' if not lang_zh else '成分股'}</span>
+                            <span class="sc-lab-chip-value">{len(supply_chain_tickers)}</span>
+                        </div>
+                        <div class="sc-lab-chip-line">
+                            <span class="sc-lab-chip-label">{'Refresh clock' if not lang_zh else '更新時間'}</span>
+                            <span class="sc-lab-chip-value">{escape(timestamp_text.split(' ')[1] if ' ' in timestamp_text else timestamp_text)}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="sc-lab-chip-row">{''.join(chips)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -22100,6 +22556,19 @@ def render_supply_chain_lab_dashboard(
     render_layout_flow_cards(layout_mode, "Supply Chain Lab")
 
     def _render_supply_chain_briefing() -> None:
+        render_supply_chain_station_banner(
+            "Overall Atlas" if not lang_zh else "整體鏈群總覽",
+            "Overall 供應鏈摘要" if lang_zh else "Overall Supply-Chain Summary",
+            (
+                "先把整體鏈群強弱、外資方向、上漲廣度與領先股放進同一個 HUD 視圖。"
+                if lang_zh else
+                "Read aggregate chain strength, foreign flow, breadth, and leaders on one HUD-style screen first."
+            ),
+            badges=[
+                f"{len(selected_keys)} 條供應鏈" if lang_zh else f"{len(selected_keys)} chains",
+                "Overall 對比" if lang_zh else "Overall compare",
+            ],
+        )
         render_taiwan_market_macro_strip(force_show=True)
         refresh_cols = st.columns([3, 1])
         chain_names = " ｜ ".join(supply_chain_group_label(key) for key in selected_keys)
@@ -22171,6 +22640,18 @@ def render_supply_chain_lab_dashboard(
         if current_section == "layout_overview_tab":
             _render_supply_chain_briefing()
         elif current_section == "layout_supply_chain_tab":
+            render_supply_chain_station_banner(
+                "Chain Boards" if not lang_zh else "鏈群戰力板",
+                "主題供應鏈戰力板" if lang_zh else "Supply-Chain Signal Boards",
+                (
+                    "逐條打開供應鏈，保持原有運算與內容，只把資訊面板換成更聚焦的深色科技風閱讀節奏。"
+                    if lang_zh else
+                    "Open each chain one by one. The calculations stay the same; only the reading surface shifts into a darker sci-fi dashboard rhythm."
+                ),
+                badges=[
+                    f"{len(selected_keys)} 條鏈群" if lang_zh else f"{len(selected_keys)} chain boards",
+                ],
+            )
             render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
         elif current_section == "layout_compare_tab":
             _render_supply_chain_compare()
@@ -22202,6 +22683,18 @@ def render_supply_chain_lab_dashboard(
         if current_section == "layout_overview_tab":
             _render_supply_chain_briefing()
         elif current_section == "layout_supply_chain_tab":
+            render_supply_chain_station_banner(
+                "Chain Boards" if not lang_zh else "鏈群戰力板",
+                "主題供應鏈戰力板" if lang_zh else "Supply-Chain Signal Boards",
+                (
+                    "逐條打開供應鏈，保持原有運算與內容，只把資訊面板換成更聚焦的深色科技風閱讀節奏。"
+                    if lang_zh else
+                    "Open each chain one by one. The calculations stay the same; only the reading surface shifts into a darker sci-fi dashboard rhythm."
+                ),
+                badges=[
+                    f"{len(selected_keys)} 條鏈群" if lang_zh else f"{len(selected_keys)} chain boards",
+                ],
+            )
             render_selected_supply_chain_sections(selected_keys, lens_meta=lens_meta)
         elif current_section == "layout_comparison_desk_tab":
             _render_supply_chain_compare()
