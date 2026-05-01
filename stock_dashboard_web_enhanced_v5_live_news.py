@@ -4238,7 +4238,25 @@ def parse_active_etf_snapshot_tickers(raw_value: str | None = None) -> list[str]
     source_value = str(raw_value or os.environ.get("ACTIVE_ETF_SNAPSHOT_TICKERS", "")).strip()
     if source_value:
         tokens = re.split(r"[\s,;|]+", source_value)
-        parsed = [normalize_dashboard_ticker(token) for token in tokens if str(token).strip()]
+        parsed: list[str] = []
+        for token in tokens:
+            raw_token = str(token or "").strip().upper().replace(" ", "")
+            if not raw_token:
+                continue
+            if ACTIVE_ETF_SYMBOL_PATTERN.fullmatch(raw_token):
+                if raw_token.endswith(".TW") or raw_token.endswith(".TWO"):
+                    parsed.append(raw_token)
+                    continue
+                tw_candidate = f"{raw_token}.TW"
+                two_candidate = f"{raw_token}.TWO"
+                if tw_candidate in ACTIVE_ETF_METADATA:
+                    parsed.append(tw_candidate)
+                elif two_candidate in ACTIVE_ETF_METADATA:
+                    parsed.append(two_candidate)
+                else:
+                    parsed.append(tw_candidate)
+                continue
+            parsed.append(normalize_dashboard_ticker(token))
         return [ticker for ticker in dedupe_keep_order(parsed) if is_taiwan_active_etf(ticker)]
     return [ticker for ticker in dedupe_keep_order(ACTIVE_ETF_QUICK_PICK_SYMBOLS) if is_taiwan_active_etf(ticker)]
 
@@ -4250,12 +4268,30 @@ def prefetch_active_etf_snapshots_job(
     period: str | None = None,
     interval: str | None = None,
 ) -> dict:
-    selected_tickers = [
+    requested_tickers = [
         ticker for ticker in dedupe_keep_order(tickers or parse_active_etf_snapshot_tickers())
         if is_taiwan_active_etf(ticker)
     ]
-    if not selected_tickers:
+    if not requested_tickers:
         return {"status": "skipped", "reason": "No active ETF tickers configured.", "tickers": []}
+
+    selected_tickers: list[str] = []
+    skipped_tickers: list[str] = []
+    for ticker in requested_tickers:
+        normalized = normalize_taiwan_active_etf_symbol(ticker) or str(ticker or "").upper().strip()
+        if normalized and yahoo_symbol_has_history(normalized):
+            selected_tickers.append(normalized)
+        else:
+            skipped_tickers.append(str(ticker or "").upper().strip())
+
+    if not selected_tickers:
+        return {
+            "status": "skipped",
+            "reason": "No active ETF tickers with Yahoo price history available.",
+            "tickers": [],
+            "requested_tickers": requested_tickers,
+            "skipped_tickers": skipped_tickers,
+        }
 
     if lens_meta is None:
         resolved_period = str(period or DEFAULT_PERIOD or "1y")
@@ -4285,6 +4321,8 @@ def prefetch_active_etf_snapshots_job(
     return {
         "status": "ok",
         "tickers": selected_tickers,
+        "requested_tickers": requested_tickers,
+        "skipped_tickers": skipped_tickers,
         "rows": built_rows,
         "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
         "lens_title": str(lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),

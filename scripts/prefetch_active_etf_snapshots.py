@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +16,19 @@ def load_dashboard_module(dashboard_file: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def configure_cli_logging() -> None:
+    os.environ.setdefault("STREAMLIT_SUPPRESS_CONFIG_WARNINGS", "true")
+    for logger_name in (
+        "streamlit",
+        "streamlit.runtime",
+        "streamlit.runtime.caching",
+        "streamlit.runtime.caching.cache_data_api",
+        "streamlit.runtime.scriptrunner_utils.script_run_context",
+        "streamlit.runtime.state.session_state_proxy",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +52,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    configure_cli_logging()
     dashboard_file = Path(args.dashboard_file).resolve()
     if not dashboard_file.exists():
         raise FileNotFoundError(f"Dashboard file not found: {dashboard_file}")
