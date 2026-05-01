@@ -4550,6 +4550,7 @@ def _build_taiwan_official_ticker_snapshot(
             fetch_taiwan_official_dashboard_snapshot,
             fetch_twse_valuation_snapshot,
             fetch_twse_stock_institutional_flow,
+            fetch_twse_foreign_shareholding_snapshot,
             fetch_tpex_snapshot_bundle,
             fetch_monthly_revenue_snapshot,
             fetch_twse_etf_institutional_flow,
@@ -4656,15 +4657,44 @@ def load_taiwan_official_dashboard_snapshot(ticker: str, *, force_refresh: bool 
     return get_taiwan_official_ticker_snapshot(normalized, force_refresh=force_refresh)
 
 
+def default_taiwan_official_prefetch_tickers() -> list[str]:
+    preferred_groups = [
+        "Taiwan Semiconductors",
+        "Taiwan AI Supply Chain",
+        "ABF 載板四雄",
+        "記憶體供應鏈",
+        "封裝測試產業鏈",
+        "機器人供應鏈",
+        "Taiwan ETFs",
+    ]
+    collected: list[str] = []
+    market_groups = globals().get("WATCHLIST_PRESETS", {}) or {}
+    for group_name in preferred_groups:
+        group_tickers = market_groups.get(group_name, []) if isinstance(market_groups, dict) else []
+        if isinstance(group_tickers, list):
+            collected.extend(group_tickers)
+    collected.extend(normalize_dashboard_ticker(ticker) for ticker in ACTIVE_ETF_QUICK_PICK_SYMBOLS)
+    normalized_defaults = [normalize_dashboard_ticker(ticker) for ticker in DEFAULT_TICKERS if is_taiwan_ticker(ticker)]
+    normalized_collected = [normalize_dashboard_ticker(ticker) for ticker in collected if str(ticker).strip()]
+    fallback = dedupe_keep_order(normalized_collected + normalized_defaults)
+    return [ticker for ticker in fallback if is_taiwan_ticker(ticker)]
+
+
 def parse_taiwan_official_snapshot_tickers(raw_value: str | None = None) -> list[str]:
-    source_value = str(raw_value or os.environ.get("TAIWAN_OFFICIAL_SNAPSHOT_TICKERS", "")).strip()
-    if source_value:
-        tokens = re.split(r"[\s,;|]+", source_value)
+    explicit_value = str(raw_value or "").strip()
+    if explicit_value:
+        tokens = re.split(r"[\s,;|]+", explicit_value)
         parsed = [normalize_dashboard_ticker(token) for token in tokens if str(token).strip()]
         return [ticker for ticker in dedupe_keep_order(parsed) if is_taiwan_ticker(ticker)]
-    default_taiwan = [ticker for ticker in DEFAULT_TICKERS if is_taiwan_ticker(ticker)]
-    fallback = dedupe_keep_order(ACTIVE_ETF_QUICK_PICK_SYMBOLS + default_taiwan)
-    return [ticker for ticker in fallback if is_taiwan_ticker(ticker)]
+
+    env_value = str(os.environ.get("TAIWAN_OFFICIAL_SNAPSHOT_TICKERS", "")).strip()
+    default_prefetch = default_taiwan_official_prefetch_tickers()
+    if env_value:
+        tokens = re.split(r"[\s,;|]+", env_value)
+        parsed = [normalize_dashboard_ticker(token) for token in tokens if str(token).strip()]
+        merged = dedupe_keep_order(parsed + default_prefetch)
+        return [ticker for ticker in merged if is_taiwan_ticker(ticker)]
+    return default_prefetch
 
 
 def prefetch_taiwan_official_snapshots_job(
@@ -17572,6 +17602,64 @@ def fetch_twse_stock_institutional_flow(code: str) -> dict:
     return {"source": "TWSE T86", "error": errors[-1] if errors else "No institutional flow found."}
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_twse_foreign_shareholding_snapshot(code: str) -> dict:
+    code = _extract_security_code(code)
+    if not code:
+        return {}
+
+    errors: list[str] = []
+    today = pd.Timestamp.now(TW_TZ).normalize()
+    for offset in range(10):
+        trade_date = today - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        for url in (
+            f"https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?response=json&date={date_str}&selectType=ALL",
+            f"https://www.twse.com.tw/fund/MI_QFIIS?response=json&date={date_str}&selectType=ALL",
+        ):
+            try:
+                payload = _twse_request_json(url)
+                rows = _tw_rows_from_payload(payload)
+                row = _match_row_by_security_code(rows, code)
+                if not row:
+                    continue
+                return {
+                    "source": "TWSE MI_QFIIS",
+                    "date": trade_date.date().isoformat(),
+                    "foreign_holding_shares": _find_value_by_keywords(
+                        row,
+                        ("全體外資及陸資持有股數",),
+                        ("全體外資持有股數",),
+                    ),
+                    "foreign_holding_ratio": _find_value_by_keywords(
+                        row,
+                        ("全體外資及陸資持股比率",),
+                        ("全體外資持股比率",),
+                    ),
+                    "foreign_available_ratio": _find_value_by_keywords(
+                        row,
+                        ("全體外資及陸資尚可投資比率",),
+                        ("全體外資尚可投資比率",),
+                    ),
+                    "legal_limit_ratio": _find_value_by_keywords(
+                        row,
+                        ("法令投資上限比率",),
+                    ),
+                }
+            except Exception as exc:
+                errors.append(str(exc))
+                continue
+    if errors:
+        return {
+            "source": "TWSE MI_QFIIS",
+            "error": errors[-1],
+        }
+    return {
+        "source": "TWSE MI_QFIIS",
+        "note": "No foreign ownership row found.",
+    }
+
+
 def _extract_tpex_field(row: dict, keywords: tuple[str, ...]) -> str:
     for key, value in row.items():
         key_text = str(key or "")
@@ -17618,6 +17706,9 @@ def fetch_tpex_snapshot_bundle(code: str) -> dict:
             valuation_row or quote_row or flow_row,
             ("日期", "Date"),
         ),
+        "valuation_date": _find_value_by_keywords(valuation_row, ("日期", "Date")),
+        "quote_date": _find_value_by_keywords(quote_row, ("日期", "Date")),
+        "flow_date": _find_value_by_keywords(flow_row, ("日期", "Date")),
         "pe": _find_value_by_keywords(valuation_row, ("本益比", "PE")),
         "yield": _find_value_by_keywords(valuation_row, ("殖利率", "Yield")),
         "pb": _find_value_by_keywords(valuation_row, ("股價淨值比", "P/B", "PB")),
@@ -17625,6 +17716,10 @@ def fetch_tpex_snapshot_bundle(code: str) -> dict:
         "trust_net": _find_value_by_keywords(flow_row, ("投信買賣超",)),
         "dealer_net": _find_value_by_keywords(flow_row, ("自營商買賣超",)),
         "close": _find_value_by_keywords(quote_row, ("收盤", "Close")),
+        "valuation_error": str(result.get("valuation", {}).get("error", "") or ""),
+        "quote_error": str(result.get("quotes", {}).get("error", "") or ""),
+        "flow_error": str(result.get("flow", {}).get("error", "") or ""),
+        "error": str(result.get("flow", {}).get("error", "") or result.get("valuation", {}).get("error", "") or result.get("quotes", {}).get("error", "") or ""),
     }
 
 
@@ -17936,6 +18031,7 @@ def _build_taiwan_official_dashboard_payload(ticker: str, *, macro_snapshot: dic
         "is_active_etf": is_taiwan_active_etf(ticker),
         "valuation": {},
         "flow": {},
+        "foreign_ownership": {},
         "revenue": {},
         "macro": macro_payload if isinstance(macro_payload, dict) else fetch_cbc_macro_snapshot(),
         "derivatives": derivatives_payload if isinstance(derivatives_payload, dict) else fetch_taifex_put_call_snapshot(),
@@ -17954,11 +18050,11 @@ def _build_taiwan_official_dashboard_payload(ticker: str, *, macro_snapshot: dic
         }
         payload["flow"] = {
             "source": tpex.get("source", "TPEx OpenAPI"),
-            "date": tpex.get("date", ""),
+            "date": tpex.get("flow_date", ""),
             "foreign_net": tpex.get("foreign_net", ""),
             "trust_net": tpex.get("trust_net", ""),
             "dealer_net": tpex.get("dealer_net", ""),
-            "error": tpex.get("error", ""),
+            "error": tpex.get("flow_error", "") or tpex.get("error", ""),
         }
     elif is_taiwan_active_etf(ticker):
         flow_payload = fetch_twse_etf_institutional_flow(ticker)
@@ -17974,11 +18070,13 @@ def _build_taiwan_official_dashboard_payload(ticker: str, *, macro_snapshot: dic
     else:
         payload["valuation"] = fetch_twse_valuation_snapshot(code)
         payload["flow"] = fetch_twse_stock_institutional_flow(code)
+        payload["foreign_ownership"] = fetch_twse_foreign_shareholding_snapshot(code)
 
     payload["revenue"] = fetch_monthly_revenue_snapshot(ticker)
     payload["errors"] = {
         "valuation": str(payload["valuation"].get("error", "")),
         "flow": str(payload["flow"].get("error", "")),
+        "foreign_ownership": str(payload["foreign_ownership"].get("error", "")),
         "revenue": str(payload["revenue"].get("error", "")),
         "cbc_fx": str((payload["macro"].get("fx", {}) or {}).get("error", "")),
         "cbc_rate": str((payload["macro"].get("policy_rate", {}) or {}).get("error", "")),
@@ -18049,6 +18147,130 @@ def _official_actor_label(actor_key: str, lang_zh: bool) -> str:
         "dealer": "Dealer",
     }
     return (zh_map if lang_zh else en_map).get(actor_key, actor_key)
+
+
+def _official_flow_diagnostics(flow: dict | None, lang_zh: bool) -> dict[str, str]:
+    payload = dict(flow or {})
+    error_text = str(payload.get("error", "") or "").strip()
+    source_text = str(payload.get("source", "") or "").strip()
+    date_text = str(payload.get("date", "") or "").strip()
+
+    def _flow_value(raw: object) -> float:
+        if isinstance(raw, str):
+            normalized = (
+                raw.strip()
+                .replace(",", "")
+                .replace("%", "")
+                .replace("％", "")
+                .replace("＋", "")
+                .replace("+", "")
+                .replace("−", "-")
+                .replace("－", "-")
+            )
+            if normalized.lower() in {"", "-", "nan", "none", "null", "n/a"}:
+                return float("nan")
+            match = re.search(r"[-+]?(?:\d+\.\d+|\d+)", normalized)
+            return float(match.group(0)) if match else float("nan")
+        return _safe_float(raw)
+
+    foreign_value = _flow_value(payload.get("foreign_net"))
+    trust_value = _flow_value(payload.get("trust_net"))
+    dealer_value = _flow_value(payload.get("dealer_net"))
+    valid_values = [value for value in (foreign_value, trust_value, dealer_value) if not pd.isna(value)]
+    error_key = error_text.casefold()
+
+    if error_text:
+        if "no matching code" in error_key or "no institutional flow found" in error_key or "no flow row matched" in error_key:
+            status = "official_blank"
+        else:
+            status = "source_error"
+    elif not valid_values:
+        status = "official_blank" if source_text or date_text else "missing"
+    elif all(abs(value) < 0.5 for value in valid_values):
+        status = "all_zero"
+    elif pd.isna(foreign_value):
+        status = "partial_missing"
+    elif abs(foreign_value) < 0.5:
+        status = "foreign_zero"
+    else:
+        status = "available"
+
+    if status == "official_blank":
+        return {
+            "status": status,
+            "headline": "官方外資欄位空白" if lang_zh else "Official foreign-flow row is blank",
+            "short": "官方空白" if lang_zh else "Official blank",
+            "detail": (
+                "這代表官方來源有回應，但這檔在當日法人資料裡沒有對應列或沒有揭露值。先不要直接解讀成外資完全沒參與，也不是程式抓取失敗。"
+                if lang_zh else
+                "The official source responded, but this ticker had no matching institutional row or no disclosed value for the day. Do not read it as proof that foreign investors were absent, and it is not a fetch failure."
+            ),
+        }
+    if status == "source_error":
+        return {
+            "status": status,
+            "headline": "外資資料抓取失敗" if lang_zh else "Foreign-flow fetch failed",
+            "short": "抓取失敗" if lang_zh else "Fetch failed",
+            "detail": (
+                "這次是來源請求或解析失敗，不能解讀成中性、零買賣超，或外資沒有操作。"
+                if lang_zh else
+                "This run failed at the source or parsing layer, so it should not be read as neutral, zero-flow, or no foreign activity."
+            ),
+        }
+    if status == "missing":
+        return {
+            "status": status,
+            "headline": "外資資料尚未建立" if lang_zh else "Foreign-flow snapshot not built yet",
+            "short": "尚未建立" if lang_zh else "Not built",
+            "detail": (
+                "目前還沒有可用的官方外資快照，先刷新一次再看。"
+                if lang_zh else
+                "No official foreign-flow snapshot is available yet. Refresh once before reading too much into it."
+            ),
+        }
+    if status == "all_zero":
+        return {
+            "status": status,
+            "headline": "官方明確顯示零買賣超" if lang_zh else "Official flow is explicitly zero",
+            "short": "零買賣超" if lang_zh else "Zero net flow",
+            "detail": (
+                "這和抓不到資料不同，代表官方欄位有值，而且三大法人在這筆資料上沒有明顯淨買賣超。"
+                if lang_zh else
+                "This is different from missing data. The official fields are present and the institutions show no meaningful net buying or selling in this snapshot."
+            ),
+        }
+    if status == "foreign_zero":
+        return {
+            "status": status,
+            "headline": "外資當日近乎中性" if lang_zh else "Foreign flow is near flat today",
+            "short": "外資中性" if lang_zh else "Foreign flat",
+            "detail": (
+                "外資欄位有回值且接近 0，代表今天沒有明顯表態；可搭配持股比率與後續兩三天延續性一起看。"
+                if lang_zh else
+                "The foreign field is present and close to zero, so there is no strong daily stance. Pair it with ownership ratio and the next few sessions for context."
+            ),
+        }
+    if status == "partial_missing":
+        return {
+            "status": status,
+            "headline": "外資暫缺，先看其餘法人" if lang_zh else "Foreign flow missing, read the other institutions first",
+            "short": "部分缺值" if lang_zh else "Partial gap",
+            "detail": (
+                "投信或自營商仍有值，但外資欄位本身未揭露，這時候不要把空白誤認成外資中性。"
+                if lang_zh else
+                "Trust or dealer values are present, but the foreign field itself is undisclosed. Do not mistake the blank for a neutral foreign read."
+            ),
+        }
+    return {
+        "status": status,
+        "headline": "外資資料可解讀" if lang_zh else "Foreign-flow data is usable",
+        "short": "可解讀" if lang_zh else "Usable",
+        "detail": (
+            "這筆外資數字來自官方日資料，可以和持股比率、營收與後續延續性一起交叉判讀。"
+            if lang_zh else
+            "This foreign-flow reading comes from an official daily source and can be read alongside ownership ratio, revenue, and follow-through."
+        ),
+    }
 
 
 def _official_flow_story(ticker_label: str, foreign_net: object, trust_net: object, dealer_net: object, lang_zh: bool) -> tuple[str, str]:
@@ -18594,10 +18816,12 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
 
     valuation = snapshot.get("valuation", {}) or {}
     flow = snapshot.get("flow", {}) or {}
+    foreign_ownership = snapshot.get("foreign_ownership", {}) or {}
     revenue = snapshot.get("revenue", {}) or {}
     macro = snapshot.get("macro", {}) or {}
     derivatives = snapshot.get("derivatives", {}) or {}
     errors = {key: str(value).strip() for key, value in (snapshot.get("errors", {}) or {}).items() if str(value).strip()}
+    flow_diagnostics = _official_flow_diagnostics(flow, lang_zh)
 
     cards = []
     ticker_label = display_ticker_label(ticker)
@@ -18632,6 +18856,20 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
             _official_card_html("Dealer", dealer_net, "3-inst net"),
         ]
     )
+
+    ownership_ratio_value = _safe_percent_text(foreign_ownership.get("foreign_holding_ratio"))
+    ownership_shares_value = _safe_number_text(foreign_ownership.get("foreign_holding_shares"), digits=0)
+    ownership_available_ratio_value = _safe_percent_text(foreign_ownership.get("foreign_available_ratio"))
+    ownership_limit_ratio_value = _safe_percent_text(foreign_ownership.get("legal_limit_ratio"))
+    ownership_ratio_num = _safe_float(foreign_ownership.get("foreign_holding_ratio"))
+    if ownership_ratio_value != "—" or ownership_shares_value != "—":
+        cards.append(
+            _official_card_html(
+                "Foreign Hold %",
+                ownership_ratio_value,
+                f"{foreign_ownership.get('source', '')} · {foreign_ownership.get('date', '')}".strip(" ·"),
+            )
+        )
 
     revenue_value = _safe_number_text(revenue.get("revenue"), digits=0)
     yoy_value = _safe_percent_text(revenue.get("yoy"))
@@ -18683,6 +18921,25 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
         """
     )
 
+    flow_status_message = f"{flow_diagnostics.get('short', '')} · {flow_diagnostics.get('detail', '')}".strip(" ·")
+    ownership_support_message = ""
+    if ownership_ratio_value != "—" or ownership_shares_value != "—":
+        ownership_support_message = (
+            f"補充官方持股來源：外資持股比 {ownership_ratio_value}，持有股數 {ownership_shares_value}。"
+            if lang_zh else
+            f"Added an official ownership source as well: foreign ownership ratio {ownership_ratio_value} with {ownership_shares_value} shares held."
+        )
+    if flow_status_message:
+        flow_status_copy = flow_status_message
+        if ownership_support_message:
+            flow_status_copy = f"{flow_status_copy} {ownership_support_message}".strip()
+        if flow_diagnostics.get("status") == "source_error":
+            st.warning(flow_status_copy)
+        elif flow_diagnostics.get("status") == "missing":
+            st.info(flow_status_copy)
+        else:
+            st.caption(flow_status_copy)
+
     flow_headline, flow_detail = _official_flow_story(
         ticker_label,
         foreign_net_num,
@@ -18715,7 +18972,47 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     flow_lot_text = _format_taiwan_lot_text(foreign_net_num, lang_zh)
     trust_lot_text = _format_taiwan_lot_text(trust_net_num, lang_zh)
     dealer_lot_text = _format_taiwan_lot_text(dealer_net_num, lang_zh)
-    if not pd.isna(foreign_net_num) and foreign_net_num > 0:
+    flow_source_text = f"{flow.get('source', '')} · {flow.get('date', '')}".strip(" ·")
+    flow_card_detail = (
+        f"投信 {trust_lot_text} · 自營商 {dealer_lot_text}"
+        if lang_zh else
+        f"Trust {trust_lot_text} · Dealer {dealer_lot_text}"
+    )
+    flow_status = flow_diagnostics.get("status")
+    if flow_status == "source_error":
+        flow_card_pill = "抓取失敗" if lang_zh else "Fetch failed"
+        flow_card_tone = "down"
+        flow_card_headline = flow_diagnostics.get("headline", "")
+        flow_card_note = flow_diagnostics.get("detail", "")
+        flow_card_detail = flow_source_text or flow_card_detail
+    elif flow_status == "official_blank":
+        flow_card_pill = "官方空白" if lang_zh else "Official blank"
+        flow_card_tone = "flat"
+        flow_card_headline = flow_diagnostics.get("headline", "")
+        flow_card_note = flow_diagnostics.get("detail", "")
+        flow_card_detail = flow_source_text or flow_card_detail
+    elif flow_status == "missing":
+        flow_card_pill = "尚未建立" if lang_zh else "Not built"
+        flow_card_tone = "flat"
+        flow_card_headline = flow_diagnostics.get("headline", "")
+        flow_card_note = flow_diagnostics.get("detail", "")
+        flow_card_detail = flow_source_text or flow_card_detail
+    elif flow_status == "all_zero":
+        flow_card_pill = "零買賣超" if lang_zh else "Zero flow"
+        flow_card_tone = "flat"
+        flow_card_headline = flow_diagnostics.get("headline", "")
+        flow_card_note = flow_diagnostics.get("detail", "")
+    elif flow_status == "partial_missing":
+        flow_card_pill = "部分缺值" if lang_zh else "Partial gap"
+        flow_card_tone = "flat"
+        flow_card_headline = flow_diagnostics.get("headline", "")
+        flow_card_note = flow_diagnostics.get("detail", "")
+    elif flow_status == "foreign_zero":
+        flow_card_pill = "外資中性" if lang_zh else "Foreign flat"
+        flow_card_tone = "flat"
+        flow_card_headline = flow_diagnostics.get("headline", "")
+        flow_card_note = flow_diagnostics.get("detail", "")
+    elif not pd.isna(foreign_net_num) and foreign_net_num > 0:
         flow_card_pill = "外資偏買" if lang_zh else "Net buying"
         flow_card_tone = "up"
         flow_card_headline = (
@@ -18754,11 +19051,6 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
             if lang_zh else
             "One day of flow is not enough to define the trend; watch the next two or three sessions as well."
         )
-    flow_card_detail = (
-        f"投信 {trust_lot_text} · 自營商 {dealer_lot_text}"
-        if lang_zh else
-        f"Trust {trust_lot_text} · Dealer {dealer_lot_text}"
-    )
 
     if not pd.isna(yoy_num) and yoy_num > 0 and not pd.isna(mom_num) and mom_num > 0:
         revenue_card_pill = "營收雙增" if lang_zh else "Revenue up"
@@ -18843,6 +19135,37 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
             tone=macro_card_tone,
         ),
     ]
+    if ownership_ratio_value != "—" or ownership_shares_value != "—":
+        ownership_card_pill = "持股結構" if lang_zh else "Ownership"
+        ownership_card_tone = "up" if not pd.isna(ownership_ratio_num) and ownership_ratio_num >= 30 else "flat"
+        ownership_card_headline = (
+            f"外資持股比 {ownership_ratio_value}"
+            if lang_zh else
+            f"Foreign hold ratio {ownership_ratio_value}"
+        )
+        ownership_card_detail = (
+            f"持有股數 {ownership_shares_value} · 尚可投資 {ownership_available_ratio_value}"
+            if lang_zh else
+            f"Held shares {ownership_shares_value} · Available ratio {ownership_available_ratio_value}"
+        )
+        ownership_card_note = (
+            f"這條官方來源看的不是單日買賣超，而是部位存量；和單日法人一起看，比較容易分辨只是短線表態，還是外資部位真的在堆高。法令上限 {ownership_limit_ratio_value}。"
+            if lang_zh else
+            f"This official feed shows position stock rather than one-day flow. Read it alongside daily flow to separate short-term posture from a real ownership build. Legal limit {ownership_limit_ratio_value}."
+        )
+        source_cards.insert(
+            1,
+            _official_source_story_html(
+                "TWSE MI_QFIIS",
+                "外資持股比" if lang_zh else "Foreign ownership",
+                str(foreign_ownership.get("date", "")),
+                ownership_card_headline,
+                ownership_card_detail,
+                ownership_card_note,
+                pill_text=ownership_card_pill,
+                tone=ownership_card_tone,
+            ),
+        )
     render_html_block(
         f"""
         <div class="guide-shell" style="margin-top:12px;">
@@ -18865,6 +19188,7 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     )
 
     explain_cards = [
+        _official_story_box_html("資料狀態" if lang_zh else "Data status", flow_diagnostics.get("headline", ""), flow_diagnostics.get("detail", "")),
         _official_story_box_html("外資 / 法人" if lang_zh else "Institutions", flow_headline, flow_detail),
         _official_story_box_html("營收 / 基本面" if lang_zh else "Revenue / fundamentals", revenue_headline, revenue_detail),
         _official_story_box_html("估值" if lang_zh else "Valuation", valuation_headline, valuation_detail),
@@ -18894,6 +19218,7 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
     visible_values = [
         pe_value, yield_value, pb_value,
         foreign_net, trust_net, dealer_net,
+        ownership_ratio_value, ownership_shares_value,
         revenue_value, yoy_value, mom_value,
         fx_value, rate_value, pcr_value,
     ]
@@ -18910,6 +19235,7 @@ def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) ->
                 _active_etf_plain_cell({
                     "valuation": "估值" if lang_zh else "Valuation",
                     "flow": "法人" if lang_zh else "Institutional flow",
+                    "foreign_ownership": "外資持股比" if lang_zh else "Foreign ownership",
                     "revenue": "月營收" if lang_zh else "Monthly revenue",
                     "cbc_fx": "央行匯率" if lang_zh else "CBC FX",
                     "cbc_rate": "央行利率" if lang_zh else "CBC Rate",
