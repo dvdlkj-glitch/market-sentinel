@@ -20503,6 +20503,89 @@ def _format_supply_chain_foreign_flow(value: object, lang_zh: bool) -> str:
     return _format_taiwan_lot_text(numeric, lang_zh, signed=True)
 
 
+def _supply_chain_abs_scale(rows: list[dict], key: str, *, minimum: float = 1.0) -> float:
+    values = [
+        abs(float(_safe_float(row.get(key))))
+        for row in rows
+        if pd.notna(_safe_float(row.get(key)))
+    ]
+    if not values:
+        return minimum
+    return max(max(values), minimum)
+
+
+def _supply_chain_progress(value: object, scale: float, *, floor: float = 8.0) -> float:
+    numeric = _safe_float(value)
+    if pd.isna(numeric) or not scale:
+        return 0.0
+    return max(floor, min(100.0, abs(float(numeric)) / float(scale) * 100.0))
+
+
+def _supply_chain_ring_style(value: object, scale: float) -> str:
+    progress = _supply_chain_progress(value, scale, floor=12.0)
+    tone = _supply_chain_move_tone(value)
+    fill = "#34f5c5" if tone == "up" else "#ff8fa3" if tone == "down" else "#48d7ff"
+    return (
+        f"--ring-fill:{fill};"
+        f"--ring-pct:{progress:.2f}%;"
+    )
+
+
+def _supply_chain_bar_style(value: object, scale: float) -> str:
+    progress = _supply_chain_progress(value, scale, floor=6.0)
+    tone = _supply_chain_move_tone(value)
+    fill = "#34f5c5" if tone == "up" else "#ff8fa3" if tone == "down" else "#48d7ff"
+    return (
+        f"--bar-fill:{fill};"
+        f"--bar-pct:{progress:.2f}%;"
+    )
+
+
+def _render_supply_chain_metric_tile(label: str, title: str, value: str, tone: str = "flat", note: str = "") -> str:
+    return f'''
+    <div class="sc-hud-metric tone-{escape(str(tone))}">
+        <div class="sc-hud-label">{escape(str(label))}</div>
+        <div class="sc-hud-metric-title">{escape(str(title) or "—")}</div>
+        <div class="sc-hud-metric-value {escape(str(tone))}">{escape(str(value) or "—")}</div>
+        <div class="sc-hud-note">{escape(str(note) or "—")}</div>
+    </div>
+    '''
+
+
+def _render_supply_chain_sparkline(rows: list[dict], key: str = "aggregate_move_sum") -> str:
+    values = [_safe_float(row.get(key)) for row in rows]
+    values = [float(value) for value in values if pd.notna(value)]
+    if len(values) < 2:
+        return ""
+
+    width = 340
+    height = 118
+    pad_x = 18
+    pad_y = 18
+    min_value = min(values)
+    max_value = max(values)
+    span = max(max_value - min_value, 1.0)
+    points: list[str] = []
+    fills: list[str] = []
+    for idx, value in enumerate(values):
+        x = pad_x + (width - pad_x * 2) * idx / max(len(values) - 1, 1)
+        y = height - pad_y - ((value - min_value) / span) * (height - pad_y * 2)
+        points.append(f"{x:.1f},{y:.1f}")
+        fills.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.4" class="sc-hud-spark-dot"></circle>')
+
+    baseline_y = height - pad_y - ((0 - min_value) / span) * (height - pad_y * 2)
+    baseline_y = max(pad_y, min(height - pad_y, baseline_y))
+    area_points = " ".join([f"{pad_x},{height - pad_y}", *points, f"{width - pad_x},{height - pad_y}"])
+    return f'''
+    <svg class="sc-hud-sparkline" viewBox="0 0 {width} {height}" role="img" aria-label="Supply chain aggregate move sparkline">
+        <line x1="{pad_x}" x2="{width - pad_x}" y1="{baseline_y:.1f}" y2="{baseline_y:.1f}" class="sc-hud-spark-zero"></line>
+        <polygon points="{area_points}" class="sc-hud-spark-area"></polygon>
+        <polyline points="{" ".join(points)}" class="sc-hud-spark-line"></polyline>
+        {"".join(fills)}
+    </svg>
+    '''
+
+
 def inject_supply_chain_overview_css() -> None:
     render_html_block(
         """
@@ -20510,113 +20593,365 @@ def inject_supply_chain_overview_css() -> None:
         .sc-overall-shell {
             margin-top: 14px;
             margin-bottom: 18px;
+            padding: 18px;
+            overflow: hidden;
+            border-radius: 22px;
+            border: 1px solid rgba(88, 226, 255, .22);
+            background:
+                linear-gradient(90deg, rgba(74, 69, 182, .28), rgba(14, 221, 199, .06) 46%, rgba(74, 69, 182, .22)),
+                linear-gradient(145deg, #11113d 0%, #111639 48%, #17104a 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 24px 60px rgba(8, 14, 40, .32);
+            color: #eef7ff;
         }
-        .sc-overall-head {
+        .sc-hud-topbar {
             display: flex;
-            gap: 14px;
-            align-items: flex-end;
+            gap: 16px;
+            align-items: center;
             justify-content: space-between;
-            margin-bottom: 14px;
+            padding: 12px 14px;
+            margin: -2px -2px 16px;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(75, 76, 190, .25);
         }
-        .sc-overall-grid {
+        .sc-hud-title {
+            font-size: 22px;
+            line-height: 1.2;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .sc-hud-copy {
+            margin-top: 5px;
+            max-width: 760px;
+            font-size: 13px;
+            line-height: 1.55;
+            color: rgba(225, 239, 255, .76);
+        }
+        .sc-hud-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .sc-hud-chip {
+            display: inline-flex;
+            min-height: 28px;
+            align-items: center;
+            border-radius: 999px;
+            padding: 5px 10px;
+            border: 1px solid rgba(89, 240, 255, .24);
+            background: rgba(20, 26, 79, .62);
+            color: rgba(238, 247, 255, .86);
+            font-size: 11px;
+            font-weight: 850;
+            white-space: nowrap;
+        }
+        .sc-hud-metric-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 12px;
         }
-        .sc-overall-card {
-            position: relative;
+        .sc-hud-metric,
+        .sc-hud-panel {
             overflow: hidden;
-            border-radius: 18px;
-            padding: 16px;
-            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
+            border-radius: 16px;
+            border: 1px solid rgba(89, 240, 255, .18);
             background:
-                radial-gradient(circle at 12% 12%, color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent), transparent 34%),
-                linear-gradient(145deg, color-mix(in srgb, var(--card-soft, #111c2f) 92%, transparent), color-mix(in srgb, var(--card, #08111f) 98%, transparent));
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 18px 36px rgba(0,0,0,.18);
+                linear-gradient(145deg, rgba(31, 34, 97, .86), rgba(16, 20, 64, .82));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.055);
         }
-        .sc-overall-card.rank-1 {
-            border-color: color-mix(in srgb, #f6d36b 45%, var(--brand-2, #38bdf8));
-            box-shadow: 0 0 0 1px rgba(246,211,107,.16), 0 22px 48px rgba(246,211,107,.08);
+        .sc-hud-metric {
+            padding: 16px;
         }
-        .sc-overall-icon {
-            position: absolute;
-            top: 14px;
-            right: 16px;
-            width: 34px;
-            height: 34px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 999px;
-            font-size: 18px;
-            font-weight: 900;
-            color: #f6d36b;
-            background: rgba(246,211,107,.11);
-            border: 1px solid rgba(246,211,107,.34);
+        .sc-hud-metric.tone-up {
+            border-color: rgba(52,245,197,.34);
         }
-        .sc-overall-kicker,
+        .sc-hud-metric.tone-down {
+            border-color: rgba(255,143,163,.32);
+        }
+        .sc-hud-label,
         .sc-overall-label {
             font-size: 11px;
             line-height: 1.2;
             letter-spacing: .12em;
             text-transform: uppercase;
             font-weight: 900;
-            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+            color: rgba(89, 240, 255, .82);
         }
-        .sc-overall-title {
+        .sc-hud-metric-title {
             margin-top: 8px;
-            padding-right: 44px;
-            font-size: 19px;
-            line-height: 1.25;
+            font-size: 14px;
+            line-height: 1.35;
             font-weight: 950;
-            color: var(--ink, #eef7ff);
+            color: #f4fbff;
         }
-        .sc-overall-value {
-            margin-top: 12px;
-            font-size: 28px;
+        .sc-hud-metric-value {
+            margin-top: 10px;
+            font-size: 26px;
             line-height: 1;
             font-weight: 950;
-            color: var(--ink, #eef7ff);
+            color: #f4fbff;
         }
+        .sc-hud-metric-value.up,
         .sc-overall-value.up,
         .sc-overall-mini-value.up {
-            color: #8df0bd;
+            color: #34f5c5;
         }
+        .sc-hud-metric-value.down,
         .sc-overall-value.down,
         .sc-overall-mini-value.down {
-            color: #ffb4b4;
+            color: #ff8fa3;
         }
+        .sc-hud-note,
         .sc-overall-note {
             margin-top: 8px;
             font-size: 12.5px;
             line-height: 1.55;
-            color: var(--muted, rgba(226,238,255,.78));
+            color: rgba(225, 239, 255, .72);
         }
-        .sc-overall-mini-grid {
+        .sc-hud-main-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: 1.08fr 1.26fr .92fr;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .sc-hud-panel {
+            padding: 16px;
+        }
+        .sc-hud-panel-title {
+            font-size: 15px;
+            line-height: 1.25;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .sc-hud-ring-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 10px;
             margin-top: 14px;
         }
-        .sc-overall-mini {
-            border-radius: 16px;
-            padding: 13px 14px;
-            border: 1px solid rgba(255,255,255,.08);
-            background: rgba(255,255,255,.035);
+        .sc-hud-ring-item {
+            min-width: 0;
+            text-align: center;
         }
-        .sc-overall-mini-value {
-            margin-top: 6px;
+        .sc-hud-ring {
+            width: min(100%, 88px);
+            aspect-ratio: 1;
+            margin: 0 auto 8px;
+            border-radius: 999px;
+            display: grid;
+            place-items: center;
+            background:
+                radial-gradient(circle at center, #17184d 58%, transparent 60%),
+                conic-gradient(var(--ring-fill) var(--ring-pct), rgba(255,255,255,.14) 0);
+            box-shadow: 0 0 24px rgba(72, 215, 255, .12);
+        }
+        .sc-hud-ring span {
+            font-size: 17px;
+            line-height: 1;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .sc-hud-ring-name {
+            font-size: 12px;
+            line-height: 1.35;
+            font-weight: 850;
+            color: rgba(238,247,255,.86);
+        }
+        .sc-hud-ring-sub {
+            margin-top: 3px;
+            font-size: 11px;
+            color: rgba(225,239,255,.62);
+        }
+        .sc-hud-node-row {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .sc-hud-node {
+            min-width: 0;
+            padding-top: 7px;
+            text-align: center;
+        }
+        .sc-hud-node-pin {
+            width: 18px;
+            height: 18px;
+            margin: 0 auto;
+            border-radius: 999px;
+            background: #48d7ff;
+            box-shadow: 0 0 18px rgba(72,215,255,.66);
+        }
+        .sc-hud-node-line {
+            width: 2px;
+            height: 34px;
+            margin: 0 auto;
+            background: linear-gradient(#48d7ff, rgba(72,215,255,.08));
+        }
+        .sc-hud-node-card {
+            min-height: 78px;
+            padding: 11px 8px;
+            border-radius: 12px;
+            border: 1px solid rgba(72,215,255,.22);
+            background: linear-gradient(180deg, rgba(37,215,238,.82), rgba(37,215,238,.22));
+            color: #07133d;
+        }
+        .sc-hud-node-value {
+            font-size: 18px;
+            line-height: 1;
+            font-weight: 950;
+        }
+        .sc-hud-node-name {
+            margin-top: 7px;
+            font-size: 12px;
+            line-height: 1.25;
+            font-weight: 950;
+        }
+        .sc-hud-bars {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .sc-hud-bar-row {
+            display: grid;
+            grid-template-columns: minmax(120px, .9fr) 1fr auto;
+            gap: 10px;
+            align-items: center;
+        }
+        .sc-hud-bar-name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+            font-weight: 850;
+            color: rgba(238,247,255,.86);
+        }
+        .sc-hud-bar-track {
+            height: 10px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(255,255,255,.11);
+        }
+        .sc-hud-bar-fill {
+            width: var(--bar-pct);
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, var(--bar-fill), #48d7ff);
+            box-shadow: 0 0 14px color-mix(in srgb, var(--bar-fill) 70%, transparent);
+        }
+        .sc-hud-bar-value {
+            min-width: 58px;
+            text-align: right;
+            font-size: 12px;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .sc-hud-sparkline {
+            width: 100%;
+            min-height: 118px;
+            margin-top: 14px;
+            overflow: visible;
+        }
+        .sc-hud-spark-zero {
+            stroke: rgba(255,255,255,.13);
+            stroke-width: 1;
+        }
+        .sc-hud-spark-area {
+            fill: rgba(72,215,255,.12);
+        }
+        .sc-hud-spark-line {
+            fill: none;
+            stroke: #48d7ff;
+            stroke-width: 5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            filter: drop-shadow(0 0 7px rgba(72,215,255,.68));
+        }
+        .sc-hud-spark-dot {
+            fill: #34f5c5;
+            stroke: rgba(255,255,255,.65);
+            stroke-width: 1.2;
+        }
+        .sc-overall-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .sc-overall-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 16px;
+            padding: 15px;
+            border: 1px solid rgba(89, 240, 255, .17);
+            background: rgba(15, 23, 73, .72);
+        }
+        .sc-overall-card.rank-1 {
+            border-color: rgba(52,245,197,.38);
+            box-shadow: 0 0 0 1px rgba(52,245,197,.08);
+        }
+        .sc-overall-icon {
+            position: absolute;
+            top: 13px;
+            right: 14px;
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            font-size: 18px;
+            font-weight: 900;
+            color: #34f5c5;
+            background: rgba(52,245,197,.1);
+            border: 1px solid rgba(52,245,197,.3);
+        }
+        .sc-overall-kicker {
+            font-size: 11px;
+            line-height: 1.2;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(89, 240, 255, .82);
+        }
+        .sc-overall-title {
+            margin-top: 8px;
+            padding-right: 42px;
             font-size: 17px;
             line-height: 1.25;
             font-weight: 950;
-            color: var(--ink, #eef7ff);
+            color: #f4fbff;
+        }
+        .sc-overall-value {
+            margin-top: 11px;
+            font-size: 26px;
+            line-height: 1;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .sc-overall-mini-grid {
+            display: grid;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .sc-overall-mini {
+            padding-top: 9px;
+            border-top: 1px solid rgba(255,255,255,.08);
+        }
+        .sc-overall-mini-value {
+            margin-top: 4px;
+            font-size: 14px;
+            line-height: 1.3;
+            font-weight: 950;
+            color: #f4fbff;
         }
         .sc-overall-table {
             margin-top: 14px;
             overflow: hidden;
-            border-radius: 18px;
-            border: 1px solid color-mix(in srgb, var(--brand-2, #38bdf8) 18%, transparent);
-            background: rgba(6,14,26,.55);
+            border-radius: 16px;
+            border: 1px solid rgba(89, 240, 255, .17);
+            background: rgba(9, 16, 53, .64);
             overflow-x: auto;
         }
         .sc-overall-table-head,
@@ -20626,14 +20961,14 @@ def inject_supply_chain_overview_css() -> None:
             min-width: 860px;
         }
         .sc-overall-table-head {
-            background: rgba(56,189,248,.08);
+            background: rgba(72,215,255,.09);
         }
         .sc-overall-cell {
             padding: 13px 14px;
             border-bottom: 1px solid rgba(255,255,255,.055);
             font-size: 13px;
             line-height: 1.45;
-            color: var(--muted, rgba(226,238,255,.82));
+            color: rgba(226,238,255,.82);
         }
         .sc-overall-table-row:last-child .sc-overall-cell {
             border-bottom: 0;
@@ -20643,11 +20978,44 @@ def inject_supply_chain_overview_css() -> None:
             letter-spacing: .12em;
             text-transform: uppercase;
             font-weight: 900;
-            color: color-mix(in srgb, var(--brand-2, #38bdf8) 80%, var(--ink, #eef7ff));
+            color: rgba(89,240,255,.82);
         }
         .sc-overall-strong {
             font-weight: 950;
-            color: var(--ink, #eef7ff);
+            color: #f4fbff;
+        }
+        @media (max-width: 980px) {
+            .sc-hud-topbar,
+            .sc-hud-main-grid,
+            .sc-hud-metric-grid {
+                grid-template-columns: 1fr;
+            }
+            .sc-hud-topbar {
+                display: grid;
+            }
+            .sc-hud-chip-row {
+                justify-content: flex-start;
+            }
+            .sc-hud-main-grid,
+            .sc-hud-metric-grid {
+                display: grid;
+            }
+        }
+        @media (max-width: 640px) {
+            .sc-overall-shell {
+                padding: 12px;
+                border-radius: 18px;
+            }
+            .sc-hud-ring-grid,
+            .sc-hud-node-row {
+                grid-template-columns: 1fr;
+            }
+            .sc-hud-bar-row {
+                grid-template-columns: 1fr;
+            }
+            .sc-hud-bar-value {
+                text-align: left;
+            }
         }
         </style>
         """
@@ -20734,6 +21102,166 @@ def _render_supply_chain_overview_table(rows: list[dict]) -> str:
     )
 
 
+def _render_supply_chain_dashboard_overview(
+    rows: list[dict],
+    *,
+    show_icons: bool,
+    title: str,
+    copy: str,
+    basis: str,
+) -> str:
+    lang_zh = get_language() == "zh_TW"
+    total_tickers = sum(int(row.get("ticker_count", 0) or 0) for row in rows)
+    total_risers = sum(int(row.get("rising_count", 0) or 0) for row in rows)
+    breadth_value = (total_risers / total_tickers * 100.0) if total_tickers else float("nan")
+    breadth_tone = "up" if pd.notna(breadth_value) and breadth_value >= 55 else "down" if pd.notna(breadth_value) and breadth_value <= 45 else "flat"
+    aggregate_scale = _supply_chain_abs_scale(rows, "aggregate_move_sum", minimum=1.0)
+    foreign_scale = _supply_chain_abs_scale(rows, "foreign_net_total", minimum=1.0)
+
+    valid_foreign_rows = [row for row in rows if pd.notna(_safe_float(row.get("foreign_net_total")))]
+    foreign_buy_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) > 0]
+    foreign_sell_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) < 0]
+    top_buy = max(foreign_buy_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_buy_rows else {}
+    top_sell = min(foreign_sell_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_sell_rows else {}
+    leader = rows[0]
+    weakest = rows[-1]
+    fetched_texts = [format_supply_chain_snapshot_fetched_at(row.get("fetched_at")) for row in rows if row.get("fetched_at")]
+    last_update_text = fetched_texts[0] if fetched_texts else "—"
+
+    metric_html = "".join(
+        [
+            _render_supply_chain_metric_tile(
+                "Overall Leader" if not lang_zh else "整組漲幅王",
+                str(leader.get("title", "—")),
+                format_percent(leader.get("aggregate_move_sum")),
+                _supply_chain_move_tone(leader.get("aggregate_move_sum")),
+                f"{leader.get('rising_count', 0)} / {leader.get('ticker_count', 0)} {'risers' if not lang_zh else '檔上漲'}",
+            ),
+            _render_supply_chain_metric_tile(
+                "Foreign Bid" if not lang_zh else "外資主攻",
+                str((top_buy or {}).get("title", "—")),
+                _format_supply_chain_foreign_flow((top_buy or {}).get("foreign_net_total"), lang_zh),
+                _supply_chain_move_tone((top_buy or {}).get("foreign_net_total")),
+                "Largest net buy in the selected chains" if not lang_zh else "所選供應鏈中外資買超最大",
+            ),
+            _render_supply_chain_metric_tile(
+                "Foreign Offer" if not lang_zh else "外資調節",
+                str((top_sell or {}).get("title", "—")),
+                _format_supply_chain_foreign_flow((top_sell or {}).get("foreign_net_total"), lang_zh),
+                _supply_chain_move_tone((top_sell or {}).get("foreign_net_total")),
+                "Largest net sell in the selected chains" if not lang_zh else "所選供應鏈中外資賣超最大",
+            ),
+            _render_supply_chain_metric_tile(
+                "Breadth" if not lang_zh else "上漲廣度",
+                "All selected chains" if not lang_zh else "全部已選供應鏈",
+                f"{breadth_value:.0f}%" if pd.notna(breadth_value) else "—",
+                breadth_tone,
+                f"{total_risers} / {total_tickers} {'constituents up' if not lang_zh else '檔成分股上漲'}",
+            ),
+        ]
+    )
+
+    ring_html = []
+    for row in rows[:3]:
+        ring_html.append(
+            f'''
+            <div class="sc-hud-ring-item">
+                <div class="sc-hud-ring" style="{escape(_supply_chain_ring_style(row.get("aggregate_move_sum"), aggregate_scale))}">
+                    <span>{escape(format_percent(row.get("aggregate_move_sum")).replace("+", ""))}</span>
+                </div>
+                <div class="sc-hud-ring-name">{escape(str(row.get("title", "—")))}</div>
+                <div class="sc-hud-ring-sub">#{int(row.get("rank", 0) or 0):02d} · {escape(str(row.get("rising_count", 0)))} / {escape(str(row.get("ticker_count", 0)))}</div>
+            </div>
+            '''
+        )
+
+    node_html = []
+    for row in rows[:3]:
+        node_html.append(
+            f'''
+            <div class="sc-hud-node">
+                <div class="sc-hud-node-pin"></div>
+                <div class="sc-hud-node-line"></div>
+                <div class="sc-hud-node-card">
+                    <div class="sc-hud-node-value">{escape(format_percent(row.get("aggregate_move_sum")))}</div>
+                    <div class="sc-hud-node-name">{escape(str(row.get("title", "—")))}</div>
+                </div>
+            </div>
+            '''
+        )
+
+    aggregate_bars = []
+    foreign_bars = []
+    for row in rows:
+        aggregate_tone = _supply_chain_move_tone(row.get("aggregate_move_sum"))
+        foreign_tone = _supply_chain_move_tone(row.get("foreign_net_total"))
+        aggregate_bars.append(
+            f'''
+            <div class="sc-hud-bar-row">
+                <div class="sc-hud-bar-name">#{int(row.get("rank", 0) or 0):02d} {escape(str(row.get("title", "—")))}</div>
+                <div class="sc-hud-bar-track"><div class="sc-hud-bar-fill" style="{escape(_supply_chain_bar_style(row.get("aggregate_move_sum"), aggregate_scale))}"></div></div>
+                <div class="sc-hud-bar-value {escape(aggregate_tone)}">{escape(format_percent(row.get("aggregate_move_sum")))}</div>
+            </div>
+            '''
+        )
+        foreign_bars.append(
+            f'''
+            <div class="sc-hud-bar-row">
+                <div class="sc-hud-bar-name">{escape(str(row.get("title", "—")))}</div>
+                <div class="sc-hud-bar-track"><div class="sc-hud-bar-fill" style="{escape(_supply_chain_bar_style(row.get("foreign_net_total"), foreign_scale))}"></div></div>
+                <div class="sc-hud-bar-value {escape(foreign_tone)}">{escape(_format_supply_chain_foreign_flow(row.get("foreign_net_total"), lang_zh))}</div>
+            </div>
+            '''
+        )
+
+    chips = [
+        f"{len(rows)} {'chains' if not lang_zh else '條供應鏈'}",
+        f"{total_tickers} {'constituents' if not lang_zh else '檔成分股'}",
+        f"{'Snapshot' if not lang_zh else '快照'} {last_update_text}",
+        f"{'Weakest' if not lang_zh else '相對弱勢'} {weakest.get('title', '—')} {format_percent(weakest.get('aggregate_move_sum'))}",
+    ]
+    chip_html = "".join(f'<span class="sc-hud-chip">{escape(str(chip))}</span>' for chip in chips)
+    sparkline_html = _render_supply_chain_sparkline(rows, key="aggregate_move_sum") or (
+        f'<div class="sc-hud-note">{"Need at least two chains for the line view." if not lang_zh else "至少需要兩條供應鏈才會顯示折線。"}</div>'
+    )
+
+    return f'''
+    <div class="guide-shell sc-overall-shell">
+        <div class="sc-hud-topbar">
+            <div>
+                <div class="section-header">{escape(title)}</div>
+                <div class="sc-hud-title">{"Supply-chain command view" if not lang_zh else "供應鏈 Overall 對比總控"}</div>
+                <div class="sc-hud-copy">{escape(copy)}</div>
+            </div>
+            <div class="sc-hud-chip-row">{chip_html}</div>
+        </div>
+        <div class="sc-hud-metric-grid">{metric_html}</div>
+        <div class="sc-hud-main-grid">
+            <div class="sc-hud-panel">
+                <div class="sc-hud-label">{"Top rings" if not lang_zh else "強勢圓環"}</div>
+                <div class="sc-hud-panel-title">{"Aggregate move intensity" if not lang_zh else "整組漲幅強度"}</div>
+                <div class="sc-hud-ring-grid">{"".join(ring_html)}</div>
+            </div>
+            <div class="sc-hud-panel">
+                <div class="sc-hud-label">{"Leadership nodes" if not lang_zh else "領先鏈節點"}</div>
+                <div class="sc-hud-panel-title">{"Top chain comparison" if not lang_zh else "前三強供應鏈對比"}</div>
+                <div class="sc-hud-node-row">{"".join(node_html)}</div>
+                <div class="sc-hud-bars">{"".join(aggregate_bars)}</div>
+            </div>
+            <div class="sc-hud-panel">
+                <div class="sc-hud-label">{"Flow monitor" if not lang_zh else "外資與排序波形"}</div>
+                <div class="sc-hud-panel-title">{"Overall momentum line" if not lang_zh else "整組動能折線"}</div>
+                {sparkline_html}
+                <div class="sc-hud-bars">{"".join(foreign_bars)}</div>
+            </div>
+        </div>
+        <div class="sc-overall-grid">{_render_supply_chain_overview_cards(rows, show_icons=show_icons)}</div>
+        {_render_supply_chain_overview_table(rows)}
+        <div class="leo-rank-note">{escape(basis)}</div>
+    </div>
+    '''
+
+
 def render_supply_chain_overall_summary(
     selected_keys: list[str],
     lens_meta: dict | None = None,
@@ -20748,48 +21276,11 @@ def render_supply_chain_overall_summary(
         st.info("目前還沒有可用的供應鏈快照。" if lang_zh else "No supply-chain snapshots are available yet.")
         return []
 
-    valid_foreign_rows = [row for row in rows if pd.notna(_safe_float(row.get("foreign_net_total")))]
-    foreign_buy_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) > 0]
-    foreign_sell_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) < 0]
-    top_buy = max(foreign_buy_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_buy_rows else None
-    top_sell = min(foreign_sell_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_sell_rows else None
-    leader = rows[0]
-
-    headline_cards = [
-        (
-            "整組漲幅王" if lang_zh else "Aggregate leader",
-            str(leader.get("title", "—")),
-            format_percent(leader.get("aggregate_move_sum")),
-            _supply_chain_move_tone(leader.get("aggregate_move_sum")),
-        ),
-        (
-            "外資最買" if lang_zh else "Most foreign buying",
-            str((top_buy or {}).get("title", "—")),
-            _format_supply_chain_foreign_flow((top_buy or {}).get("foreign_net_total"), lang_zh),
-            _supply_chain_move_tone((top_buy or {}).get("foreign_net_total")),
-        ),
-        (
-            "外資最賣" if lang_zh else "Most foreign selling",
-            str((top_sell or {}).get("title", "—")),
-            _format_supply_chain_foreign_flow((top_sell or {}).get("foreign_net_total"), lang_zh),
-            _supply_chain_move_tone((top_sell or {}).get("foreign_net_total")),
-        ),
-    ]
-    mini_html = "".join(
-        f'''
-        <div class="sc-overall-mini">
-            <div class="sc-overall-label">{escape(label)}</div>
-            <div class="sc-overall-mini-value {escape(tone)}">{escape(title)} · {escape(value)}</div>
-        </div>
-        '''
-        for label, title, value, tone in headline_cards
-    )
-
     title = "Overall 供應鏈摘要" if lang_zh else "Overall Supply-Chain Summary"
     copy = (
-        "依照每條供應鏈成分股的最新漲跌幅加總排序，並同步看外資在整組供應鏈上的買賣超方向。"
+        "依照目前供應鏈 Overall 對比資料，把每條供應鏈的整組漲跌、上漲廣度、外資買賣超與領先成分股放在同一個總覽畫面。"
         if lang_zh
-        else "Ranks each chain by aggregate constituent move and checks where foreign flow is most supportive or cautious."
+        else "Uses the current supply-chain Overall comparison data to put aggregate move, breadth, foreign flow, and leading constituent on one overview screen."
     )
     basis = (
         "整組漲幅 = 目前快照中可用成分股漲跌幅加總；外資合計優先讀官方快照。"
@@ -20797,22 +21288,7 @@ def render_supply_chain_overall_summary(
         else "Aggregate move sums available constituent moves in the current snapshot; foreign flow uses official snapshots first."
     )
 
-    render_html_block(
-        f'''
-        <div class="guide-shell sc-overall-shell">
-            <div class="sc-overall-head">
-                <div>
-                    <div class="section-header">{escape(title)}</div>
-                    <div class="guide-copy">{escape(copy)}</div>
-                </div>
-            </div>
-            <div class="sc-overall-mini-grid">{mini_html}</div>
-            <div class="sc-overall-grid">{_render_supply_chain_overview_cards(rows, show_icons=show_icons)}</div>
-            {_render_supply_chain_overview_table(rows)}
-            <div class="leo-rank-note">{escape(basis)}</div>
-        </div>
-        '''
-    )
+    render_html_block(_render_supply_chain_dashboard_overview(rows, show_icons=show_icons, title=title, copy=copy, basis=basis))
     return rows
 
 
