@@ -24533,6 +24533,149 @@ def inject_home_news_briefing_css() -> None:
         .home-news-compact-value.down {
             color: #ff8fa3;
         }
+        .home-news-overall-shell {
+            margin-top: 13px;
+            border-radius: 18px;
+            padding: 14px;
+            border: 1px solid rgba(72,215,255,.16);
+            background: linear-gradient(150deg, rgba(31,34,97,.9), rgba(14,19,62,.86));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+        }
+        .home-news-overall-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .home-news-overall-title {
+            margin-top: 7px;
+            font-size: 18px;
+            line-height: 1.24;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-overall-copy {
+            margin-top: 6px;
+            font-size: 12.5px;
+            line-height: 1.58;
+            color: rgba(225,239,255,.72);
+        }
+        .home-news-overall-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 7px;
+        }
+        .home-news-overall-chip {
+            display: inline-flex;
+            min-height: 26px;
+            align-items: center;
+            border-radius: 999px;
+            padding: 4px 9px;
+            border: 1px solid rgba(89,240,255,.22);
+            background: rgba(9,16,53,.55);
+            color: rgba(238,247,255,.82);
+            font-size: 10.5px;
+            font-weight: 850;
+            white-space: nowrap;
+        }
+        .home-news-overall-metric-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 9px;
+            margin-top: 12px;
+        }
+        .home-news-overall-metric {
+            border-radius: 14px;
+            padding: 11px;
+            border: 1px solid rgba(255,255,255,.06);
+            background: rgba(255,255,255,.04);
+        }
+        .home-news-overall-metric-label {
+            font-size: 10px;
+            line-height: 1.2;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(89,240,255,.8);
+        }
+        .home-news-overall-metric-title {
+            margin-top: 7px;
+            font-size: 15px;
+            line-height: 1.25;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-overall-metric-value {
+            margin-top: 8px;
+            font-size: 22px;
+            line-height: 1;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-overall-metric-value.up {
+            color: #34f5c5;
+        }
+        .home-news-overall-metric-value.down {
+            color: #ff8fa3;
+        }
+        .home-news-overall-metric-note {
+            margin-top: 8px;
+            font-size: 11.5px;
+            line-height: 1.45;
+            color: rgba(225,239,255,.68);
+        }
+        .home-news-overall-list {
+            display: grid;
+            gap: 9px;
+            margin-top: 13px;
+        }
+        .home-news-overall-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1.25fr) auto auto;
+            gap: 10px;
+            align-items: center;
+            padding: 10px 11px;
+            border-radius: 14px;
+            background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.06);
+        }
+        .home-news-overall-main {
+            min-width: 0;
+        }
+        .home-news-overall-sub {
+            margin-top: 3px;
+            font-size: 11.5px;
+            line-height: 1.4;
+            color: rgba(225,239,255,.62);
+            white-space: normal;
+            word-break: break-word;
+        }
+        .home-news-overall-mini {
+            min-width: 64px;
+            text-align: right;
+        }
+        .home-news-overall-mini-label {
+            font-size: 10px;
+            line-height: 1.2;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(177,228,255,.7);
+        }
+        .home-news-overall-mini-value {
+            margin-top: 4px;
+            font-size: 12.5px;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-overall-mini-value.up {
+            color: #34f5c5;
+        }
+        .home-news-overall-mini-value.down {
+            color: #ff8fa3;
+        }
         .home-editor-list {
             display: grid;
             gap: 10px;
@@ -24742,6 +24885,12 @@ def inject_home_news_briefing_css() -> None:
             .home-news-card-grid {
                 grid-template-columns: 1fr;
             }
+            .home-news-overall-metric-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .home-news-overall-chip-row {
+                justify-content: flex-start;
+            }
             .home-news-terrain-head {
                 flex-direction: column;
             }
@@ -24755,6 +24904,9 @@ def inject_home_news_briefing_css() -> None:
                 padding: 12px;
                 border-radius: 18px;
             }
+            .home-news-overall-metric-grid {
+                grid-template-columns: 1fr;
+            }
             .home-news-terrain-svg {
                 height: 240px;
             }
@@ -24763,6 +24915,13 @@ def inject_home_news_briefing_css() -> None:
             }
             .home-news-row-value {
                 grid-column: 2;
+                text-align: left;
+            }
+            .home-news-overall-row {
+                grid-template-columns: auto 1fr;
+            }
+            .home-news-overall-mini {
+                min-width: 0;
                 text-align: left;
             }
         }
@@ -24884,6 +25043,146 @@ def _render_home_news_active_etf_html(rows: list[dict], *, lang_zh: bool) -> str
     '''
 
 
+def _build_home_news_active_etf_overview_rows(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    dashboard_tickers: list[str],
+    lens_meta: dict | None,
+    *,
+    dashboard_mode: str,
+) -> list[dict]:
+    etf_tickers = dedupe_keep_order(_home_news_active_etf_candidates(dashboard_mode, dashboard_tickers))[:6]
+    if not etf_tickers or daily_data is None or daily_data.empty:
+        return []
+
+    bundles = [
+        collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta)
+        for ticker in etf_tickers
+    ]
+    bundles = [bundle for bundle in bundles if bundle is not None]
+    if not bundles:
+        return []
+    return build_active_etf_overview_rows(bundles, max_items=6)
+
+
+def _render_home_news_active_etf_overall_html(rows: list[dict], *, lang_zh: bool) -> str:
+    if not rows:
+        return _home_news_empty(
+            "ETF Overall",
+            "等待 ETF Overall 對比" if lang_zh else "Awaiting ETF overall compare",
+            "常看主動式 ETF 建立完成後，這裡會顯示首頁摘要對比。" if lang_zh else "This summary will appear once the common active ETF compare view is ready.",
+        )
+
+    valid_foreign_rows = [row for row in rows if pd.notna(_safe_float(row.get("foreign_net_total")))]
+    foreign_buy_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) > 0]
+    foreign_sell_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) < 0]
+    leader = rows[0]
+    weakest = rows[-1]
+    top_buy = max(foreign_buy_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_buy_rows else {}
+    top_sell = min(foreign_sell_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_sell_rows else {}
+    total_rows = len(rows)
+    total_risers = sum(int(row.get("rising_count", 0) or 0) for row in rows)
+    breadth_value = (total_risers / total_rows * 100.0) if total_rows else float("nan")
+    snapshot_texts = [format_active_etf_snapshot_fetched_at(row.get("fetched_at")) for row in rows if row.get("fetched_at")]
+    latest_snapshot = snapshot_texts[0] if snapshot_texts else "—"
+
+    chips = [
+        f"{len(rows)} {'檔主動ETF' if lang_zh else 'active ETFs'}",
+        f"{'ETF 外資' if lang_zh else 'ETF foreign'} {len(valid_foreign_rows)} / {len(rows)}",
+        f"{'快照' if lang_zh else 'Snapshot'} {latest_snapshot}",
+    ]
+    chip_html = "".join(f'<span class="home-news-overall-chip">{escape(str(chip))}</span>' for chip in chips)
+
+    metric_specs = [
+        (
+            "ETF leader" if not lang_zh else "領先 ETF",
+            str(leader.get("title", "—")),
+            format_percent(leader.get("aggregate_move_sum")),
+            _supply_chain_move_tone(leader.get("aggregate_move_sum")),
+            f"{leader.get('signal_label', '—')} · {leader.get('dominant_bucket', '—')}",
+        ),
+        (
+            "Foreign bid" if not lang_zh else "外資主攻",
+            str((top_buy or {}).get("title") or ("等待外資" if lang_zh else "Awaiting flow")),
+            _format_supply_chain_foreign_flow((top_buy or {}).get("foreign_net_total"), lang_zh),
+            _supply_chain_move_tone((top_buy or {}).get("foreign_net_total")),
+            "ETF 受益權買超最大" if lang_zh else "Largest ETF unit net buy",
+        ),
+        (
+            "Foreign offer" if not lang_zh else "外資調節",
+            str((top_sell or {}).get("title") or ("等待外資" if lang_zh else "Awaiting flow")),
+            _format_supply_chain_foreign_flow((top_sell or {}).get("foreign_net_total"), lang_zh),
+            _supply_chain_move_tone((top_sell or {}).get("foreign_net_total")),
+            "ETF 受益權賣超最大" if lang_zh else "Largest ETF unit net sell",
+        ),
+        (
+            "Breadth" if not lang_zh else "上漲廣度",
+            "Tracked active ETFs" if not lang_zh else "常看主動 ETF",
+            f"{breadth_value:.0f}%" if pd.notna(breadth_value) else "—",
+            "up" if pd.notna(breadth_value) and breadth_value >= 55 else "down" if pd.notna(breadth_value) and breadth_value <= 45 else "flat",
+            f"{total_risers} / {len(rows)} {'ETFs up' if not lang_zh else '檔上漲'}",
+        ),
+    ]
+    metric_html = "".join(
+        f'''
+        <div class="home-news-overall-metric">
+            <div class="home-news-overall-metric-label">{escape(label)}</div>
+            <div class="home-news-overall-metric-title">{escape(title)}</div>
+            <div class="home-news-overall-metric-value {escape(tone)}">{escape(value)}</div>
+            <div class="home-news-overall-metric-note">{escape(note)}</div>
+        </div>
+        '''
+        for label, title, value, tone, note in metric_specs
+    )
+
+    list_html = []
+    for row in rows:
+        move = row.get("aggregate_move_sum", pd.NA)
+        foreign = row.get("foreign_net_total", pd.NA)
+        move_tone = _supply_chain_move_tone(move)
+        foreign_tone = _supply_chain_move_tone(foreign)
+        subtitle = f"{row.get('top_holding_name', '—')} · {row.get('dominant_bucket', '—')}"
+        list_html.append(
+            f'''
+            <div class="home-news-overall-row">
+                <div class="home-news-rank">{int(row.get("rank", 0) or 0)}</div>
+                <div class="home-news-overall-main">
+                    <div class="home-news-row-title">{escape(str(row.get("title", "—")))}</div>
+                    <div class="home-news-overall-sub">{escape(subtitle)}</div>
+                </div>
+                <div class="home-news-overall-mini">
+                    <div class="home-news-overall-mini-label">{"Move" if not lang_zh else "漲幅"}</div>
+                    <div class="home-news-overall-mini-value {escape(move_tone)}">{escape(format_percent(move))}</div>
+                </div>
+                <div class="home-news-overall-mini">
+                    <div class="home-news-overall-mini-label">{"Foreign" if not lang_zh else "外資"}</div>
+                    <div class="home-news-overall-mini-value {escape(foreign_tone)}">{escape(_format_supply_chain_foreign_flow(foreign, lang_zh))}</div>
+                </div>
+            </div>
+            '''
+        )
+
+    return f'''
+    <div class="home-news-overall-shell">
+        <div class="home-news-overall-head">
+            <div>
+                <div class="home-news-card-label">{"ETF Overall Compare" if not lang_zh else "ETF Overall 對比摘要"}</div>
+                <div class="home-news-overall-title">{"Common Taiwan active ETF command view" if not lang_zh else "常看台股主動 ETF 對比總覽"}</div>
+                <div class="home-news-overall-copy">
+                    {escape("The first-read desk in Active ETF mode now compares the common Taiwan active ETFs by daily move, ETF foreign flow, and holding style." if not lang_zh else "主動式 ETF Dashboard 的首頁第一眼，直接用常看台股主動 ETF 做單日漲幅、ETF 外資與持股風格的 Overall 對比。")}
+                </div>
+            </div>
+            <div class="home-news-overall-chip-row">{chip_html}</div>
+        </div>
+        <div class="home-news-overall-metric-grid">{metric_html}</div>
+        <div class="home-news-overall-list">{"".join(list_html)}</div>
+        <div class="home-news-card-note">
+            {escape(("相對弱勢 " if lang_zh else "Weakest ") + str(weakest.get("title", "—")) + " " + format_percent(weakest.get("aggregate_move_sum")))}
+        </div>
+    </div>
+    '''
+
+
 def _render_editor_analysis_html(items: list[dict], *, lang_zh: bool) -> str:
     cards = []
     for item in items:
@@ -24928,6 +25227,7 @@ def render_home_news_briefing(
 ) -> None:
     lang_zh = _news_briefing_is_zh()
     inject_home_news_briefing_css()
+    is_active_etf_mode = dashboard_mode == "Active ETF Lab"
 
     top_movers = build_home_news_top_taiwan_movers(
         daily_data,
@@ -24943,14 +25243,29 @@ def render_home_news_briefing(
         lens_meta,
         dashboard_mode,
     )
+    active_etf_overview_rows = (
+        _build_home_news_active_etf_overview_rows(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta,
+            dashboard_mode=dashboard_mode,
+        )
+        if is_active_etf_mode
+        else []
+    )
     editor_items = load_editor_analysis_items(max_items=4)
 
-    auto_cards = "".join(
-        [
-            _render_home_news_top_movers_html(top_movers, lang_zh=lang_zh),
-            _render_home_news_supply_chain_html(chain_leader, lang_zh=lang_zh),
-            _render_home_news_active_etf_html(active_etfs, lang_zh=lang_zh),
-        ]
+    auto_cards = (
+        _render_home_news_active_etf_overall_html(active_etf_overview_rows, lang_zh=lang_zh)
+        if is_active_etf_mode
+        else "".join(
+            [
+                _render_home_news_top_movers_html(top_movers, lang_zh=lang_zh),
+                _render_home_news_supply_chain_html(chain_leader, lang_zh=lang_zh),
+                _render_home_news_active_etf_html(active_etfs, lang_zh=lang_zh),
+            ]
+        )
     )
     terrain_card = _render_home_news_taiex_volume_terrain_html(lang_zh=lang_zh)
     editor_cards = _render_editor_analysis_html(editor_items, lang_zh=lang_zh)
@@ -24961,20 +25276,21 @@ def render_home_news_briefing(
             <div class="home-news-head">
                 <div>
                     <div class="section-header">{"News Briefing" if not lang_zh else "今日情報專欄"}</div>
-                    <div class="home-news-title">{"Market first-read desk" if not lang_zh else "進場第一眼：市場摘要與版主觀點"}</div>
+                    <div class="home-news-title">{"Active ETF first-read desk" if is_active_etf_mode and not lang_zh else "進場第一眼：主動 ETF Overall 與版主觀點" if is_active_etf_mode else "Market first-read desk" if not lang_zh else "進場第一眼：市場摘要與版主觀點"}</div>
                     <div class="home-news-copy">
-                        {escape("Auto brief ranks Taiwan movers, the strongest supply-chain group, and active ETF focus names; editor notes keep your extra analysis visible at the top." if not lang_zh else "自動摘要會整理台股漲幅、最強供應鏈與主動式 ETF 焦點；版主分析則放你的額外判讀，讓使用者一進來先讀重點。")}
+                        {escape("The active ETF homepage now starts with a compact overall compare of the commonly watched Taiwan active ETFs, while editor notes keep your extra analysis visible on the right." if is_active_etf_mode and not lang_zh else "主動式 ETF 首頁第一眼會先看常看台股主動 ETF 的 Overall 對比，右側再接版主的額外分析內容。" if is_active_etf_mode else "Auto brief ranks Taiwan movers, the strongest supply-chain group, and active ETF focus names; editor notes keep your extra analysis visible at the top." if not lang_zh else "自動摘要會整理台股漲幅、最強供應鏈與主動式 ETF 焦點；版主分析則放你的額外判讀，讓使用者一進來先讀重點。")}
                     </div>
                 </div>
                 <span class="home-news-pill">{"Updated" if not lang_zh else "更新"} {escape(timestamp_text)}</span>
             </div>
             <div class="home-news-grid">
                 <div class="home-news-column">
-                    <div class="home-news-column-title">{"Auto Market Summary" if not lang_zh else "摘要：系統自動整理"}</div>
+                    <div class="home-news-column-title">{"ETF Overall Summary" if is_active_etf_mode and not lang_zh else "摘要：主動 ETF Overall 對比" if is_active_etf_mode else "Auto Market Summary" if not lang_zh else "摘要：系統自動整理"}</div>
                     <div class="home-news-column-copy">
-                        {escape("Generated from current dashboard data and saved snapshots." if not lang_zh else "使用目前 Dashboard 資料與已建立快照產生。")}
+                        {escape("Generated from the current active ETF dashboard data, official ETF flow, and saved holdings snapshots." if is_active_etf_mode and not lang_zh else "使用目前主動 ETF Dashboard 資料、ETF 官方外資與已建立持股快照產生。" if is_active_etf_mode else "Generated from current dashboard data and saved snapshots." if not lang_zh else "使用目前 Dashboard 資料與已建立快照產生。")}
                     </div>
-                    <div class="home-news-card-grid">{auto_cards}</div>
+                    <div class="home-news-card-grid">{auto_cards if not is_active_etf_mode else ""}</div>
+                    {auto_cards if is_active_etf_mode else ""}
                     {terrain_card}
                 </div>
                 <div class="home-news-column">
