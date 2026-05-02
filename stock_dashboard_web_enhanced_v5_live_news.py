@@ -10,6 +10,7 @@ Highlights:
 from __future__ import annotations
 
 import os
+import base64
 import contextlib
 import io
 import json
@@ -23802,6 +23803,42 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
         f"The recent daily-volume terrain shows {latest_volume_text} on the latest bar, about {ratio_text} of the 20-day average, with the last session changing {change_text}."
     )
 
+    svg_markup = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {int(width)} {int(height)}" preserveAspectRatio="none" aria-label="TAIEX volume terrain">
+        <defs>
+            <linearGradient id="terrainGlowLeft" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#3af4e6" />
+                <stop offset="55%" stop-color="#39d8ff" />
+                <stop offset="100%" stop-color="#8974ff" />
+            </linearGradient>
+            <linearGradient id="terrainFillA" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#3af4e6" stop-opacity="0.20" />
+                <stop offset="100%" stop-color="#3af4e6" stop-opacity="0.02" />
+            </linearGradient>
+            <linearGradient id="terrainFillB" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#8974ff" stop-opacity="0.18" />
+                <stop offset="100%" stop-color="#8974ff" stop-opacity="0.02" />
+            </linearGradient>
+            <filter id="terrainBlur" x="-20%" y="-20%" width="140%" height="160%">
+                <feGaussianBlur stdDeviation="5.5" />
+            </filter>
+        </defs>
+        <rect x="0" y="0" width="{int(width)}" height="{int(height)}" fill="#050e1e" opacity="0.98" />
+        <g>
+            <line x1="{left_pad:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{width-right_pad:.1f}" y2="{height-bottom_pad+8:.1f}" stroke="#6ecdff" stroke-opacity="0.10" stroke-width="1" />
+            <line x1="{left_pad:.1f}" y1="{top_pad+24:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+24:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
+            <line x1="{left_pad:.1f}" y1="{top_pad+88:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+88:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
+            <line x1="{left_pad:.1f}" y1="{top_pad+152:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+152:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
+        </g>
+        <g>{''.join(fill_layers)}{''.join(column_lines)}{''.join(terrain_lines)}</g>
+        <polyline points="{front_path}" fill="none" stroke="#3af4e6" stroke-opacity="0.36" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" filter="url(#terrainBlur)" />
+        <polyline points="{front_path}" fill="none" stroke="url(#terrainGlowLeft)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+        <g>{''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.8" fill="#cfffff" opacity="0.94" />' for x, y in main_coords[::2])}</g>
+        <g>{''.join(timestamp_marks)}</g>
+    </svg>
+    """
+    terrain_data_uri = base64.b64encode(svg_markup.encode("utf-8")).decode("ascii")
+
     return f"""
     <div class="home-news-terrain-card">
         <div class="home-news-terrain-head">
@@ -23817,38 +23854,7 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
             </div>
         </div>
         <div class="home-news-terrain-stage">
-            <svg viewBox="0 0 {int(width)} {int(height)}" class="home-news-terrain-svg" preserveAspectRatio="none" aria-label="TAIEX volume terrain" style="display:block;width:100%;height:290px;overflow:visible;">
-                <defs>
-                    <linearGradient id="terrainGlowLeft" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stop-color="#3af4e6" />
-                        <stop offset="55%" stop-color="#39d8ff" />
-                        <stop offset="100%" stop-color="#8974ff" />
-                    </linearGradient>
-                    <linearGradient id="terrainFillA" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="#3af4e6" stop-opacity="0.20" />
-                        <stop offset="100%" stop-color="#3af4e6" stop-opacity="0.02" />
-                    </linearGradient>
-                    <linearGradient id="terrainFillB" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="#8974ff" stop-opacity="0.18" />
-                        <stop offset="100%" stop-color="#8974ff" stop-opacity="0.02" />
-                    </linearGradient>
-                    <filter id="terrainBlur" x="-20%" y="-20%" width="140%" height="160%">
-                        <feGaussianBlur stdDeviation="5.5" />
-                    </filter>
-                </defs>
-                <rect x="0" y="0" width="{int(width)}" height="{int(height)}" class="terrain-panel-bg" fill="#050e1e" opacity="0.98" />
-                <g class="terrain-grid">
-                    <line x1="{left_pad:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{width-right_pad:.1f}" y2="{height-bottom_pad+8:.1f}" stroke="#6ecdff" stroke-opacity="0.10" stroke-width="1" />
-                    <line x1="{left_pad:.1f}" y1="{top_pad+24:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+24:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
-                    <line x1="{left_pad:.1f}" y1="{top_pad+88:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+88:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
-                    <line x1="{left_pad:.1f}" y1="{top_pad+152:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+152:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
-                </g>
-                <g class="terrain-depth">{''.join(fill_layers)}{''.join(column_lines)}{''.join(terrain_lines)}</g>
-                <polyline class="terrain-front-glow" points="{front_path}" fill="none" stroke="#3af4e6" stroke-opacity="0.36" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
-                <polyline class="terrain-front-line" points="{front_path}" fill="none" stroke="url(#terrainGlowLeft)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
-                <g class="terrain-points">{''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.8" fill="#cfffff" opacity="0.94" />' for x, y in main_coords[::2])}</g>
-                <g class="terrain-axis">{''.join(timestamp_marks)}</g>
-            </svg>
+            <img class="home-news-terrain-image" src="data:image/svg+xml;base64,{terrain_data_uri}" alt="TAIEX volume terrain" />
             <div class="terrain-callout terrain-callout-left">
                 <div class="terrain-callout-label">{"Volume stream" if not lang_zh else "量能時間流"}</div>
                 <div class="terrain-callout-copy">{escape(as_of_text)}</div>
@@ -24192,6 +24198,12 @@ def inject_home_news_briefing_css() -> None:
             display: block;
             width: 100%;
             height: 290px;
+        }
+        .home-news-terrain-image {
+            display: block;
+            width: 100%;
+            height: 290px;
+            object-fit: cover;
         }
         .terrain-panel-bg {
             fill: rgba(5, 14, 30, 0.98);
