@@ -12703,10 +12703,10 @@ def render_html_block(html: str):
     if not cleaned:
         return
 
-    # Keep custom dashboard HTML on the same rendering path as the rest of the app.
-    # `st.html()` can sandbox or sanitize SVG-heavy fragments, which breaks inline
-    # dashboards like the TAIEX terrain card even when the data is present.
-    st.markdown(cleaned, unsafe_allow_html=True)
+    if hasattr(st, "html"):
+        st.html(cleaned)
+    else:
+        st.markdown(cleaned, unsafe_allow_html=True)
 
 
 def render_expander_meta(section: str, item_count: int | None, helper_base: str):
