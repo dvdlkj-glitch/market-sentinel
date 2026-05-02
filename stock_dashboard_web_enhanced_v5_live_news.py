@@ -30204,33 +30204,33 @@ def _active_etf_takeaway_lines(
     if abs(concentration_gap) >= 4:
         leader = left_label if concentration_gap > 0 else right_label
         takeaway_lines.append(
-            f"{leader} çš„å‰äº”å¤§æŒè‚¡å æ¯”æ›´é«˜ï¼Œç­–ç•¥æ›´é›†ä¸­ï¼Œè¼ƒé©åˆæƒ³æ˜Žç¢ºæŠ¼æ³¨å°‘æ•¸ä¸»è»¸çš„ä½¿ç”¨è€…ã€‚"
+            f"{leader} ??????????????????????????????????"
             if lang_zh else
             f"{leader} runs a more concentrated top-5 basket, which is better if you want a cleaner high-conviction expression."
         )
     else:
         takeaway_lines.append(
-            "å…©æª”å‰äº”å¤§æ¿ƒåº¦æŽ¥è¿‘ï¼ŒçœŸæ­£å·®ç•°æ›´æ‡‰è©²çœ‹å„è‡ªç¨æœ‰æŒè‚¡èˆ‡æ¬Šé‡å·®ã€‚"
+            "??????????????????????????????"
             if lang_zh else
             "The top-5 concentration is close, so the real difference comes from unique holdings and weight gaps."
         )
     if abs(news_gap) >= 0.35:
         leader = left_label if news_gap > 0 else right_label
         takeaway_lines.append(
-            f"{leader} çš„åº•å±¤æŒè‚¡æ–°èžåŠ æ¬Šåˆ†æ•¸æ›´å¼·ï¼Œè¿‘æœŸé¡Œæé †é¢¨è¼ƒæ˜Žé¡¯ã€‚"
+            f"{leader} ????????????????????????"
             if lang_zh else
             f"{leader} has the stronger look-through news score, so its disclosed basket currently has the clearer headline tailwind."
         )
     else:
         takeaway_lines.append(
-            "å…©æª”åº•å±¤æ–°èžåˆ†æ•¸æŽ¥è¿‘ï¼ŒçŸ­ç·šå‹è² æ›´å¯èƒ½ä¾†è‡ªæ¬Šé‡é…ç½®ï¼Œè€Œä¸æ˜¯å–®ç´”æ¶ˆæ¯é¢ã€‚"
+            "??????????????????????????????????"
             if lang_zh else
             "The look-through news scores are close, so short-term differentiation is more about portfolio construction than headlines alone."
         )
     if abs(foreign_gap) >= 5:
         leader = left_label if foreign_gap > 0 else right_label
         takeaway_lines.append(
-            f"{leader} çš„åº•å±¤æŒè‚¡å¤–è³‡åå¤šæ¬Šé‡æ›´é«˜ï¼Œå°æ–¼æƒ³ç¢ºèªå¸‚å ´è³‡é‡‘ç«™åœ¨å“ªä¸€é‚Šæœƒæ›´æœ‰åƒè€ƒåƒ¹å€¼ã€‚"
+            f"{leader} ??????????????????????????????????"
             if lang_zh else
             f"{leader} shows stronger foreign-buying weight across the underlying basket, which is useful when you want a cleaner read on market sponsorship."
         )
@@ -31052,7 +31052,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
         )
     if not _active_etf_lab_snapshot_ready(snapshot):
         st.info(
-            "目前抓不到這兩檔主動式 ETF 的持股快照，請稍後再試。"
+            "??????????? ETF ????????????"
             if lang_zh
             else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
         )
@@ -31066,7 +31066,7 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
     right_items = list(right_payload.get("items", []) or [])
     if not left_items and not right_items:
         st.info(
-            "目前抓不到這兩檔主動式 ETF 的持股快照，請稍後再試。"
+            "??????????? ETF ????????????"
             if lang_zh
             else "Current holdings snapshots are unavailable for both active ETFs. Please try again later."
         )
@@ -31080,24 +31080,24 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
     right_snapshot_date = str(right_payload.get("snapshot_date", "") or "")
 
     def _snapshot_chip_text(label: str, payload: dict) -> str:
-        snapshot_date = str(payload.get("snapshot_date", "") or "—")
+        snapshot_date = str(payload.get("snapshot_date", "") or "-")
         if str(payload.get("status", "")) == "cached":
-            return f"{label} 快照 {snapshot_date}" if lang_zh else f"{label} snapshot {snapshot_date}"
-        return f"{label} 今日快照" if lang_zh else f"{label} latest snapshot"
+            return f"{label} ?? {snapshot_date}" if lang_zh else f"{label} snapshot {snapshot_date}"
+        return f"{label} ????" if lang_zh else f"{label} latest snapshot"
 
     chips = [
-        _tracker_status_chip(("雙 ETF 持股對比" if lang_zh else "Dual ETF holdings comparison"), "info"),
-        _tracker_status_chip((f"快照時間 {timestamp_text}" if lang_zh else f"Snapshot {timestamp_text}"), "neutral"),
-        _tracker_status_chip(("共同 / 獨有 / 權重差" if lang_zh else "Common / unique / weight gap"), "up"),
+        _tracker_status_chip(("? ETF ????" if lang_zh else "Dual ETF holdings comparison"), "info"),
+        _tracker_status_chip((f"???? {timestamp_text}" if lang_zh else f"Snapshot {timestamp_text}"), "neutral"),
+        _tracker_status_chip(("?? / ?? / ???" if lang_zh else "Common / unique / weight gap"), "up"),
         _tracker_status_chip(_snapshot_chip_text(left_label, left_payload), "neutral"),
         _tracker_status_chip(_snapshot_chip_text(right_label, right_payload), "neutral"),
     ]
     st.markdown(
         f"""
         <div class="guide-shell etf-tracker-shell">
-            <div class="section-header">{'主動式 ETF 持股對比' if lang_zh else 'Active ETF holdings compare'}</div>
-            <div class="guide-title">{escape(left_label)} × {escape(right_label)}</div>
-            <div class="guide-copy">{escape(update_note)} {'這次除了比共同 / 獨有持股，也會穿透到底層持股的新聞偏向與官方外資偏向，幫你看出策略風格差。' if lang_zh else 'Beyond overlap and unique holdings, this compare reads through the disclosed basket for underlying news tilt and official foreign-flow bias so the strategy style is easier to compare.'}</div>
+            <div class="section-header">{'??? ETF ????' if lang_zh else 'Active ETF holdings compare'}</div>
+            <div class="guide-title">{escape(left_label)} vs {escape(right_label)}</div>
+            <div class="guide-copy">{escape(update_note)} {'???????? / ?????????????????????????????????????' if lang_zh else 'Beyond overlap and unique holdings, this compare reads through the disclosed basket for underlying news tilt and official foreign-flow bias so the strategy style is easier to compare.'}</div>
             <div class="chip-row">{''.join(chips)}</div>
         </div>
         """,
@@ -31107,14 +31107,14 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
     if left_payload.get("used_cache") or right_payload.get("used_cache"):
         cached_parts = []
         if left_payload.get("used_cache"):
-            cached_parts.append(f"{left_label} {left_snapshot_date or '—'}")
+            cached_parts.append(f"{left_label} {left_snapshot_date or '-'}")
         if right_payload.get("used_cache"):
-            cached_parts.append(f"{right_label} {right_snapshot_date or '—'}")
+            cached_parts.append(f"{right_label} {right_snapshot_date or '-'}")
         st.caption(
             (
-                "部分持股比較目前使用最近一次成功快照："
+                "???????????????????"
                 + " / ".join(cached_parts)
-                + "。這樣在開盤前或 Yahoo 當下回傳空值時，Compare 仍可用。"
+                + "???????? Yahoo ????????Compare ????"
             )
             if lang_zh
             else (
@@ -31171,13 +31171,13 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
             right_lookthrough,
             lang_zh=lang_zh,
         )
-    st.markdown(f"### {'研究閱讀提示' if lang_zh else 'Research reading guide'}")
+    st.markdown(f"### {'??????' if lang_zh else 'Research reading guide'}")
     for line in takeaway_lines[:3]:
         st.markdown(f"- {line}")
 
-    st.markdown(f"### {'底層持股風向板' if lang_zh else 'Look-through holdings pulse board'}")
+    st.markdown(f"### {'???????' if lang_zh else 'Look-through holdings pulse board'}")
     st.caption(
-        "這張表聚焦兩檔 ETF 合計權重最高的揭露持股，直接對照權重、底層新聞偏向、外資偏向與主導題材。"
+        "??????? ETF ????????????????????????????????????"
         if lang_zh else
         "This board focuses on the highest combined-weight disclosed holdings and compares weight, look-through news tilt, foreign-flow bias, and dominant catalyst in one place."
     )
@@ -31191,33 +31191,33 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
         delta_class = "etf-tracker-delta-up" if delta > 0 else "etf-tracker-delta-down" if delta < 0 else "etf-tracker-value"
         focus_rows.append(
             [
-                build_holding_name_cell(str(item.get("display_name", "") or item.get("symbol", "—") or "—")),
+                build_holding_name_cell(str(item.get("display_name", "") or item.get("symbol", "-") or "-")),
                 f'<div class="etf-tracker-value">{left_weight:.2f}%</div>',
                 f'<div class="etf-tracker-value">{right_weight:.2f}%</div>',
                 f'<div class="{delta_class}">{delta:+.2f}%</div>',
                 _active_etf_story_cell(
-                    str(item.get("news_label", "—") or "—"),
+                    str(item.get("news_label", "-") or "-"),
                     f"{float(item.get('news_score', 0.0) or 0.0):+.2f}",
                 ),
                 _active_etf_story_cell(
-                    str(item.get("foreign_label", "—") or "—"),
-                    str(item.get("foreign_lots", "—") or "—"),
+                    str(item.get("foreign_label", "-") or "-"),
+                    str(item.get("foreign_lots", "-") or "-"),
                 ),
-                _active_etf_plain_cell(str(item.get("catalyst_label", "—") or "—"), class_name="etf-tracker-text"),
+                _active_etf_plain_cell(str(item.get("catalyst_label", "-") or "-"), class_name="etf-tracker-text"),
             ]
         )
     render_active_etf_tracker_table(
         [
-            "持股 / 公司" if lang_zh else "Holding / company",
+            "?? / ??" if lang_zh else "Holding / company",
             left_label,
             right_label,
-            "權重差 A-B" if lang_zh else "Weight gap A-B",
-            "底層新聞" if lang_zh else "Look-through news",
-            "底層外資" if lang_zh else "Look-through foreign",
-            "主導題材" if lang_zh else "Dominant catalyst",
+            "??? A-B" if lang_zh else "Weight gap A-B",
+            "????" if lang_zh else "Look-through news",
+            "????" if lang_zh else "Look-through foreign",
+            "????" if lang_zh else "Dominant catalyst",
         ],
         focus_rows,
-        "目前尚無可用的底層持股風向板資料。" if lang_zh else "The look-through holdings pulse board is unavailable right now.",
+        "?????????????????" if lang_zh else "The look-through holdings pulse board is unavailable right now.",
     )
 
     overlap_rows = []
@@ -31260,17 +31260,17 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
             ]
         )
 
-    st.markdown(f"### {'共同持股與權重差距' if lang_zh else 'Common holdings and weight gap'}")
+    st.markdown(f"### {'?????????' if lang_zh else 'Common holdings and weight gap'}")
     render_active_etf_tracker_table(
         [
-            "持股 / 公司" if lang_zh else "Holding / company",
+            "?? / ??" if lang_zh else "Holding / company",
             left_label,
             right_label,
-            "權重差 A-B" if lang_zh else "Weight gap A-B",
+            "??? A-B" if lang_zh else "Weight gap A-B",
         ],
         overlap_rows[:25],
         (
-            "目前尚無共同持股可供比較。若你確定兩檔有共同持股，通常是 Yahoo 持股名稱格式不同；本版已用台股代號與中英文名稱做加強比對。"
+            "???????????????????????????? Yahoo ???????????????????????????"
             if lang_zh else
             "No overlapping holdings are currently available for comparison."
         ),
@@ -31278,20 +31278,19 @@ def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force
 
     unique_cols = st.columns(2, gap="large")
     with unique_cols[0]:
-        st.markdown(f"### {escape(left_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        st.markdown(f"### {escape(left_label)} {'????' if lang_zh else 'unique holdings'}")
         render_active_etf_tracker_table(
-            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            ["?? / ??" if lang_zh else "Holding / company", "?? %" if lang_zh else "Weight %"],
             left_only_rows,
-            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+            "???????????" if lang_zh else "No notable unique holdings.",
         )
     with unique_cols[1]:
-        st.markdown(f"### {escape(right_label)} {'獨有持股' if lang_zh else 'unique holdings'}")
+        st.markdown(f"### {escape(right_label)} {'????' if lang_zh else 'unique holdings'}")
         render_active_etf_tracker_table(
-            ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
+            ["?? / ??" if lang_zh else "Holding / company", "?? %" if lang_zh else "Weight %"],
             right_only_rows,
-            "目前沒有明顯獨有持股。" if lang_zh else "No notable unique holdings.",
+            "???????????" if lang_zh else "No notable unique holdings.",
         )
-
 
 if __name__ == "__main__":
     generate_dashboard()
