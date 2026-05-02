@@ -21356,7 +21356,6 @@ def render_active_etf_lab_dashboard(
         summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
         bundles = _ensure_bundles()
         if bundles:
-            render_active_etf_overall_summary(bundles, show_icons=True)
             render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
 
     def _render_etf_pair_compare() -> None:
@@ -25055,14 +25054,101 @@ def _build_home_news_active_etf_overview_rows(
     if not etf_tickers or daily_data is None or daily_data.empty:
         return []
 
-    bundles = [
-        collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta)
-        for ticker in etf_tickers
-    ]
-    bundles = [bundle for bundle in bundles if bundle is not None]
-    if not bundles:
-        return []
-    return build_active_etf_overview_rows(bundles, max_items=6)
+    lang_zh = get_language() == "zh_TW"
+    overview_rows: list[dict] = []
+    for ticker in etf_tickers:
+        price_series, _ = get_price_series(daily_data, ticker)
+        volume_series = get_series(daily_data, "Volume", ticker)
+        if price_series is None or price_series.empty:
+            continue
+
+        intraday = get_intraday_snapshot(intraday_data, ticker)
+        analysis = analyze_market_sentinel(price_series, volume_series, [], ticker)
+        change_pct = _active_etf_bundle_change_pct(
+            {
+                "ticker": ticker,
+                "intraday": intraday,
+                "price_series": price_series,
+            }
+        )
+
+        cached_items, cached_date, cached_source = _load_latest_active_etf_snapshot(ticker)
+        holdings_payload = {
+            "items": _normalize_holdings_records(cached_items, max_items=15),
+            "snapshot_date": cached_date,
+            "source": cached_source or "Cached ETF holdings snapshot",
+            "status": "cached" if cached_items else "missing",
+        }
+        holdings_map = _active_etf_holdings_compare_map(holdings_payload.get("items", []), max_items=40)
+        holdings_rows = sorted(
+            holdings_map.values(),
+            key=lambda row: float(row.get("weight", 0.0) or 0.0),
+            reverse=True,
+        )
+        top_holding = holdings_rows[0] if holdings_rows else {}
+        top_holding_name = str(top_holding.get("name", "") or "")
+        top_holding_weight = _safe_float(top_holding.get("weight"))
+
+        strategy_profile = _active_etf_strategy_profile(holdings_map) if holdings_map else {
+            "top5_share": float("nan"),
+            "top10_share": float("nan"),
+            "display_weight": float("nan"),
+            "conviction": "—",
+        }
+        bucket_breakdown = _active_etf_bucket_breakdown(holdings_map) if holdings_map else {}
+        dominant_bucket = "other"
+        dominant_bucket_weight = float("nan")
+        if bucket_breakdown:
+            dominant_bucket = max(bucket_breakdown, key=bucket_breakdown.get)
+            dominant_bucket_weight = _safe_float(bucket_breakdown.get(dominant_bucket))
+
+        flow_payload = fetch_twse_etf_institutional_flow(ticker)
+        flow_record = (flow_payload or {}).get("record", {}) or {}
+        foreign_net = _safe_float(flow_record.get("foreign_net"))
+        fetched_at = (flow_payload or {}).get("date") or holdings_payload.get("snapshot_date")
+
+        overview_rows.append(
+            {
+                "ticker": ticker,
+                "title": display_ticker_label(ticker),
+                "aggregate_move_sum": change_pct,
+                "average_move": float("nan"),
+                "news_score": float("nan"),
+                "news_label": "—",
+                "signal_label": tr_signal(analysis.get("signal", "HOLD")),
+                "signal_raw": str(analysis.get("signal", "HOLD") or "HOLD"),
+                "trend": str(analysis.get("trend", "") or ""),
+                "catalyst": "—",
+                "foreign_net_total": foreign_net,
+                "foreign_net_count": 0 if pd.isna(foreign_net) else 1,
+                "rising_count": 1 if pd.notna(change_pct) and float(change_pct) > 0 else 0,
+                "ticker_count": 1,
+                "leader_name": top_holding_name,
+                "leader_ticker": str(top_holding.get("symbol", "") or ""),
+                "leader_move": top_holding_weight,
+                "top_holding_name": top_holding_name,
+                "top_holding_weight": top_holding_weight,
+                "top5_share": _safe_float(strategy_profile.get("top5_share")),
+                "top10_share": _safe_float(strategy_profile.get("top10_share")),
+                "conviction": str(strategy_profile.get("conviction", "—") or "—"),
+                "dominant_bucket": _active_etf_bucket_label(dominant_bucket, lang_zh),
+                "dominant_bucket_weight": dominant_bucket_weight,
+                "holdings_status": str(holdings_payload.get("status", "missing") or "missing"),
+                "holdings_source": str(holdings_payload.get("source", "") or ""),
+                "fetched_at": fetched_at,
+            }
+        )
+
+    overview_rows.sort(
+        key=lambda row: (
+            pd.notna(_safe_float(row.get("aggregate_move_sum"))),
+            float(_safe_float(row.get("aggregate_move_sum"))) if pd.notna(_safe_float(row.get("aggregate_move_sum"))) else -10**9,
+        ),
+        reverse=True,
+    )
+    for rank, row in enumerate(overview_rows, start=1):
+        row["rank"] = rank
+    return overview_rows
 
 
 def _render_home_news_active_etf_overall_html(rows: list[dict], *, lang_zh: bool) -> str:
@@ -25229,20 +25315,24 @@ def render_home_news_briefing(
     inject_home_news_briefing_css()
     is_active_etf_mode = dashboard_mode == "Active ETF Lab"
 
-    top_movers = build_home_news_top_taiwan_movers(
-        daily_data,
-        intraday_data,
-        dashboard_tickers,
-        selected_supply_chain_groups,
-    )
-    chain_leader = build_home_news_supply_chain_rankings(selected_supply_chain_groups, lens_meta=lens_meta)
-    active_etfs = build_home_news_active_etf_spotlight(
-        daily_data,
-        intraday_data,
-        dashboard_tickers,
-        lens_meta,
-        dashboard_mode,
-    )
+    top_movers = []
+    chain_leader = []
+    active_etfs = []
+    if not is_active_etf_mode:
+        top_movers = build_home_news_top_taiwan_movers(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            selected_supply_chain_groups,
+        )
+        chain_leader = build_home_news_supply_chain_rankings(selected_supply_chain_groups, lens_meta=lens_meta)
+        active_etfs = build_home_news_active_etf_spotlight(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta,
+            dashboard_mode,
+        )
     active_etf_overview_rows = (
         _build_home_news_active_etf_overview_rows(
             daily_data,
