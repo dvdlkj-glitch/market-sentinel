@@ -30632,6 +30632,21 @@ def generate_dashboard():
         else tickers
     )
 
+    if dashboard_mode == "Active ETF Lab" and not dashboard_tickers:
+        fallback_active_etfs = dedupe_keep_order(
+            filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+            or build_active_etf_quick_picks()
+        )
+        if fallback_active_etfs:
+            dashboard_tickers = fallback_active_etfs
+            st.session_state["dashboard_active_etf_tickers"] = fallback_active_etfs
+            st.session_state["dashboard_active_etf_tickers_initialized"] = True
+            st.caption(
+                "目前先自動帶入常看台股主動式 ETF，方便直接查看 ETF Overall。"
+                if get_language() == "zh_TW"
+                else "Auto-loading the commonly watched Taiwan active ETFs so the ETF overall view is available immediately."
+            )
+
     if not dashboard_tickers:
         if dashboard_mode == "Active ETF Lab":
             st.warning(t("active_etf_no_dashboard_data"))
