@@ -21345,6 +21345,7 @@ def render_active_etf_lab_dashboard(
         summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
         bundles = _ensure_bundles()
         if bundles:
+            render_active_etf_overall_summary(bundles, show_icons=True)
             render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
 
     def _render_etf_pair_compare() -> None:
@@ -22784,6 +22785,434 @@ def render_supply_chain_overall_summary(
     )
 
     render_html_block(_render_supply_chain_dashboard_overview(rows, show_icons=show_icons, title=title, copy=copy, basis=basis))
+    return rows
+
+
+def _select_active_etf_overview_bundles(bundles: list[dict], *, max_items: int = 6) -> list[dict]:
+    ordered_bundles = [bundle for bundle in (bundles or []) if isinstance(bundle, dict) and bundle.get("ticker")]
+    if not ordered_bundles:
+        return []
+
+    bundle_map: dict[str, dict] = {}
+    for bundle in ordered_bundles:
+        ticker = normalize_dashboard_ticker(str(bundle.get("ticker", "")).strip())
+        if ticker and ticker not in bundle_map:
+            bundle_map[ticker] = bundle
+
+    selected: list[dict] = []
+    for ticker in dedupe_keep_order(ACTIVE_ETF_QUICK_PICK_SYMBOLS):
+        normalized = normalize_dashboard_ticker(ticker)
+        bundle = bundle_map.get(normalized)
+        if bundle is not None:
+            selected.append(bundle)
+
+    for bundle in ordered_bundles:
+        ticker = normalize_dashboard_ticker(str(bundle.get("ticker", "")).strip())
+        if ticker and all(normalize_dashboard_ticker(str(item.get("ticker", "")).strip()) != ticker for item in selected):
+            selected.append(bundle)
+
+    return selected[: max_items or 6]
+
+
+def _active_etf_bundle_change_pct(bundle: dict) -> float:
+    intraday = (bundle or {}).get("intraday", {}) or {}
+    change_pct = _safe_float(intraday.get("change_pct"))
+    if pd.notna(change_pct):
+        return float(change_pct)
+
+    price_series = (bundle or {}).get("price_series")
+    if isinstance(price_series, pd.Series):
+        clean = pd.to_numeric(price_series, errors="coerce").dropna()
+        if len(clean) >= 2:
+            previous = _safe_float(clean.iloc[-2])
+            latest = _safe_float(clean.iloc[-1])
+            if pd.notna(previous) and pd.notna(latest) and float(previous) != 0.0:
+                return float(latest) / float(previous) * 100.0 - 100.0
+    return float("nan")
+
+
+def build_active_etf_overview_rows(
+    bundles: list[dict],
+    *,
+    max_items: int = 6,
+) -> list[dict]:
+    lang_zh = get_language() == "zh_TW"
+    overview_rows: list[dict] = []
+    for bundle in _select_active_etf_overview_bundles(bundles, max_items=max_items):
+        ticker = normalize_dashboard_ticker(str(bundle.get("ticker", "")).strip())
+        if not ticker:
+            continue
+
+        analysis = bundle.get("analysis", {}) or {}
+        news_pulse = analysis.get("news_pulse", {}) or {}
+        catalyst_engine = analysis.get("catalyst_engine", {}) or {}
+
+        holdings_payload = fetch_active_etf_holdings_snapshot(ticker, max_items=15)
+        holdings_items = holdings_payload.get("items", []) or []
+        holdings_map = _active_etf_holdings_compare_map(holdings_items, max_items=40)
+        holdings_rows = sorted(
+            holdings_map.values(),
+            key=lambda row: float(row.get("weight", 0.0) or 0.0),
+            reverse=True,
+        )
+        top_holding = holdings_rows[0] if holdings_rows else {}
+        top_holding_name = str(top_holding.get("name", "") or "")
+        top_holding_weight = _safe_float(top_holding.get("weight"))
+
+        strategy_profile = _active_etf_strategy_profile(holdings_map) if holdings_map else {
+            "top5_share": float("nan"),
+            "top10_share": float("nan"),
+            "display_weight": float("nan"),
+            "conviction": "—",
+        }
+        bucket_breakdown = _active_etf_bucket_breakdown(holdings_map) if holdings_map else {}
+        dominant_bucket = "other"
+        dominant_bucket_weight = float("nan")
+        if bucket_breakdown:
+            dominant_bucket = max(bucket_breakdown, key=bucket_breakdown.get)
+            dominant_bucket_weight = _safe_float(bucket_breakdown.get(dominant_bucket))
+
+        flow_payload = fetch_twse_etf_institutional_flow(ticker)
+        flow_record = (flow_payload or {}).get("record", {}) or {}
+        foreign_net = _safe_float(flow_record.get("foreign_net"))
+        change_pct = _active_etf_bundle_change_pct(bundle)
+        news_score = float(news_pulse.get("score", 0.0) or 0.0)
+        fetched_at = (flow_payload or {}).get("date") or holdings_payload.get("snapshot_date")
+
+        overview_rows.append(
+            {
+                "ticker": ticker,
+                "title": display_ticker_label(ticker),
+                "aggregate_move_sum": change_pct,
+                "average_move": news_score,
+                "news_score": news_score,
+                "news_label": tr_news_label(news_pulse.get("label", "News tilt: mixed")),
+                "signal_label": tr_signal(analysis.get("signal", "HOLD")),
+                "signal_raw": str(analysis.get("signal", "HOLD") or "HOLD"),
+                "trend": str(analysis.get("trend", "") or ""),
+                "catalyst": tr_term(str(catalyst_engine.get("dominant", "Macro") or "Macro")),
+                "foreign_net_total": foreign_net,
+                "foreign_net_count": 0 if pd.isna(foreign_net) else 1,
+                "rising_count": 1 if pd.notna(change_pct) and float(change_pct) > 0 else 0,
+                "ticker_count": 1,
+                "leader_name": top_holding_name,
+                "leader_ticker": str(top_holding.get("symbol", "") or ""),
+                "leader_move": top_holding_weight,
+                "top_holding_name": top_holding_name,
+                "top_holding_weight": top_holding_weight,
+                "top5_share": _safe_float(strategy_profile.get("top5_share")),
+                "top10_share": _safe_float(strategy_profile.get("top10_share")),
+                "conviction": str(strategy_profile.get("conviction", "—") or "—"),
+                "dominant_bucket": _active_etf_bucket_label(dominant_bucket, lang_zh),
+                "dominant_bucket_weight": dominant_bucket_weight,
+                "holdings_status": str(holdings_payload.get("status", "missing") or "missing"),
+                "holdings_source": str(holdings_payload.get("source", "") or ""),
+                "fetched_at": fetched_at,
+            }
+        )
+
+    overview_rows.sort(
+        key=lambda row: (
+            pd.notna(_safe_float(row.get("aggregate_move_sum"))),
+            float(_safe_float(row.get("aggregate_move_sum"))) if pd.notna(_safe_float(row.get("aggregate_move_sum"))) else -10**9,
+            float(_safe_float(row.get("news_score"))) if pd.notna(_safe_float(row.get("news_score"))) else -10**9,
+        ),
+        reverse=True,
+    )
+    for rank, row in enumerate(overview_rows, start=1):
+        row["rank"] = rank
+    return overview_rows
+
+
+def _render_active_etf_overview_cards(rows: list[dict], *, show_icons: bool) -> str:
+    cards: list[str] = []
+    lang_zh = get_language() == "zh_TW"
+    for row in rows:
+        rank = int(row.get("rank", 0) or 0)
+        aggregate = row.get("aggregate_move_sum", pd.NA)
+        aggregate_tone = _supply_chain_move_tone(aggregate)
+        foreign = row.get("foreign_net_total", pd.NA)
+        foreign_tone = _supply_chain_move_tone(foreign)
+        dominant_bucket = str(row.get("dominant_bucket", "") or "—")
+        icon_html = (
+            f'<div class="sc-overall-icon">{escape(_supply_chain_overall_rank_icon(rank))}</div>'
+            if show_icons
+            else ""
+        )
+        cards.append(
+            f'''
+            <div class="sc-overall-card rank-{rank}">
+                {icon_html}
+                <div class="sc-overall-kicker">#{rank:02d} {'ETF signal' if not lang_zh else '主動 ETF 訊號'}</div>
+                <div class="sc-overall-title">{escape(str(row.get("title", "")))}</div>
+                <div class="sc-overall-value {aggregate_tone}">{escape(format_percent(aggregate))}</div>
+                <div class="sc-overall-note">
+                    {escape(str(row.get("signal_label", "—")))} · {escape(dominant_bucket)}
+                </div>
+                <div class="sc-overall-mini-grid">
+                    <div class="sc-overall-mini">
+                        <div class="sc-overall-label">{escape('第一大持股' if lang_zh else 'Top holding')}</div>
+                        <div class="sc-overall-mini-value">
+                            {escape(str(row.get("top_holding_name", "") or "—"))}
+                            {escape(f"{float(_safe_float(row.get('top_holding_weight'))):.2f}%" if pd.notna(_safe_float(row.get("top_holding_weight"))) else "—")}
+                        </div>
+                    </div>
+                    <div class="sc-overall-mini">
+                        <div class="sc-overall-label">{escape('ETF 外資' if lang_zh else 'ETF foreign flow')}</div>
+                        <div class="sc-overall-mini-value {foreign_tone}">
+                            {escape(_format_supply_chain_foreign_flow(foreign, lang_zh))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            '''
+        )
+    return "".join(cards)
+
+
+def _render_active_etf_overview_table(rows: list[dict]) -> str:
+    lang_zh = get_language() == "zh_TW"
+    headers = (
+        ["排序", "主動 ETF", "單日漲幅", "前五大占比", "ETF 外資", "第一大持股 / 主風格"]
+        if lang_zh
+        else ["Rank", "Active ETF", "Move", "Top-5 share", "ETF foreign", "Top holding / Lead style"]
+    )
+    head_html = "".join(f'<div class="sc-overall-cell">{escape(header)}</div>' for header in headers)
+    row_html: list[str] = []
+    for row in rows:
+        aggregate_tone = _supply_chain_move_tone(row.get("aggregate_move_sum"))
+        foreign_tone = _supply_chain_move_tone(row.get("foreign_net_total"))
+        top5_share = _safe_float(row.get("top5_share"))
+        top_holding = str(row.get("top_holding_name", "") or "—")
+        dominant_bucket = str(row.get("dominant_bucket", "") or "—")
+        top_text = (
+            f"{top_holding} · {dominant_bucket}"
+            if top_holding and top_holding != "—"
+            else dominant_bucket
+        )
+        cells = [
+            f"#{int(row.get('rank', 0) or 0):02d}",
+            str(row.get("title", "") or "—"),
+            format_percent(row.get("aggregate_move_sum")),
+            f"{top5_share:.2f}%" if pd.notna(top5_share) else "—",
+            _format_supply_chain_foreign_flow(row.get("foreign_net_total"), lang_zh),
+            top_text,
+        ]
+        classes = ["", "sc-overall-strong", aggregate_tone, "sc-overall-strong", foreign_tone, "sc-overall-strong"]
+        cell_html = "".join(
+            f'<div class="sc-overall-cell {escape(classes[idx])}">{escape(str(value))}</div>'
+            for idx, value in enumerate(cells)
+        )
+        row_html.append(f'<div class="sc-overall-table-row">{cell_html}</div>')
+    return (
+        '<div class="sc-overall-table">'
+        f'<div class="sc-overall-table-head">{head_html}</div>'
+        + "".join(row_html)
+        + "</div>"
+    )
+
+
+def _render_active_etf_dashboard_overview(
+    rows: list[dict],
+    *,
+    show_icons: bool,
+    title: str,
+    copy: str,
+    basis: str,
+) -> str:
+    lang_zh = get_language() == "zh_TW"
+    total_rows = len(rows)
+    total_risers = sum(int(row.get("rising_count", 0) or 0) for row in rows)
+    breadth_value = (total_risers / total_rows * 100.0) if total_rows else float("nan")
+    breadth_tone = "up" if pd.notna(breadth_value) and breadth_value >= 55 else "down" if pd.notna(breadth_value) and breadth_value <= 45 else "flat"
+    aggregate_scale = _supply_chain_abs_scale(rows, "aggregate_move_sum", minimum=1.0)
+    foreign_scale = _supply_chain_abs_scale(rows, "foreign_net_total", minimum=1.0)
+
+    valid_foreign_rows = [row for row in rows if pd.notna(_safe_float(row.get("foreign_net_total")))]
+    foreign_buy_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) > 0]
+    foreign_sell_rows = [row for row in valid_foreign_rows if _safe_float(row.get("foreign_net_total")) < 0]
+    top_buy = max(foreign_buy_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_buy_rows else {}
+    top_sell = min(foreign_sell_rows, key=lambda row: _safe_float(row.get("foreign_net_total"))) if foreign_sell_rows else {}
+    foreign_missing_title = "等待 ETF 外資快照" if lang_zh else "Awaiting ETF flow snapshot"
+    foreign_missing_note = (
+        "官方 ETF 三大法人還沒回資料，稍後刷新會補抓 TWSE T86。"
+        if lang_zh
+        else "Official ETF flow has not landed yet; refresh later to pull TWSE T86."
+    )
+
+    leader = rows[0]
+    weakest = rows[-1]
+    fetched_texts = [format_active_etf_snapshot_fetched_at(row.get("fetched_at")) for row in rows if row.get("fetched_at")]
+    last_update_text = fetched_texts[0] if fetched_texts else "—"
+    holdings_ready = sum(1 for row in rows if str(row.get("holdings_status", "")) in {"live", "cached"})
+    avg_top5_share = [
+        float(_safe_float(row.get("top5_share")))
+        for row in rows
+        if pd.notna(_safe_float(row.get("top5_share")))
+    ]
+    avg_top5 = sum(avg_top5_share) / len(avg_top5_share) if avg_top5_share else float("nan")
+
+    metric_html = "".join(
+        [
+            _render_supply_chain_metric_tile(
+                "Overall Leader" if not lang_zh else "漲幅領先 ETF",
+                str(leader.get("title", "—")),
+                format_percent(leader.get("aggregate_move_sum")),
+                _supply_chain_move_tone(leader.get("aggregate_move_sum")),
+                f"{leader.get('signal_label', '—')} · {leader.get('dominant_bucket', '—')}",
+            ),
+            _render_supply_chain_metric_tile(
+                "Foreign Bid" if not lang_zh else "外資主攻",
+                str((top_buy or {}).get("title") or foreign_missing_title),
+                _format_supply_chain_foreign_flow((top_buy or {}).get("foreign_net_total"), lang_zh),
+                _supply_chain_move_tone((top_buy or {}).get("foreign_net_total")),
+                ("ETF 受益權買超最大" if lang_zh else "Largest net buy in ETF units") if top_buy else foreign_missing_note,
+            ),
+            _render_supply_chain_metric_tile(
+                "Foreign Offer" if not lang_zh else "外資調節",
+                str((top_sell or {}).get("title") or foreign_missing_title),
+                _format_supply_chain_foreign_flow((top_sell or {}).get("foreign_net_total"), lang_zh),
+                _supply_chain_move_tone((top_sell or {}).get("foreign_net_total")),
+                ("ETF 受益權賣超最大" if lang_zh else "Largest net sell in ETF units") if top_sell else foreign_missing_note,
+            ),
+            _render_supply_chain_metric_tile(
+                "Breadth" if not lang_zh else "上漲廣度",
+                "Tracked active ETFs" if not lang_zh else "追蹤主動式 ETF",
+                f"{breadth_value:.0f}%" if pd.notna(breadth_value) else "—",
+                breadth_tone,
+                f"{total_risers} / {total_rows} {'ETFs up' if not lang_zh else '檔上漲'}",
+            ),
+        ]
+    )
+
+    ring_html = []
+    for row in rows[:3]:
+        top5_share = _safe_float(row.get("top5_share"))
+        ring_html.append(
+            f'''
+            <div class="sc-hud-ring-item">
+                <div class="sc-hud-ring" style="{escape(_supply_chain_ring_style(row.get("aggregate_move_sum"), aggregate_scale))}">
+                    <span>{escape(format_percent(row.get("aggregate_move_sum")).replace("+", ""))}</span>
+                </div>
+                <div class="sc-hud-ring-name">{escape(str(row.get("title", "—")))}</div>
+                <div class="sc-hud-ring-sub">{escape(f"Top5 {top5_share:.1f}%" if pd.notna(top5_share) else str(row.get("conviction", "—")))}</div>
+            </div>
+            '''
+        )
+
+    node_html = []
+    for row in rows[:3]:
+        node_html.append(
+            f'''
+            <div class="sc-hud-node">
+                <div class="sc-hud-node-pin"></div>
+                <div class="sc-hud-node-line"></div>
+                <div class="sc-hud-node-card">
+                    <div class="sc-hud-node-value">{escape(format_percent(row.get("aggregate_move_sum")))}</div>
+                    <div class="sc-hud-node-name">{escape(str(row.get("title", "—")))}</div>
+                </div>
+            </div>
+            '''
+        )
+
+    aggregate_bars = []
+    foreign_bars = []
+    for row in rows:
+        aggregate_tone = _supply_chain_move_tone(row.get("aggregate_move_sum"))
+        foreign_tone = _supply_chain_move_tone(row.get("foreign_net_total"))
+        aggregate_bars.append(
+            f'''
+            <div class="sc-hud-bar-row">
+                <div class="sc-hud-bar-name">#{int(row.get("rank", 0) or 0):02d} {escape(str(row.get("title", "—")))}</div>
+                <div class="sc-hud-bar-track"><div class="sc-hud-bar-fill" style="{escape(_supply_chain_bar_style(row.get("aggregate_move_sum"), aggregate_scale))}"></div></div>
+                <div class="sc-hud-bar-value {escape(aggregate_tone)}">{escape(format_percent(row.get("aggregate_move_sum")))}</div>
+            </div>
+            '''
+        )
+        foreign_bars.append(
+            f'''
+            <div class="sc-hud-bar-row">
+                <div class="sc-hud-bar-name">{escape(str(row.get("title", "—")))}</div>
+                <div class="sc-hud-bar-track"><div class="sc-hud-bar-fill" style="{escape(_supply_chain_bar_style(row.get("foreign_net_total"), foreign_scale))}"></div></div>
+                <div class="sc-hud-bar-value {escape(foreign_tone)}">{escape(_format_supply_chain_foreign_flow(row.get("foreign_net_total"), lang_zh))}</div>
+            </div>
+            '''
+        )
+
+    chips = [
+        f"{len(rows)} {'檔主動ETF' if lang_zh else 'active ETFs'}",
+        f"{'持股快照' if lang_zh else 'Holdings snapshots'} {holdings_ready} / {len(rows)}",
+        f"{'ETF 外資' if lang_zh else 'ETF foreign flow'} {len(valid_foreign_rows)} / {len(rows)}",
+        f"{'平均 Top5' if lang_zh else 'Avg top-5'} {avg_top5:.1f}%" if pd.notna(avg_top5) else f"{'平均 Top5' if lang_zh else 'Avg top-5'} —",
+        f"{'快照' if lang_zh else 'Snapshot'} {last_update_text}",
+        f"{'相對弱勢' if lang_zh else 'Weakest'} {weakest.get('title', '—')} {format_percent(weakest.get('aggregate_move_sum'))}",
+    ]
+    chip_html = "".join(f'<span class="sc-hud-chip">{escape(str(chip))}</span>' for chip in chips)
+    sparkline_html = _render_supply_chain_sparkline(rows, key="aggregate_move_sum") or (
+        f'<div class="sc-hud-note">{"至少需要兩檔主動 ETF 才會顯示折線。" if lang_zh else "Need at least two active ETFs for the line view."}</div>'
+    )
+
+    return f'''
+    <div class="guide-shell sc-overall-shell">
+        <div class="sc-hud-topbar">
+            <div>
+                <div class="section-header">{escape(title)}</div>
+                <div class="sc-hud-title">{"Active ETF overall compare" if not lang_zh else "主動 ETF Overall 對比總覽"}</div>
+                <div class="sc-hud-copy">{escape(copy)}</div>
+            </div>
+            <div class="sc-hud-chip-row">{chip_html}</div>
+        </div>
+        <div class="sc-hud-metric-grid">{metric_html}</div>
+        <div class="sc-hud-main-grid">
+            <div class="sc-hud-panel">
+                <div class="sc-hud-label">{"Move rings" if not lang_zh else "漲幅圓環"}</div>
+                <div class="sc-hud-panel-title">{"Common active ETF intensity" if not lang_zh else "常看主動 ETF 強度"}</div>
+                <div class="sc-hud-ring-grid">{"".join(ring_html)}</div>
+            </div>
+            <div class="sc-hud-panel">
+                <div class="sc-hud-label">{"Leadership nodes" if not lang_zh else "領先 ETF 節點"}</div>
+                <div class="sc-hud-panel-title">{"Top active ETF comparison" if not lang_zh else "前三強主動 ETF 對比"}</div>
+                <div class="sc-hud-node-row">{"".join(node_html)}</div>
+                <div class="sc-hud-bars">{"".join(aggregate_bars)}</div>
+            </div>
+            <div class="sc-hud-panel">
+                <div class="sc-hud-label">{"Flow monitor" if not lang_zh else "外資與動能波形"}</div>
+                <div class="sc-hud-panel-title">{"ETF move line" if not lang_zh else "ETF 漲幅折線"}</div>
+                {sparkline_html}
+                <div class="sc-hud-bars">{"".join(foreign_bars)}</div>
+            </div>
+        </div>
+        <div class="sc-overall-grid">{_render_active_etf_overview_cards(rows, show_icons=show_icons)}</div>
+        {_render_active_etf_overview_table(rows)}
+        <div class="leo-rank-note">{escape(basis)}</div>
+    </div>
+    '''
+
+
+def render_active_etf_overall_summary(
+    bundles: list[dict],
+    *,
+    show_icons: bool = True,
+) -> list[dict]:
+    lang_zh = get_language() == "zh_TW"
+    inject_supply_chain_overview_css()
+    rows = build_active_etf_overview_rows(bundles)
+    if not rows:
+        st.info("目前還沒有可用的主動式 ETF Overview 資料。" if lang_zh else "No active ETF overview data is available yet.")
+        return []
+
+    title = "Overall 主動 ETF 摘要" if lang_zh else "Overall Active ETF Summary"
+    copy = (
+        "先抓常看台股主動式 ETF，把單日漲幅、ETF 本身外資買賣超、第一大持股與持股風格放在同一個 Overall 畫面。"
+        if lang_zh
+        else "Starts with the commonly watched Taiwan active ETFs and places daily move, official ETF foreign flow, top holding, and holding style on one overall screen."
+    )
+    basis = (
+        "單日漲幅讀目前 ETF 報價；ETF 外資讀 TWSE T86 主動 ETF 受益權買賣超；第一大持股與 Top5 占比來自最新可用持股快照。這裡是在看 ETF 本身與持股風格，不是經理人的逐筆交易紀錄。"
+        if lang_zh
+        else "Daily move uses the latest ETF quote; ETF foreign flow uses TWSE T86 unit flow; top holding and top-5 concentration come from the latest available holdings snapshot. This reads the ETF itself and its style profile, not the manager's line-by-line trade blotter."
+    )
+    render_html_block(_render_active_etf_dashboard_overview(rows, show_icons=show_icons, title=title, copy=copy, basis=basis))
     return rows
 
 
