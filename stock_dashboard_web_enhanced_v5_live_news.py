@@ -4806,24 +4806,87 @@ def parse_taiwan_official_snapshot_tickers(raw_value: str | None = None) -> list
     return default_prefetch
 
 
+def _taiwan_official_snapshot_is_fresh_for_today(snapshot: dict | None) -> bool:
+    if not _taiwan_official_snapshot_ready(snapshot):
+        return False
+    fetched_ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
+    if fetched_ts is None:
+        return False
+    return fetched_ts.date() == datetime.now(TW_TZ).date()
+
+
 def prefetch_taiwan_official_snapshots_job(
     tickers: list[str] | None = None,
     *,
-    force_refresh: bool = True,
+    force_refresh: bool = False,
+    shard_index: int | None = None,
+    shard_count: int | None = None,
+    include_macro: bool = True,
+    include_tickers: bool = True,
 ) -> dict:
-    selected_tickers = [
+    requested_tickers = [
         ticker for ticker in dedupe_keep_order(tickers or parse_taiwan_official_snapshot_tickers())
         if is_taiwan_ticker(ticker)
     ]
+    if not include_macro and not include_tickers:
+        return {"status": "skipped", "reason": "No Taiwan official snapshot scope selected.", "tickers": []}
+
+    resolved_shard_count = _normalize_prefetch_shard_value(
+        shard_count if shard_count is not None else os.environ.get("PREFETCH_SHARD_COUNT", ""),
+        1,
+    )
+    resolved_shard_index = _normalize_prefetch_shard_value(
+        shard_index if shard_index is not None else os.environ.get("PREFETCH_SHARD_INDEX", ""),
+        0,
+    )
+
+    selected_tickers = _slice_prefetch_shard(requested_tickers, shard_index=shard_index, shard_count=shard_count)
+    if include_tickers and resolved_shard_count > 1 and not selected_tickers:
+        return {
+            "status": "skipped",
+            "reason": "No Taiwan official tickers assigned to this shard.",
+            "tickers": [],
+            "requested_tickers": requested_tickers,
+            "shard_index": resolved_shard_index,
+            "shard_count": resolved_shard_count,
+            "include_macro": include_macro,
+            "include_tickers": include_tickers,
+        }
+
     if force_refresh:
         _clear_taiwan_official_refresh_caches()
-    market_snapshot = get_taiwan_official_macro_snapshot(force_refresh=force_refresh)
+
+    market_snapshot = {}
+    if include_macro:
+        market_snapshot = get_taiwan_official_macro_snapshot(force_refresh=force_refresh)
+    elif not force_refresh:
+        market_snapshot = peek_taiwan_official_macro_snapshot() or {}
+
     built_rows: list[dict] = []
-    for ticker in selected_tickers:
+    fresh_skipped_rows: list[dict] = []
+    build_tickers: list[str] = []
+    if include_tickers:
+        for ticker in selected_tickers:
+            existing_snapshot = peek_taiwan_official_ticker_snapshot(ticker)
+            if not force_refresh and _taiwan_official_snapshot_is_fresh_for_today(existing_snapshot):
+                fresh_skipped_rows.append(
+                    {
+                        "ticker": str((existing_snapshot or {}).get("ticker", ticker) or ticker),
+                        "status": "fresh_skip",
+                        "fetched_at": str((existing_snapshot or {}).get("fetched_at", "") or ""),
+                    }
+                )
+                continue
+            build_tickers.append(ticker)
+
+    for row in fresh_skipped_rows:
+        built_rows.append(row)
+
+    for ticker in build_tickers:
         snapshot = get_taiwan_official_ticker_snapshot(
             ticker,
             force_refresh=force_refresh,
-            macro_snapshot=market_snapshot,
+            macro_snapshot=market_snapshot or None,
         )
         built_rows.append(
             {
@@ -4835,10 +4898,17 @@ def prefetch_taiwan_official_snapshots_job(
     return {
         "status": "ok",
         "tickers": selected_tickers,
+        "requested_tickers": requested_tickers,
         "rows": built_rows,
         "market_status": str((market_snapshot or {}).get("status", "missing") or "missing"),
         "market_fetched_at": str((market_snapshot or {}).get("fetched_at", "") or ""),
         "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "fresh_skipped_tickers": [row["ticker"] for row in fresh_skipped_rows],
+        "built_tickers": build_tickers,
+        "shard_index": resolved_shard_index,
+        "shard_count": resolved_shard_count,
+        "include_macro": include_macro,
+        "include_tickers": include_tickers,
     }
 
 
