@@ -23635,6 +23635,219 @@ def load_editor_analysis_items(*, max_items: int = 4) -> list[dict]:
     return fallback_items[:max_items]
 
 
+@st.cache_data(ttl=20 * 60, show_spinner=False)
+def fetch_home_taiex_volume_snapshot() -> dict:
+    now_tw = pd.Timestamp.now(tz=TW_TZ)
+    try:
+        frame = yf.download("^TWII", period="3mo", interval="1d", auto_adjust=False, progress=False, threads=False)
+        if frame is None or frame.empty:
+            raise ValueError("No TAIEX daily volume data returned.")
+        normalized = frame.copy()
+        if isinstance(normalized.columns, pd.MultiIndex):
+            flattened = []
+            for col in normalized.columns:
+                if isinstance(col, tuple):
+                    flattened.append(str(col[0] or col[-1]))
+                else:
+                    flattened.append(str(col))
+            normalized.columns = flattened
+        normalized.columns = [str(col).strip() for col in normalized.columns]
+        volume_col = next((col for col in normalized.columns if str(col).strip().lower() == "volume"), None)
+        close_col = next((col for col in normalized.columns if str(col).strip().lower() == "close"), None)
+        if not volume_col:
+            raise ValueError("Volume column was not found for ^TWII.")
+
+        volume_series = pd.to_numeric(normalized[volume_col], errors="coerce").dropna().tail(24)
+        if volume_series.empty:
+            raise ValueError("No valid TAIEX volume rows were available.")
+        close_series = pd.to_numeric(normalized[close_col], errors="coerce").dropna().tail(volume_series.shape[0]) if close_col else pd.Series(dtype=float)
+
+        latest_volume = float(volume_series.iloc[-1])
+        avg_20 = float(volume_series.tail(min(20, volume_series.shape[0])).mean())
+        latest_ratio = latest_volume / avg_20 if avg_20 else float("nan")
+        change_pct = ((latest_volume / float(volume_series.iloc[-2])) - 1.0) * 100.0 if volume_series.shape[0] >= 2 and float(volume_series.iloc[-2]) else float("nan")
+        price_change_pct = ((float(close_series.iloc[-1]) / float(close_series.iloc[0])) - 1.0) * 100.0 if close_series.shape[0] >= 2 and float(close_series.iloc[0]) else float("nan")
+        as_of = pd.Timestamp(volume_series.index[-1])
+        if as_of.tzinfo is None:
+            as_of = as_of.tz_localize(TW_TZ)
+        else:
+            as_of = as_of.tz_convert(TW_TZ)
+
+        return {
+            "status": "ready",
+            "source": "Yahoo Finance ^TWII daily volume",
+            "as_of": as_of.isoformat(),
+            "latest_volume": latest_volume,
+            "avg_20": avg_20,
+            "latest_ratio": latest_ratio,
+            "change_pct": change_pct,
+            "price_change_pct": price_change_pct,
+            "min_volume": float(volume_series.min()),
+            "max_volume": float(volume_series.max()),
+            "volume_points": [float(value) for value in volume_series.tolist()],
+            "labels": [pd.Timestamp(idx).strftime("%m/%d") for idx in volume_series.index.tolist()],
+        }
+    except Exception as exc:
+        return {
+            "status": "missing",
+            "source": "Yahoo Finance ^TWII daily volume",
+            "as_of": now_tw.isoformat(),
+            "error": str(exc),
+            "latest_volume": pd.NA,
+            "avg_20": pd.NA,
+            "latest_ratio": pd.NA,
+            "change_pct": pd.NA,
+            "price_change_pct": pd.NA,
+            "volume_points": [],
+            "labels": [],
+        }
+
+
+def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
+    snapshot = fetch_home_taiex_volume_snapshot()
+    if str(snapshot.get("status", "")) != "ready":
+        missing_title = "加權指數量能地形圖暫時不可用" if lang_zh else "TAIEX volume terrain is temporarily unavailable"
+        missing_note = "公開日量資料暫時沒有回來，等下一輪快照後會自動補上。" if lang_zh else "The public daily volume feed is unavailable right now and will return on the next snapshot."
+        return f"""
+        <div class="home-news-terrain-card">
+            <div class="home-news-terrain-head">
+                <div>
+                    <div class="home-news-terrain-kicker">{"TAIEX VOLUME" if not lang_zh else "加權指數量能"}</div>
+                    <div class="home-news-terrain-title">{escape(missing_title)}</div>
+                    <div class="home-news-terrain-copy">{escape(missing_note)}</div>
+                </div>
+            </div>
+        </div>
+        """
+
+    points = [float(value) for value in (snapshot.get("volume_points", []) or []) if pd.notna(_safe_float(value))]
+    labels = list(snapshot.get("labels", []) or [])
+    if len(points) < 2:
+        return ""
+
+    width = 760.0
+    height = 260.0
+    left_pad = 30.0
+    right_pad = 32.0
+    top_pad = 26.0
+    bottom_pad = 38.0
+    usable_w = width - left_pad - right_pad
+    usable_h = height - top_pad - bottom_pad
+    vol_min = min(points)
+    vol_max = max(points)
+    span = max(vol_max - vol_min, 1.0)
+
+    def _xy(index: int, value: float, depth: float = 0.0) -> tuple[float, float]:
+        x = left_pad + (usable_w * index / max(len(points) - 1, 1))
+        normalized = (value - vol_min) / span
+        y = top_pad + (1.0 - normalized) * usable_h + depth
+        return x, y
+
+    main_coords = [_xy(i, value, 0.0) for i, value in enumerate(points)]
+    front_path = " ".join(f"{x:.1f},{y:.1f}" for x, y in main_coords)
+    terrain_lines: list[str] = []
+    fill_layers: list[str] = []
+    for layer_index in range(7):
+        depth = 8.0 * layer_index
+        damp = 1.0 - (layer_index * 0.06)
+        layer_coords = []
+        for i, value in enumerate(points):
+            midpoint = vol_min + (value - vol_min) * max(damp, 0.58)
+            layer_coords.append(_xy(i, midpoint, depth))
+        line_path = " ".join(f"{x:.1f},{y:.1f}" for x, y in layer_coords)
+        terrain_lines.append(f'<polyline class="terrain-wire terrain-wire-{layer_index}" points="{line_path}" />')
+        if layer_index in {1, 3, 5}:
+            fill_layers.append(
+                f'<polygon class="terrain-fill terrain-fill-{layer_index}" points="{line_path} {width-right_pad:.1f},{height-bottom_pad+8:.1f} {left_pad:.1f},{height-bottom_pad+8:.1f}" />'
+            )
+
+    column_lines = []
+    for idx in range(0, len(points), 3):
+        x, y = main_coords[idx]
+        column_lines.append(f'<line class="terrain-column" x1="{x:.1f}" y1="{y:.1f}" x2="{x:.1f}" y2="{height-bottom_pad+6:.1f}" />')
+
+    label_indices = sorted({0, len(points)//2, len(points)-1})
+    timestamp_marks = []
+    for idx in label_indices:
+        x, _ = main_coords[idx]
+        label = labels[idx] if idx < len(labels) else ""
+        timestamp_marks.append(
+            f'<g class="terrain-axis-mark"><line x1="{x:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{x:.1f}" y2="{height-bottom_pad+14:.1f}" /><text x="{x:.1f}" y="{height-bottom_pad+28:.1f}">{escape(label)}</text></g>'
+        )
+
+    latest_volume_text = _format_profile_compact_number(snapshot.get("latest_volume"), digits=1)
+    avg_volume_text = _format_profile_compact_number(snapshot.get("avg_20"), digits=1)
+    ratio_value = _safe_float(snapshot.get("latest_ratio"))
+    ratio_text = "—" if pd.isna(ratio_value) else f"{ratio_value:.2f}x"
+    change_text = "—" if pd.isna(_safe_float(snapshot.get("change_pct"))) else f"{_safe_float(snapshot.get('change_pct')):+.1f}%"
+    price_text = "—" if pd.isna(_safe_float(snapshot.get("price_change_pct"))) else f"{_safe_float(snapshot.get('price_change_pct')):+.1f}%"
+    as_of_text = format_taiwan_official_snapshot_fetched_at(snapshot.get("as_of"))
+    volume_note = (
+        f"近月日量地形顯示最新量能 {latest_volume_text}，約為 20 日均量的 {ratio_text}；最近一筆量能變化 {change_text}。"
+        if lang_zh else
+        f"The recent daily-volume terrain shows {latest_volume_text} on the latest bar, about {ratio_text} of the 20-day average, with the last session changing {change_text}."
+    )
+
+    return f"""
+    <div class="home-news-terrain-card">
+        <div class="home-news-terrain-head">
+            <div>
+                <div class="home-news-terrain-kicker">{"TAIEX VOLUME TERRAIN" if not lang_zh else "加權指數成交量地形圖"}</div>
+                <div class="home-news-terrain-title">{"3D data terrain map for weighted-index volume" if not lang_zh else "把加權指數量能做成 3D 數據地形流"}</div>
+                <div class="home-news-terrain-copy">{escape(volume_note)}</div>
+            </div>
+            <div class="home-news-terrain-metrics">
+                <div class="home-news-terrain-metric"><span>{"Latest" if not lang_zh else "最新量"}</span><strong>{latest_volume_text}</strong></div>
+                <div class="home-news-terrain-metric"><span>{"20D Avg" if not lang_zh else "20日均量"}</span><strong>{avg_volume_text}</strong></div>
+                <div class="home-news-terrain-metric"><span>{"Volume / Avg" if not lang_zh else "量比"}</span><strong>{ratio_text}</strong></div>
+            </div>
+        </div>
+        <div class="home-news-terrain-stage">
+            <svg viewBox="0 0 {int(width)} {int(height)}" class="home-news-terrain-svg" preserveAspectRatio="none" aria-label="TAIEX volume terrain">
+                <defs>
+                    <linearGradient id="terrainGlowLeft" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#3af4e6" />
+                        <stop offset="55%" stop-color="#39d8ff" />
+                        <stop offset="100%" stop-color="#8974ff" />
+                    </linearGradient>
+                    <linearGradient id="terrainFillA" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="rgba(58,244,230,0.20)" />
+                        <stop offset="100%" stop-color="rgba(58,244,230,0.02)" />
+                    </linearGradient>
+                    <linearGradient id="terrainFillB" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="rgba(137,116,255,0.18)" />
+                        <stop offset="100%" stop-color="rgba(137,116,255,0.02)" />
+                    </linearGradient>
+                    <filter id="terrainBlur" x="-20%" y="-20%" width="140%" height="160%">
+                        <feGaussianBlur stdDeviation="5.5" />
+                    </filter>
+                </defs>
+                <rect x="0" y="0" width="{int(width)}" height="{int(height)}" class="terrain-panel-bg" />
+                <g class="terrain-grid">
+                    <line x1="{left_pad:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{width-right_pad:.1f}" y2="{height-bottom_pad+8:.1f}" />
+                    <line x1="{left_pad:.1f}" y1="{top_pad+24:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+24:.1f}" />
+                    <line x1="{left_pad:.1f}" y1="{top_pad+88:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+88:.1f}" />
+                    <line x1="{left_pad:.1f}" y1="{top_pad+152:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+152:.1f}" />
+                </g>
+                <g class="terrain-depth">{''.join(fill_layers)}{''.join(column_lines)}{''.join(terrain_lines)}</g>
+                <polyline class="terrain-front-glow" points="{front_path}" />
+                <polyline class="terrain-front-line" points="{front_path}" />
+                <g class="terrain-points">{''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.5" />' for x, y in main_coords[::2])}</g>
+                <g class="terrain-axis">{''.join(timestamp_marks)}</g>
+            </svg>
+            <div class="terrain-callout terrain-callout-left">
+                <div class="terrain-callout-label">{"Volume stream" if not lang_zh else "量能時間流"}</div>
+                <div class="terrain-callout-copy">{escape(as_of_text)}</div>
+            </div>
+            <div class="terrain-callout terrain-callout-right">
+                <div class="terrain-callout-label">{"Index trend" if not lang_zh else "指數趨勢"}</div>
+                <div class="terrain-callout-copy">{price_text}</div>
+            </div>
+        </div>
+    </div>
+    """
+
+
 def inject_home_news_briefing_css() -> None:
     render_html_block(
         """
@@ -23883,6 +24096,177 @@ def inject_home_news_briefing_css() -> None:
             font-size: 11px;
             font-weight: 800;
         }
+        .home-news-terrain-card {
+            margin-top: 14px;
+            border-radius: 18px;
+            padding: 16px 16px 14px;
+            border: 1px solid rgba(72,215,255,.18);
+            background:
+                radial-gradient(circle at 18% 8%, rgba(58,244,230,.12), transparent 28%),
+                linear-gradient(145deg, rgba(8,19,44,.98), rgba(6,13,32,.96));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 16px 40px rgba(2, 8, 24, .22);
+        }
+        .home-news-terrain-head {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+            justify-content: space-between;
+        }
+        .home-news-terrain-kicker {
+            font-size: 10.5px;
+            line-height: 1.2;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(89,240,255,.84);
+        }
+        .home-news-terrain-title {
+            margin-top: 6px;
+            font-size: 18px;
+            line-height: 1.25;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-terrain-copy {
+            margin-top: 8px;
+            max-width: 760px;
+            font-size: 12.5px;
+            line-height: 1.6;
+            color: rgba(223,238,255,.76);
+        }
+        .home-news-terrain-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(88px, 1fr));
+            gap: 8px;
+            min-width: 260px;
+        }
+        .home-news-terrain-metric {
+            border-radius: 14px;
+            padding: 10px 12px;
+            border: 1px solid rgba(72,215,255,.12);
+            background: rgba(20, 28, 72, .56);
+            text-align: right;
+        }
+        .home-news-terrain-metric span {
+            display: block;
+            font-size: 10px;
+            line-height: 1.2;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            font-weight: 800;
+            color: rgba(174, 226, 255, .68);
+        }
+        .home-news-terrain-metric strong {
+            display: block;
+            margin-top: 6px;
+            font-size: 18px;
+            line-height: 1;
+            font-weight: 950;
+            color: #f4fbff;
+        }
+        .home-news-terrain-stage {
+            position: relative;
+            margin-top: 14px;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(72,215,255,.12);
+            background:
+                radial-gradient(circle at 50% 100%, rgba(58,244,230,.15), transparent 34%),
+                linear-gradient(180deg, rgba(4, 10, 24, .92), rgba(4, 10, 24, .78));
+        }
+        .home-news-terrain-svg {
+            display: block;
+            width: 100%;
+            height: 290px;
+        }
+        .terrain-panel-bg {
+            fill: rgba(5, 14, 30, 0.98);
+        }
+        .terrain-grid line {
+            stroke: rgba(110, 205, 255, .08);
+            stroke-width: 1;
+        }
+        .terrain-fill-1 { fill: url(#terrainFillA); }
+        .terrain-fill-3 { fill: url(#terrainFillB); }
+        .terrain-fill-5 { fill: url(#terrainFillA); opacity: .55; }
+        .terrain-wire {
+            fill: none;
+            stroke: rgba(98, 244, 234, .18);
+            stroke-width: 1.1;
+        }
+        .terrain-wire-0 { stroke: rgba(58,244,230,.26); }
+        .terrain-wire-1 { stroke: rgba(63,231,255,.28); }
+        .terrain-wire-2 { stroke: rgba(80,210,255,.24); }
+        .terrain-wire-3 { stroke: rgba(104,174,255,.22); }
+        .terrain-wire-4 { stroke: rgba(129,140,248,.2); }
+        .terrain-wire-5 { stroke: rgba(137,116,255,.18); }
+        .terrain-wire-6 { stroke: rgba(170,115,255,.14); }
+        .terrain-column {
+            stroke: rgba(74, 231, 255, .18);
+            stroke-width: 1;
+            stroke-dasharray: 2 4;
+        }
+        .terrain-front-glow {
+            fill: none;
+            stroke: rgba(58,244,230,.46);
+            stroke-width: 10;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            filter: url(#terrainBlur);
+        }
+        .terrain-front-line {
+            fill: none;
+            stroke: url(#terrainGlowLeft);
+            stroke-width: 3;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .terrain-points circle {
+            fill: #cfffff;
+            opacity: .92;
+        }
+        .terrain-axis-mark line {
+            stroke: rgba(177, 228, 255, .24);
+            stroke-width: 1;
+        }
+        .terrain-axis-mark text {
+            fill: rgba(207, 234, 255, .7);
+            font-size: 11px;
+            font-weight: 700;
+            text-anchor: middle;
+        }
+        .terrain-callout {
+            position: absolute;
+            padding: 8px 10px;
+            border-radius: 12px;
+            border: 1px solid rgba(72,215,255,.14);
+            background: rgba(10, 18, 43, .76);
+            box-shadow: 0 8px 20px rgba(2, 8, 24, .18);
+            backdrop-filter: blur(10px);
+        }
+        .terrain-callout-left {
+            left: 16px;
+            top: 16px;
+        }
+        .terrain-callout-right {
+            right: 16px;
+            bottom: 16px;
+        }
+        .terrain-callout-label {
+            font-size: 10px;
+            line-height: 1.2;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            font-weight: 900;
+            color: rgba(89,240,255,.84);
+        }
+        .terrain-callout-copy {
+            margin-top: 4px;
+            font-size: 12px;
+            line-height: 1.45;
+            font-weight: 800;
+            color: #f4fbff;
+        }
         @media (max-width: 980px) {
             .home-news-head,
             .home-news-grid {
@@ -23892,11 +24276,21 @@ def inject_home_news_briefing_css() -> None:
             .home-news-card-grid {
                 grid-template-columns: 1fr;
             }
+            .home-news-terrain-head {
+                flex-direction: column;
+            }
+            .home-news-terrain-metrics {
+                width: 100%;
+                min-width: 0;
+            }
         }
         @media (max-width: 640px) {
             .home-news-shell {
                 padding: 12px;
                 border-radius: 18px;
+            }
+            .home-news-terrain-svg {
+                height: 240px;
             }
             .home-news-row {
                 grid-template-columns: auto 1fr;
@@ -24092,6 +24486,7 @@ def render_home_news_briefing(
             _render_home_news_active_etf_html(active_etfs, lang_zh=lang_zh),
         ]
     )
+    terrain_card = _render_home_news_taiex_volume_terrain_html(lang_zh=lang_zh)
     editor_cards = _render_editor_analysis_html(editor_items, lang_zh=lang_zh)
     timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M")
     render_html_block(
@@ -24114,6 +24509,7 @@ def render_home_news_briefing(
                         {escape("Generated from current dashboard data and saved snapshots." if not lang_zh else "使用目前 Dashboard 資料與已建立快照產生。")}
                     </div>
                     <div class="home-news-card-grid">{auto_cards}</div>
+                    {terrain_card}
                 </div>
                 <div class="home-news-column">
                     <div class="home-news-column-title">{"Editor Analysis" if not lang_zh else "版主特別分析"}</div>
