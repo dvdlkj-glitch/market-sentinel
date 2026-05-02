@@ -21291,12 +21291,23 @@ def render_active_etf_lab_dashboard(
     lang_zh = get_language() == "zh_TW"
 
     if not active_etf_tickers:
-        st.info(
-            "目前選取清單中沒有台股主動式 ETF。請先在左側加入像 00982A、00981A 這類代號，再切到主動式 ETF Dashboard。"
-            if lang_zh
-            else "No Taiwan active ETFs are currently selected. Add symbols such as 00982A or 00981A from the left sidebar, then switch to the Active ETF Dashboard."
-        )
-        return
+        sidebar_picks = filter_active_etf_tickers(st.session_state.get("dashboard_active_etf_tickers", []))
+        active_etf_tickers = dedupe_keep_order(sidebar_picks or build_active_etf_quick_picks())
+        if active_etf_tickers:
+            st.session_state["dashboard_active_etf_tickers"] = active_etf_tickers
+            st.session_state["dashboard_active_etf_tickers_initialized"] = True
+            st.caption(
+                "目前先自動帶入常看台股主動式 ETF，方便直接看 Overall 對比。"
+                if lang_zh
+                else "Auto-loading the commonly watched Taiwan active ETFs so the overall compare view is available immediately."
+            )
+        else:
+            st.info(
+                "目前沒有可顯示的主動式 ETF。請先在左側加入台股主動式 ETF 代號。"
+                if lang_zh
+                else "No active ETF tickers are available to display yet. Add Taiwan active ETF symbols from the left sidebar first."
+            )
+            return
 
     inject_active_etf_tracker_css()
 
