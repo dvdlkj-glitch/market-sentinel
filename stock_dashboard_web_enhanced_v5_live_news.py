@@ -23747,6 +23747,8 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
     front_path = " ".join(f"{x:.1f},{y:.1f}" for x, y in main_coords)
     terrain_lines: list[str] = []
     fill_layers: list[str] = []
+    wire_colors = ["#3af4e6", "#3fe7ff", "#50d2ff", "#68aeff", "#818cf8", "#8974ff", "#aa73ff"]
+    wire_opacities = [0.34, 0.30, 0.26, 0.23, 0.20, 0.17, 0.14]
     for layer_index in range(7):
         depth = 8.0 * layer_index
         damp = 1.0 - (layer_index * 0.06)
@@ -23755,16 +23757,26 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
             midpoint = vol_min + (value - vol_min) * max(damp, 0.58)
             layer_coords.append(_xy(i, midpoint, depth))
         line_path = " ".join(f"{x:.1f},{y:.1f}" for x, y in layer_coords)
-        terrain_lines.append(f'<polyline class="terrain-wire terrain-wire-{layer_index}" points="{line_path}" />')
+        terrain_lines.append(
+            f'<polyline class="terrain-wire terrain-wire-{layer_index}" points="{line_path}" '
+            f'fill="none" stroke="{wire_colors[layer_index]}" stroke-opacity="{wire_opacities[layer_index]:.2f}" '
+            'stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />'
+        )
         if layer_index in {1, 3, 5}:
+            fill_ref = "terrainFillA" if layer_index != 3 else "terrainFillB"
+            fill_opacity = 0.72 if layer_index != 5 else 0.46
             fill_layers.append(
-                f'<polygon class="terrain-fill terrain-fill-{layer_index}" points="{line_path} {width-right_pad:.1f},{height-bottom_pad+8:.1f} {left_pad:.1f},{height-bottom_pad+8:.1f}" />'
+                f'<polygon class="terrain-fill terrain-fill-{layer_index}" points="{line_path} {width-right_pad:.1f},{height-bottom_pad+8:.1f} {left_pad:.1f},{height-bottom_pad+8:.1f}" '
+                f'fill="url(#terrainFill{fill_ref[-1]})" opacity="{fill_opacity:.2f}" />'
             )
 
     column_lines = []
     for idx in range(0, len(points), 3):
         x, y = main_coords[idx]
-        column_lines.append(f'<line class="terrain-column" x1="{x:.1f}" y1="{y:.1f}" x2="{x:.1f}" y2="{height-bottom_pad+6:.1f}" />')
+        column_lines.append(
+            f'<line class="terrain-column" x1="{x:.1f}" y1="{y:.1f}" x2="{x:.1f}" y2="{height-bottom_pad+6:.1f}" '
+            'stroke="#4ae7ff" stroke-opacity="0.20" stroke-width="1" stroke-dasharray="2 4" />'
+        )
 
     label_indices = sorted({0, len(points)//2, len(points)-1})
     timestamp_marks = []
@@ -23772,7 +23784,9 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
         x, _ = main_coords[idx]
         label = labels[idx] if idx < len(labels) else ""
         timestamp_marks.append(
-            f'<g class="terrain-axis-mark"><line x1="{x:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{x:.1f}" y2="{height-bottom_pad+14:.1f}" /><text x="{x:.1f}" y="{height-bottom_pad+28:.1f}">{escape(label)}</text></g>'
+            f'<g class="terrain-axis-mark"><line x1="{x:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{x:.1f}" y2="{height-bottom_pad+14:.1f}" '
+            f'stroke="#b1e4ff" stroke-opacity="0.28" stroke-width="1" /><text x="{x:.1f}" y="{height-bottom_pad+28:.1f}" '
+            f'fill="#cfeaff" fill-opacity="0.72" font-size="11" font-weight="700" text-anchor="middle">{escape(label)}</text></g>'
         )
 
     latest_volume_text = _format_profile_compact_number(snapshot.get("latest_volume"), digits=1)
@@ -23803,7 +23817,7 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
             </div>
         </div>
         <div class="home-news-terrain-stage">
-            <svg viewBox="0 0 {int(width)} {int(height)}" class="home-news-terrain-svg" preserveAspectRatio="none" aria-label="TAIEX volume terrain">
+            <svg viewBox="0 0 {int(width)} {int(height)}" class="home-news-terrain-svg" preserveAspectRatio="none" aria-label="TAIEX volume terrain" style="display:block;width:100%;height:290px;overflow:visible;">
                 <defs>
                     <linearGradient id="terrainGlowLeft" x1="0%" y1="0%" x2="100%" y2="0%">
                         <stop offset="0%" stop-color="#3af4e6" />
@@ -23811,28 +23825,28 @@ def _render_home_news_taiex_volume_terrain_html(lang_zh: bool) -> str:
                         <stop offset="100%" stop-color="#8974ff" />
                     </linearGradient>
                     <linearGradient id="terrainFillA" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="rgba(58,244,230,0.20)" />
-                        <stop offset="100%" stop-color="rgba(58,244,230,0.02)" />
+                        <stop offset="0%" stop-color="#3af4e6" stop-opacity="0.20" />
+                        <stop offset="100%" stop-color="#3af4e6" stop-opacity="0.02" />
                     </linearGradient>
                     <linearGradient id="terrainFillB" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="rgba(137,116,255,0.18)" />
-                        <stop offset="100%" stop-color="rgba(137,116,255,0.02)" />
+                        <stop offset="0%" stop-color="#8974ff" stop-opacity="0.18" />
+                        <stop offset="100%" stop-color="#8974ff" stop-opacity="0.02" />
                     </linearGradient>
                     <filter id="terrainBlur" x="-20%" y="-20%" width="140%" height="160%">
                         <feGaussianBlur stdDeviation="5.5" />
                     </filter>
                 </defs>
-                <rect x="0" y="0" width="{int(width)}" height="{int(height)}" class="terrain-panel-bg" />
+                <rect x="0" y="0" width="{int(width)}" height="{int(height)}" class="terrain-panel-bg" fill="#050e1e" opacity="0.98" />
                 <g class="terrain-grid">
-                    <line x1="{left_pad:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{width-right_pad:.1f}" y2="{height-bottom_pad+8:.1f}" />
-                    <line x1="{left_pad:.1f}" y1="{top_pad+24:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+24:.1f}" />
-                    <line x1="{left_pad:.1f}" y1="{top_pad+88:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+88:.1f}" />
-                    <line x1="{left_pad:.1f}" y1="{top_pad+152:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+152:.1f}" />
+                    <line x1="{left_pad:.1f}" y1="{height-bottom_pad+8:.1f}" x2="{width-right_pad:.1f}" y2="{height-bottom_pad+8:.1f}" stroke="#6ecdff" stroke-opacity="0.10" stroke-width="1" />
+                    <line x1="{left_pad:.1f}" y1="{top_pad+24:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+24:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
+                    <line x1="{left_pad:.1f}" y1="{top_pad+88:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+88:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
+                    <line x1="{left_pad:.1f}" y1="{top_pad+152:.1f}" x2="{width-right_pad:.1f}" y2="{top_pad+152:.1f}" stroke="#6ecdff" stroke-opacity="0.08" stroke-width="1" />
                 </g>
                 <g class="terrain-depth">{''.join(fill_layers)}{''.join(column_lines)}{''.join(terrain_lines)}</g>
-                <polyline class="terrain-front-glow" points="{front_path}" />
-                <polyline class="terrain-front-line" points="{front_path}" />
-                <g class="terrain-points">{''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.5" />' for x, y in main_coords[::2])}</g>
+                <polyline class="terrain-front-glow" points="{front_path}" fill="none" stroke="#3af4e6" stroke-opacity="0.36" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+                <polyline class="terrain-front-line" points="{front_path}" fill="none" stroke="url(#terrainGlowLeft)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+                <g class="terrain-points">{''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.8" fill="#cfffff" opacity="0.94" />' for x, y in main_coords[::2])}</g>
                 <g class="terrain-axis">{''.join(timestamp_marks)}</g>
             </svg>
             <div class="terrain-callout terrain-callout-left">
