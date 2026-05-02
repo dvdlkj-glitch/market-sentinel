@@ -4117,7 +4117,7 @@ def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict |
     if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
         synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
         if _active_etf_lab_snapshot_ready(synthesized):
-            return synthesized
+            return _persist_active_etf_pair_snapshot(synthesized)
     store = _active_etf_lab_snapshot_store()
     snapshot = (store.get("items", {}) or {}).get(_active_etf_pair_snapshot_key(left_ticker, right_ticker))
     if not _active_etf_lab_snapshot_ready(snapshot):
@@ -30506,6 +30506,7 @@ def _active_etf_build_lookthrough_snapshot(
     *,
     max_items: int = 8,
     signal_cache: dict[str, dict] | None = None,
+    allow_live_fetch: bool = True,
 ) -> dict:
     if signal_cache is None:
         signal_cache = {}
@@ -30525,7 +30526,7 @@ def _active_etf_build_lookthrough_snapshot(
         covered_positions += 1
         total_weight += weight
         if symbol not in signal_cache:
-            signal_cache[symbol] = fetch_active_etf_underlying_signal(symbol)
+            signal_cache[symbol] = fetch_active_etf_underlying_signal(symbol) if allow_live_fetch else {}
         signal = signal_cache.get(symbol, {})
         news_score = float(signal.get("news_score", 0.0) or 0.0)
         weighted_news += weight * news_score
@@ -30816,11 +30817,11 @@ def _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapsh
     right_lookthrough = dict((right_snapshot or {}).get("lookthrough_payload", {}) or {})
     if not left_lookthrough and left_map:
         left_lookthrough = _active_etf_clean_lookthrough_snapshot(
-            _active_etf_build_lookthrough_snapshot(left_map, signal_cache=merged_signal_cache)
+            _active_etf_build_lookthrough_snapshot(left_map, signal_cache=merged_signal_cache, allow_live_fetch=False)
         )
     if not right_lookthrough and right_map:
         right_lookthrough = _active_etf_clean_lookthrough_snapshot(
-            _active_etf_build_lookthrough_snapshot(right_map, signal_cache=merged_signal_cache)
+            _active_etf_build_lookthrough_snapshot(right_map, signal_cache=merged_signal_cache, allow_live_fetch=False)
         )
 
     left_label = display_ticker_label(left_ticker)
@@ -31504,6 +31505,8 @@ def _build_active_etf_pair_compare_snapshot(
         or not _active_etf_lab_snapshot_ready(existing_right)
     )
     if needs_refresh:
+        if not force_refresh:
+            return _empty_active_etf_pair_snapshot(left_ticker, right_ticker)
         if force_refresh:
             _clear_active_etf_lab_refresh_caches()
         lens_meta = {
