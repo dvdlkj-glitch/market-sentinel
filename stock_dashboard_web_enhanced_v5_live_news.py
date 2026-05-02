@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import sqlite3
 import textwrap
+import time
 from datetime import datetime, timezone
 from html import escape, unescape
 from urllib.error import HTTPError, URLError
@@ -4647,6 +4648,22 @@ def _taiwan_official_snapshot_ready(snapshot: dict | None) -> bool:
     )
 
 
+def _taiwan_official_snapshot_has_retryable_errors(snapshot: dict | None) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    errors = dict((snapshot or {}).get("errors", {}) or {})
+    if not errors:
+        return False
+    flow_error = str(errors.get("flow", "") or "").strip()
+    revenue_error = str(errors.get("revenue", "") or "").strip()
+    valuation_error = str(errors.get("valuation", "") or "").strip()
+    foreign_error = str(errors.get("foreign_ownership", "") or "").strip()
+    ticker = str((snapshot or {}).get("ticker", "") or "").upper().strip()
+    if is_taiwan_active_etf(ticker):
+        return bool(flow_error)
+    return bool(flow_error or revenue_error or valuation_error or foreign_error)
+
+
 def format_taiwan_official_snapshot_fetched_at(value: object) -> str:
     ts = _normalize_tw_timestamp(value)
     if ts is None:
@@ -4871,6 +4888,8 @@ def parse_taiwan_official_snapshot_tickers(raw_value: str | None = None) -> list
 
 def _taiwan_official_snapshot_is_fresh_for_today(snapshot: dict | None) -> bool:
     if not _taiwan_official_snapshot_ready(snapshot):
+        return False
+    if _taiwan_official_snapshot_has_retryable_errors(snapshot):
         return False
     fetched_ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
     if fetched_ts is None:
@@ -20790,36 +20809,36 @@ def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
     today = datetime.now(TW_TZ).date()
     errors: list[str] = []
     tried_urls: list[str] = []
+    deadline = time.monotonic() + 18.0
+    max_attempts = 8
 
     def _candidate_urls(date_str: str) -> list[tuple[str, str]]:
-        base_paths = [
-            "https://www.twse.com.tw/rwd/zh/fund/T86",
-            "https://www.twse.com.tw/fund/T86",
-            "https://www.twse.com.tw/exchangeReport/T86",
-        ]
         variants = [
-            ("ETF", "selectType=ETF"),
-            ("ALL", "selectType=ALL"),
-            ("ALLBUT0999", "selectType=ALLBUT0999"),
-            ("no-filter", ""),
+            ("ETF", "https://www.twse.com.tw/rwd/zh/fund/T86", "selectType=ETF"),
+            ("ALL", "https://www.twse.com.tw/rwd/zh/fund/T86", "selectType=ALL"),
+            ("ALLBUT0999", "https://www.twse.com.tw/rwd/zh/fund/T86", "selectType=ALLBUT0999"),
+            ("ALL-legacy", "https://www.twse.com.tw/fund/T86", "selectType=ALL"),
         ]
         urls: list[tuple[str, str]] = []
-        for base in base_paths:
-            for label, select_part in variants:
-                query = f"response=json&date={date_str}"
-                if select_part:
-                    query = f"{query}&{select_part}"
-                urls.append((label, f"{base}?{query}"))
+        for label, base, select_part in variants:
+            query = f"response=json&date={date_str}"
+            if select_part:
+                query = f"{query}&{select_part}"
+            urls.append((label, f"{base}?{query}"))
         return urls
 
-    for offset in range(0, 22):
+    attempt_count = 0
+    for offset in range(0, 6):
         trade_date = today - pd.Timedelta(days=offset)
         date_str = trade_date.strftime("%Y%m%d")
 
         for source_label, url in _candidate_urls(date_str):
+            if time.monotonic() >= deadline or attempt_count >= max_attempts:
+                break
+            attempt_count += 1
             tried_urls.append(url)
             try:
-                payload = _twse_request_json(url)
+                payload = _fetch_json_url(url, timeout=4)
                 stat = str(payload.get("stat", "") or "")
                 if stat.startswith("很抱歉") or "查無" in stat or "無資料" in stat:
                     continue
@@ -20851,8 +20870,12 @@ def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
                 if message not in errors:
                     errors.append(message)
                 continue
+        if time.monotonic() >= deadline or attempt_count >= max_attempts:
+            break
 
-    last_error = errors[-1] if errors else f"No T86 row matched ETF code {code} in the last 22 calendar days."
+    if time.monotonic() >= deadline:
+        errors.append(f"T86 ETF lookup timed out after {attempt_count} attempts.")
+    last_error = errors[-1] if errors else f"No T86 row matched ETF code {code} in the last 6 calendar days."
     return {
         "date": None,
         "record": {},
