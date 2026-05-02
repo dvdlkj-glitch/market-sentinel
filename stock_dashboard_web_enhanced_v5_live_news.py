@@ -3559,17 +3559,39 @@ def _render_active_etf_workspace_station_body(
     lens_meta: dict | None = None,
 ) -> None:
     lang_zh = get_language() == "zh_TW"
-    snapshot = peek_active_etf_workspace_snapshot(selected_ticker, lens_meta=lens_meta)
+    snapshot, snapshot_source = inspect_active_etf_workspace_snapshot(selected_ticker, lens_meta=lens_meta)
     refresh_key = f"active_etf_workspace_refresh_{re.sub(r'[^A-Za-z0-9_]+', '_', str(selected_ticker).upper())}"
     status_col, action_col = st.columns([4.5, 1.2], gap="small")
     with status_col:
         if snapshot is not None:
             fetched_at = format_active_etf_snapshot_fetched_at(snapshot.get("fetched_at"))
+            source_labels_zh = {
+                "remote_exact": "遠端 Prefetch 快照",
+                "remote_fallback": "遠端 Prefetch 快照（最近成功版本）",
+                "local_exact": "本機快照",
+                "local_fallback": "本機快照（最近成功版本）",
+            }
+            source_labels_en = {
+                "remote_exact": "remote prefetched snapshot",
+                "remote_fallback": "remote prefetched snapshot (closest saved version)",
+                "local_exact": "local snapshot cache",
+                "local_fallback": "local snapshot cache (closest saved version)",
+            }
+            source_label = (
+                source_labels_zh.get(snapshot_source, "已保存工作台快照")
+                if lang_zh else
+                source_labels_en.get(snapshot_source, "saved workspace snapshot")
+            )
+            matched_period = str((snapshot or {}).get("period", "—") or "—")
+            matched_interval = str((snapshot or {}).get("interval", "—") or "—")
+            matched_lens = str((snapshot or {}).get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS)
             st.caption(
                 (
-                    f"目前先顯示 {display_ticker_label(selected_ticker)} 最近一次工作台快照：{fetched_at}。需要最新資料時，再按右側刷新。"
+                    f"目前先顯示 {display_ticker_label(selected_ticker)} 的 {source_label}：{fetched_at}，"
+                    f"鏡頭 {matched_lens} / {matched_period} / {matched_interval}。需要最新資料時，再按右側刷新。"
                     if lang_zh else
-                    f"Showing the latest saved workspace snapshot for {display_ticker_label(selected_ticker)} from {fetched_at}. Refresh only when you want a newer build."
+                    f"Showing the {source_label} for {display_ticker_label(selected_ticker)} from {fetched_at}, "
+                    f"using {matched_lens} / {matched_period} / {matched_interval}. Refresh only when you want a newer build."
                 )
             )
         else:
@@ -4017,21 +4039,66 @@ def _active_etf_lab_snapshot_ready(snapshot: dict | None) -> bool:
 def format_active_etf_snapshot_fetched_at(value: object) -> str:
     ts = _normalize_tw_timestamp(value)
     if ts is None:
-        return "â€”"
+        return "—"
     return ts.strftime("%Y-%m-%d %H:%M")
 
 
-def peek_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = None) -> dict | None:
+def _active_etf_workspace_snapshot_candidates(ticker: str) -> list[dict]:
+    ticker_upper = str(ticker or "").upper().strip()
+    if not ticker_upper:
+        return []
+    items = dict((_active_etf_lab_snapshot_store().get("items", {}) or {}))
+    matches: list[dict] = []
+    prefix = f"workspace::{ticker_upper}::"
+    for key, snapshot in items.items():
+        if not str(key or "").startswith(prefix):
+            continue
+        if _active_etf_lab_snapshot_ready(snapshot):
+            matches.append(dict(snapshot or {}))
+    matches.sort(
+        key=lambda item: _normalize_tw_timestamp((item or {}).get("fetched_at")) or pd.Timestamp.min.tz_localize(TW_TZ),
+        reverse=True,
+    )
+    return matches
+
+
+def _load_local_active_etf_snapshot(
+    ticker: str,
+    lens_meta: dict | None = None,
+    *,
+    allow_any_lens: bool = False,
+) -> dict | None:
+    ticker_upper = str(ticker or "").upper().strip()
+    if not ticker_upper:
+        return None
+    items = dict((_active_etf_lab_snapshot_store().get("items", {}) or {}))
+    if lens_meta is not None and not allow_any_lens:
+        snapshot = items.get(_active_etf_workspace_snapshot_key(ticker_upper, lens_meta))
+        if _active_etf_lab_snapshot_ready(snapshot):
+            return dict(snapshot or {})
+        return None
+    candidates = _active_etf_workspace_snapshot_candidates(ticker_upper)
+    return candidates[0] if candidates else None
+
+
+def inspect_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = None) -> tuple[dict | None, str]:
     remote_snapshot = _load_supabase_active_etf_snapshot(ticker, lens_meta=lens_meta)
     if _active_etf_lab_snapshot_ready(remote_snapshot):
-        return remote_snapshot
+        return remote_snapshot, "remote_exact"
     fallback_remote_snapshot = _load_supabase_active_etf_snapshot(ticker, allow_any_lens=True)
     if _active_etf_lab_snapshot_ready(fallback_remote_snapshot):
-        return fallback_remote_snapshot
-    store = _active_etf_lab_snapshot_store()
-    snapshot = (store.get("items", {}) or {}).get(_active_etf_workspace_snapshot_key(ticker, lens_meta))
-    if not _active_etf_lab_snapshot_ready(snapshot):
-        return None
+        return fallback_remote_snapshot, "remote_fallback"
+    local_snapshot = _load_local_active_etf_snapshot(ticker, lens_meta=lens_meta)
+    if _active_etf_lab_snapshot_ready(local_snapshot):
+        return local_snapshot, "local_exact"
+    fallback_local_snapshot = _load_local_active_etf_snapshot(ticker, allow_any_lens=True)
+    if _active_etf_lab_snapshot_ready(fallback_local_snapshot):
+        return fallback_local_snapshot, "local_fallback"
+    return None, "missing"
+
+
+def peek_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = None) -> dict | None:
+    snapshot, _ = inspect_active_etf_workspace_snapshot(ticker, lens_meta=lens_meta)
     return snapshot
 
 
@@ -4039,11 +4106,7 @@ def _peek_active_etf_workspace_snapshot_exact(ticker: str, lens_meta: dict | Non
     remote_snapshot = _load_supabase_active_etf_snapshot(ticker, lens_meta=lens_meta)
     if _active_etf_lab_snapshot_ready(remote_snapshot):
         return remote_snapshot
-    store = _active_etf_lab_snapshot_store()
-    snapshot = (store.get("items", {}) or {}).get(_active_etf_workspace_snapshot_key(ticker, lens_meta))
-    if not _active_etf_lab_snapshot_ready(snapshot):
-        return None
-    return snapshot
+    return _load_local_active_etf_snapshot(ticker, lens_meta=lens_meta)
 
 
 def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
