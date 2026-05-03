@@ -25305,8 +25305,7 @@ def render_active_etf_overall_briefing(active_etf_tickers: list[str], daily_data
                 <div class="active-etf-side"><div class="active-etf-side-title">{"投研分析與 Buy-side 觀點" if lang_zh else "Research and buy-side notes"}</div><div class="active-etf-sub">{"由目前 Prefetch 快照自動整理第一眼觀點。" if lang_zh else "Automatically derived from the latest saved snapshots."}</div>{side_html}</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
