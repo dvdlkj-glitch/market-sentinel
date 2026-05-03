@@ -3816,15 +3816,19 @@ def _supabase_active_etf_read_request(path: str) -> tuple[int, dict | list | str
 
 
 def _active_etf_supabase_row_from_snapshot(snapshot: dict) -> dict:
+    ticker_key = _active_etf_snapshot_ticker_key(str(snapshot.get("ticker", "") or ""))
+    payload = dict(snapshot or {})
+    if ticker_key:
+        payload["ticker"] = ticker_key
     return {
-        "ticker": str(snapshot.get("ticker", "")).upper().strip(),
+        "ticker": ticker_key,
         "as_of_date": _active_etf_snapshot_as_of_date(snapshot),
         "fetched_at": str(snapshot.get("fetched_at") or pd.Timestamp.now(tz=TW_TZ).isoformat()),
         "period": str(snapshot.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
         "interval": str(snapshot.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
         "lens_title": str(snapshot.get("lens_title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
         "status": str(snapshot.get("status", "ready") or "ready"),
-        "snapshot_payload": _active_etf_lab_snapshot_safe(snapshot),
+        "snapshot_payload": _active_etf_lab_snapshot_safe(payload),
     }
 
 
@@ -3856,27 +3860,32 @@ def _load_supabase_active_etf_snapshot(
     *,
     allow_any_lens: bool = False,
 ) -> dict | None:
-    ticker_upper = str(ticker or "").upper().strip()
+    ticker_upper = _active_etf_snapshot_ticker_key(ticker)
     if not ticker_upper:
         return None
+    raw_ticker_upper = str(ticker or "").upper().strip()
+    ticker_candidates = dedupe_keep_order([ticker_upper, raw_ticker_upper])
     select_query = quote_plus("ticker,as_of_date,fetched_at,period,interval,lens_title,status,snapshot_payload")
-    filters = [f"ticker=eq.{quote_plus(ticker_upper)}"]
-    if lens_meta is not None and not allow_any_lens:
-        filters.extend(
-            [
-                f"period=eq.{quote_plus(str((lens_meta or {}).get('period', DEFAULT_PERIOD) or DEFAULT_PERIOD))}",
-                f"interval=eq.{quote_plus(str((lens_meta or {}).get('interval', DEFAULT_INTERVAL) or DEFAULT_INTERVAL))}",
-                f"lens_title=eq.{quote_plus(str((lens_meta or {}).get('title', DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS))}",
-            ]
+    for candidate in ticker_candidates:
+        if not candidate:
+            continue
+        filters = [f"ticker=eq.{quote_plus(candidate)}"]
+        if lens_meta is not None and not allow_any_lens:
+            filters.extend(
+                [
+                    f"period=eq.{quote_plus(str((lens_meta or {}).get('period', DEFAULT_PERIOD) or DEFAULT_PERIOD))}",
+                    f"interval=eq.{quote_plus(str((lens_meta or {}).get('interval', DEFAULT_INTERVAL) or DEFAULT_INTERVAL))}",
+                    f"lens_title=eq.{quote_plus(str((lens_meta or {}).get('title', DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS))}",
+                ]
+            )
+        path = (
+            f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+            f"?select={select_query}&{'&'.join(filters)}&order=as_of_date.desc,fetched_at.desc&limit=1"
         )
-    path = (
-        f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
-        f"?select={select_query}&{'&'.join(filters)}&order=as_of_date.desc,fetched_at.desc&limit=1"
-    )
-    status, payload = _supabase_active_etf_read_request(path)
-    if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
-        return None
-    return _active_etf_supabase_snapshot_from_row(payload[0])
+        status, payload = _supabase_active_etf_read_request(path)
+        if 200 <= status < 300 and isinstance(payload, list) and payload:
+            return _active_etf_supabase_snapshot_from_row(payload[0])
+    return None
 
 
 def _upsert_supabase_active_etf_snapshot(snapshot: dict) -> bool:
@@ -4019,8 +4028,13 @@ def _deserialize_active_etf_bundle(payload: dict | None) -> dict | None:
     }
 
 
+def _active_etf_snapshot_ticker_key(ticker: str) -> str:
+    normalized = normalize_taiwan_active_etf_symbol(str(ticker or ""))
+    return normalized or str(ticker or "").upper().strip()
+
+
 def _active_etf_workspace_snapshot_key(ticker: str, lens_meta: dict | None = None) -> str:
-    ticker_key = str(ticker or "").upper().strip()
+    ticker_key = _active_etf_snapshot_ticker_key(ticker)
     period = str((lens_meta or {}).get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD)
     interval = str((lens_meta or {}).get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL)
     lens_title = str((lens_meta or {}).get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS)
@@ -4028,7 +4042,7 @@ def _active_etf_workspace_snapshot_key(ticker: str, lens_meta: dict | None = Non
 
 
 def _active_etf_pair_snapshot_key(left_ticker: str, right_ticker: str) -> str:
-    return f"compare::{str(left_ticker or '').upper().strip()}::{str(right_ticker or '').upper().strip()}"
+    return f"compare::{_active_etf_snapshot_ticker_key(left_ticker)}::{_active_etf_snapshot_ticker_key(right_ticker)}"
 
 
 def _active_etf_lab_snapshot_ready(snapshot: dict | None) -> bool:
@@ -4047,14 +4061,15 @@ def format_active_etf_snapshot_fetched_at(value: object) -> str:
 
 
 def _active_etf_workspace_snapshot_candidates(ticker: str) -> list[dict]:
-    ticker_upper = str(ticker or "").upper().strip()
+    ticker_upper = _active_etf_snapshot_ticker_key(ticker)
     if not ticker_upper:
         return []
+    raw_ticker_upper = str(ticker or "").upper().strip()
+    prefixes = [f"workspace::{candidate}::" for candidate in dedupe_keep_order([ticker_upper, raw_ticker_upper]) if candidate]
     items = dict((_active_etf_lab_snapshot_store().get("items", {}) or {}))
     matches: list[dict] = []
-    prefix = f"workspace::{ticker_upper}::"
     for key, snapshot in items.items():
-        if not str(key or "").startswith(prefix):
+        if not any(str(key or "").startswith(prefix) for prefix in prefixes):
             continue
         if _active_etf_lab_snapshot_ready(snapshot):
             matches.append(dict(snapshot or {}))
@@ -4071,7 +4086,7 @@ def _load_local_active_etf_snapshot(
     *,
     allow_any_lens: bool = False,
 ) -> dict | None:
-    ticker_upper = str(ticker or "").upper().strip()
+    ticker_upper = _active_etf_snapshot_ticker_key(ticker)
     if not ticker_upper:
         return None
     items = dict((_active_etf_lab_snapshot_store().get("items", {}) or {}))
@@ -4209,11 +4224,31 @@ def _build_active_etf_workspace_snapshot(
             "bundle": {},
         }
     holdings_payload = fetch_active_etf_holdings_snapshot(ticker, max_items=40)
-    etf_flow_payload = fetch_twse_etf_institutional_flow(ticker)
+    fast_prefetch_mode = str(os.environ.get("ACTIVE_ETF_PREFETCH_FAST_MODE", "") or "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+    etf_flow_payload = (
+        {
+            "date": None,
+            "record": {},
+            "source": "TWSE T86",
+            "error": "Skipped during fast Prefetch; use manual refresh for the latest ETF institutional flow.",
+            "status": "skipped",
+            "tried": [],
+        }
+        if fast_prefetch_mode
+        else fetch_twse_etf_institutional_flow(ticker)
+    )
     holdings_items = list((holdings_payload or {}).get("items", []) or [])
     holdings_map = _active_etf_holdings_compare_map(holdings_items, max_items=40) if holdings_items else {}
     signal_cache: dict[str, dict] = {}
-    lookthrough_payload = _active_etf_build_lookthrough_snapshot(holdings_map, signal_cache=signal_cache) if holdings_map else {}
+    lookthrough_payload = (
+        _active_etf_build_lookthrough_snapshot(
+            holdings_map,
+            signal_cache=signal_cache,
+            allow_live_fetch=not fast_prefetch_mode,
+        )
+        if holdings_map
+        else {}
+    )
     strategy_profile = _active_etf_strategy_profile(holdings_map) if holdings_map else {}
     underlying_signals = {}
     for symbol, signal in dict(signal_cache or {}).items():
@@ -4243,12 +4278,13 @@ def _build_active_etf_workspace_snapshot(
 
 
 def _persist_active_etf_workspace_snapshot(snapshot: dict) -> dict:
-    ticker = str((snapshot or {}).get("ticker", "") or "").upper().strip()
+    ticker = _active_etf_snapshot_ticker_key(str((snapshot or {}).get("ticker", "") or ""))
     if not ticker:
         return snapshot
     safe_snapshot = _active_etf_lab_snapshot_safe(snapshot)
     if not isinstance(safe_snapshot, dict):
         safe_snapshot = dict(snapshot or {})
+    safe_snapshot["ticker"] = ticker
     snapshot_key = _active_etf_workspace_snapshot_key(
         ticker,
         {
@@ -26367,9 +26403,68 @@ def _extract_holdings_records_from_frame(frame: pd.DataFrame) -> list[dict]:
     return _normalize_holdings_records(records)
 
 
+def _clean_html_text(value: str) -> str:
+    return unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(value or "")))).strip()
+
+
+def _extract_yahoo_taiwan_holding_rows(html: str, max_items: int = 15) -> tuple[list[dict], str | None]:
+    marker_pos = str(html or "").find("前十大持股")
+    if marker_pos < 0:
+        return [], None
+    block_end = str(html or "").find("</ul>", marker_pos)
+    if block_end < 0:
+        block_end = marker_pos + 12000
+    block = str(html or "")[marker_pos:block_end]
+    date_match = re.search(r'<time[^>]+datatime="([^"]+)"', block)
+    snapshot_date = date_match.group(1).replace("/", "-") if date_match else None
+    row_pattern = re.compile(
+        r">\s*(\d{1,2})\.\s*</div>\s*(.*?)</div>\s*<div[^>]*>\s*([+-]?\d+(?:\.\d+)?)\s*[%％]",
+        re.S,
+    )
+    records: list[dict] = []
+    for match in row_pattern.finditer(block):
+        name = _clean_html_text(match.group(2))
+        weight = _safe_float(match.group(3))
+        if not name or pd.isna(weight):
+            continue
+        records.append({"name": name, "weight": float(weight)})
+        if len(records) >= max_items:
+            break
+    return _normalize_holdings_records(records, max_items=max_items), snapshot_date
+
+
+def _fetch_yahoo_taiwan_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict:
+    ticker_key = _active_etf_snapshot_ticker_key(ticker)
+    result = {"items": [], "source": "", "error": "", "snapshot_date": None, "status": "missing", "used_cache": False}
+    if not ticker_key:
+        result["error"] = "Active ETF ticker is empty."
+        return result
+    url = f"https://tw.stock.yahoo.com/quote/{quote_plus(ticker_key)}/holding"
+    try:
+        html = _fetch_text_url(url, timeout=20, accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        items, snapshot_date = _extract_yahoo_taiwan_holding_rows(html, max_items=max_items)
+    except Exception as exc:
+        result["error"] = f"Yahoo Taiwan holdings page unavailable: {exc}"
+        return result
+    if not items:
+        result["error"] = "Yahoo Taiwan holdings page did not contain top holdings."
+        return result
+    source = "Yahoo Taiwan holdings page"
+    _upsert_active_etf_snapshot(ticker_key, items, source)
+    result.update(
+        {
+            "items": items,
+            "source": source,
+            "snapshot_date": snapshot_date or _snapshot_today_string(),
+            "status": "live",
+        }
+    )
+    return result
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict:
-    ticker_upper = str(ticker).upper()
+    ticker_upper = _active_etf_snapshot_ticker_key(ticker)
     result = {"items": [], "source": "", "error": "", "snapshot_date": None, "status": "missing", "used_cache": False}
     try:
         tk = yf.Ticker(ticker_upper)
@@ -26423,6 +26518,10 @@ def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict
                 result["snapshot_date"] = _snapshot_today_string()
                 result["status"] = "live"
                 return result
+
+        yahoo_page_payload = _fetch_yahoo_taiwan_etf_holdings_snapshot(ticker_upper, max_items=max_items)
+        if yahoo_page_payload.get("items"):
+            return yahoo_page_payload
 
         cached_items, cached_date, cached_source = _load_latest_active_etf_snapshot(ticker_upper)
         if cached_items:
@@ -31472,8 +31571,8 @@ def _empty_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict
     return {
         "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
         "kind": "compare",
-        "left_ticker": str(left_ticker or "").upper().strip(),
-        "right_ticker": str(right_ticker or "").upper().strip(),
+        "left_ticker": _active_etf_snapshot_ticker_key(left_ticker),
+        "right_ticker": _active_etf_snapshot_ticker_key(right_ticker),
         "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
         "status": "missing",
         "left_payload": {},
@@ -31486,13 +31585,15 @@ def _empty_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict
 
 
 def _persist_active_etf_pair_snapshot(snapshot: dict) -> dict:
-    left_ticker = str((snapshot or {}).get("left_ticker", "") or "").upper().strip()
-    right_ticker = str((snapshot or {}).get("right_ticker", "") or "").upper().strip()
+    left_ticker = _active_etf_snapshot_ticker_key(str((snapshot or {}).get("left_ticker", "") or ""))
+    right_ticker = _active_etf_snapshot_ticker_key(str((snapshot or {}).get("right_ticker", "") or ""))
     if not left_ticker or not right_ticker:
         return snapshot
     safe_snapshot = _active_etf_lab_snapshot_safe(snapshot)
     if not isinstance(safe_snapshot, dict):
         safe_snapshot = dict(snapshot or {})
+    safe_snapshot["left_ticker"] = left_ticker
+    safe_snapshot["right_ticker"] = right_ticker
     store = _active_etf_lab_snapshot_store()
     items = dict(store.get("items", {}) or {})
     items[_active_etf_pair_snapshot_key(left_ticker, right_ticker)] = safe_snapshot
