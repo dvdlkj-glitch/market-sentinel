@@ -3849,6 +3849,7 @@ def _active_etf_supabase_snapshot_from_row(row: dict | None) -> dict | None:
     return snapshot
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def _load_supabase_active_etf_snapshot(
     ticker: str,
     lens_meta: dict | None = None,
@@ -21376,11 +21377,28 @@ def render_active_etf_lab_dashboard(
                     key=f"active_etf_pair_refresh_{re.sub(r'[^A-Za-z0-9_]+', '_', left_etf)}_{re.sub(r'[^A-Za-z0-9_]+', '_', right_etf)}",
                     use_container_width=True,
                 )
+            if not refresh_now and snapshot is None:
+                left_workspace, left_source = inspect_active_etf_workspace_snapshot(left_etf, lens_meta=None)
+                right_workspace, right_source = inspect_active_etf_workspace_snapshot(right_etf, lens_meta=None)
+                missing_labels = []
+                if not _active_etf_lab_snapshot_ready(left_workspace):
+                    missing_labels.append(f"{display_ticker_label(left_etf)} ({left_source})")
+                if not _active_etf_lab_snapshot_ready(right_workspace):
+                    missing_labels.append(f"{display_ticker_label(right_etf)} ({right_source})")
+                missing_text = " / ".join(missing_labels) or "-"
+                st.info(
+                    (
+                        f"é€™çµ„æ¯”è¼ƒç›®å‰æ²’æœ‰å¯ç”¨çš„ Prefetch æŒè‚¡å¿«ç…§ï¼š{missing_text}ã€‚é é¢ä¸æœƒè‡ªå‹•é‡ç®—ä»¥é¿å…å¡ä½ï¼›è«‹ç­‰ GitHub Prefetch å¯«å…¥å¾Œå†åˆ‡æ›ï¼Œæˆ–æŒ‰ã€Œåˆ·æ–°æ¯”è¼ƒã€æ‰‹å‹•å»ºç«‹ã€‚"
+                        if lang_zh else
+                        f"No usable prefetched holdings snapshot is available for this pair yet: {missing_text}. The page will not auto-rebuild and stall; wait for GitHub Prefetch to write the snapshots, or press Refresh compare to build manually."
+                    )
+                )
+                return
             with st.spinner(
                 "正在建立雙 ETF 持股、策略與底層風向比較..." if lang_zh else
                 "Building the dual-ETF holdings, strategy, and look-through comparison..."
             ):
-                render_active_etf_pair_comparison(left_etf, right_etf, force_refresh=refresh_now)
+                render_active_etf_pair_comparison(left_etf, right_etf, force_refresh=refresh_now, initial_snapshot=None if refresh_now else snapshot)
 
     if layout_mode == "Standard":
         standard_sections = [
@@ -31570,13 +31588,20 @@ def get_active_etf_pair_compare_snapshot(left_ticker: str, right_ticker: str, *,
     return snapshot
 
 
-def render_active_etf_pair_comparison(left_ticker: str, right_ticker: str, force_refresh: bool = False) -> None:
+def render_active_etf_pair_comparison(
+    left_ticker: str,
+    right_ticker: str,
+    force_refresh: bool = False,
+    initial_snapshot: dict | None = None,
+) -> None:
     """Render ETF A/B holdings comparison with overlap, strategy, news, and foreign-flow context."""
     lang_zh = get_language() == "zh_TW"
     inject_active_etf_tracker_css()
     inject_taiwan_futures_dashboard_overrides(st.session_state.get("dashboard_theme_mode", "Dark Horizon"))
 
-    snapshot = None if force_refresh else peek_active_etf_pair_snapshot(left_ticker, right_ticker)
+    snapshot = None if force_refresh else initial_snapshot
+    if snapshot is None and not force_refresh:
+        snapshot = peek_active_etf_pair_snapshot(left_ticker, right_ticker)
     if snapshot is None:
         snapshot = get_active_etf_pair_compare_snapshot(
             left_ticker,
