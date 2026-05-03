@@ -24968,7 +24968,8 @@ def inject_active_etf_overall_css() -> None:
         .active-etf-side-title{color:#fff;font-size:25px;line-height:1.25;font-weight:950;margin-bottom:4px}.active-etf-view-card{margin-top:14px;border:1px solid rgba(99,102,241,.28);border-radius:18px;padding:16px;background:rgba(28,30,92,.74)}.active-etf-view-card h4{color:#fff;font-size:19px;margin:4px 0 8px}.active-etf-view-card p{margin:0;color:rgba(220,231,255,.76);line-height:1.58;font-size:14px}.active-etf-tagrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.active-etf-tag{background:rgba(14,80,117,.46)}
         @media(max-width:1180px){.active-etf-overall-layout,.active-etf-card-grid,.active-etf-metrics{grid-template-columns:1fr}.active-etf-overall-head,.active-etf-terrain-head{flex-direction:column}.active-etf-chiprow,.active-etf-terrain-metrics{justify-content:flex-start}}
         </style>
-        """
+        """,
+        unsafe_allow_html=True,
     )
 
 
