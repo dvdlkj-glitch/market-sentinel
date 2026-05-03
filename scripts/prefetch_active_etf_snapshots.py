@@ -103,6 +103,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     configure_cli_logging()
+    os.environ.setdefault("ACTIVE_ETF_PREFETCH_FAST_MODE", "1")
     dashboard_file = Path(args.dashboard_file).resolve()
     if not dashboard_file.exists():
         raise FileNotFoundError(f"Dashboard file not found: {dashboard_file}")
