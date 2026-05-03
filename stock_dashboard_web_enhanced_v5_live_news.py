@@ -24951,11 +24951,11 @@ def inject_active_etf_overall_css() -> None:
         .active-etf-overall-layout{position:relative;display:grid;grid-template-columns:minmax(0,2.55fr) minmax(300px,1fr);gap:18px}
         .active-etf-main,.active-etf-side{border:1px solid rgba(56,189,248,.15);border-radius:22px;background:rgba(5,13,38,.62);padding:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
         .active-etf-metrics,.active-etf-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px}
-        .active-etf-metric{min-height:130px;border:1px solid rgba(74,222,255,.20);border-radius:18px;padding:17px;background:linear-gradient(135deg,rgba(17,94,89,.34),rgba(22,41,92,.76)),rgba(255,255,255,.03);overflow:hidden}
+        .active-etf-metric{min-height:122px;border:1px solid rgba(74,222,255,.20);border-radius:18px;padding:15px 16px;background:linear-gradient(135deg,rgba(17,94,89,.34),rgba(22,41,92,.76)),rgba(255,255,255,.03);overflow:hidden}
         .active-etf-metric.blue{background:linear-gradient(135deg,rgba(16,75,135,.42),rgba(29,47,107,.76))}
         .active-etf-metric-label,.active-etf-row-sub{color:rgba(215,229,255,.74);font-size:13px;line-height:1.45}
-        .active-etf-metric-value{margin-top:12px;color:#35f5bf;font-size:clamp(28px,2.8vw,48px);line-height:1;font-weight:950}.active-etf-metric-value.blue{color:#55bfff}
-        .active-etf-sparkline{width:112px;height:36px;margin-top:12px}
+        .active-etf-metric-value{margin-top:10px;color:#35f5bf;font-size:clamp(22px,2.05vw,36px);line-height:1.08;font-weight:920;letter-spacing:0;overflow-wrap:anywhere}.active-etf-metric-value.blue{color:#55bfff}
+        .active-etf-sparkline{width:100px;height:32px;margin-top:10px}
         .active-etf-panel{border:1px solid rgba(99,102,241,.25);border-radius:18px;padding:16px;background:linear-gradient(180deg,rgba(34,37,100,.78),rgba(20,24,73,.78));min-height:352px;overflow:hidden}
         .active-etf-card-title{margin-top:5px;color:#f8fbff;font-size:20px;line-height:1.25;font-weight:920}
         .active-etf-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:12px;align-items:center;margin-top:13px;padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:15px;background:rgba(255,255,255,.045)}
