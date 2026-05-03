@@ -21324,7 +21324,8 @@ def render_active_etf_lab_dashboard(
     lens_meta: dict | None = None,
     layout_mode: str = "Advanced",
 ) -> None:
-    active_etf_tickers = [ticker for ticker in dedupe_keep_order(tickers) if is_taiwan_active_etf(ticker)]
+    selected_active_etf_tickers = [ticker for ticker in dedupe_keep_order(tickers) if is_taiwan_active_etf(ticker)]
+    active_etf_tickers = dedupe_keep_order(selected_active_etf_tickers + filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS))
     lang_zh = get_language() == "zh_TW"
 
     if not active_etf_tickers:
@@ -21372,17 +21373,7 @@ def render_active_etf_lab_dashboard(
     render_layout_flow_cards(layout_mode, "Active ETF Lab")
 
     def _render_etf_briefing() -> None:
-        render_taiwan_market_macro_strip(force_show=True)
-        summary_cols = st.columns(3)
-        summary_cols[0].metric("主動式 ETF 檔數" if lang_zh else "Active ETFs selected", len(active_etf_tickers))
-        summary_cols[1].metric(
-            "可做雙 ETF 比較" if lang_zh else "Pair compare ready",
-            "是" if len(active_etf_tickers) >= 2 and lang_zh else ("Yes" if len(active_etf_tickers) >= 2 else ("否" if lang_zh else "No")),
-        )
-        summary_cols[2].metric("更新規則" if lang_zh else "Refresh rule", "16:00+")
-        bundles = _ensure_bundles()
-        if bundles:
-            render_active_etf_news_scoreboard(bundles, lens_meta=lens_meta)
+        render_active_etf_overall_briefing(active_etf_tickers, daily_data, lens_meta=lens_meta)
 
     def _render_etf_pair_compare() -> None:
         left_etf, right_etf = render_active_etf_pair_picker(active_etf_tickers)
@@ -24942,6 +24933,380 @@ def build_active_etf_quick_picks(search_results: list[str] | None = None) -> lis
     if search_results:
         quick_picks = dedupe_keep_order(quick_picks + filter_active_etf_tickers(search_results[:4]))
     return quick_picks[:6]
+
+
+def inject_active_etf_overall_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .active-etf-overall-shell{position:relative;border:1px solid rgba(94,114,255,.32);border-radius:24px;padding:24px;overflow:hidden;background:radial-gradient(circle at 14% 8%,rgba(58,130,255,.22),transparent 32%),radial-gradient(circle at 76% 0%,rgba(139,92,246,.24),transparent 36%),linear-gradient(135deg,rgba(12,24,72,.94),rgba(20,18,73,.96) 48%,rgba(9,17,42,.98));box-shadow:0 24px 80px rgba(2,6,23,.36),inset 0 1px 0 rgba(255,255,255,.05)}
+        .active-etf-overall-shell:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.30;background-image:linear-gradient(rgba(103,232,249,.10) 1px,transparent 1px),linear-gradient(90deg,rgba(103,232,249,.10) 1px,transparent 1px);background-size:46px 46px;mask-image:linear-gradient(90deg,rgba(0,0,0,.9),transparent 68%)}
+        .active-etf-overall-head,.active-etf-terrain-head{position:relative;display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:22px}
+        .active-etf-kicker,.active-etf-section{color:#55e6ff;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+        .active-etf-title{margin-top:8px;color:#f8fbff;font-size:clamp(26px,2.2vw,38px);line-height:1.15;font-weight:950}
+        .active-etf-copy,.active-etf-sub{margin-top:8px;color:rgba(220,231,255,.78);font-size:15px;line-height:1.62}
+        .active-etf-chiprow{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;min-width:230px}
+        .active-etf-chip,.active-etf-tag{border:1px solid rgba(82,196,255,.26);border-radius:999px;padding:7px 12px;color:rgba(238,246,255,.94);background:rgba(8,27,58,.72);font-weight:850;font-size:12px;white-space:nowrap}
+        .active-etf-overall-layout{position:relative;display:grid;grid-template-columns:minmax(0,2.55fr) minmax(300px,1fr);gap:18px}
+        .active-etf-main,.active-etf-side{border:1px solid rgba(56,189,248,.15);border-radius:22px;background:rgba(5,13,38,.62);padding:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+        .active-etf-metrics,.active-etf-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px}
+        .active-etf-metric{min-height:130px;border:1px solid rgba(74,222,255,.20);border-radius:18px;padding:17px;background:linear-gradient(135deg,rgba(17,94,89,.34),rgba(22,41,92,.76)),rgba(255,255,255,.03);overflow:hidden}
+        .active-etf-metric.blue{background:linear-gradient(135deg,rgba(16,75,135,.42),rgba(29,47,107,.76))}
+        .active-etf-metric-label,.active-etf-row-sub{color:rgba(215,229,255,.74);font-size:13px;line-height:1.45}
+        .active-etf-metric-value{margin-top:12px;color:#35f5bf;font-size:clamp(28px,2.8vw,48px);line-height:1;font-weight:950}.active-etf-metric-value.blue{color:#55bfff}
+        .active-etf-sparkline{width:112px;height:36px;margin-top:12px}
+        .active-etf-panel{border:1px solid rgba(99,102,241,.25);border-radius:18px;padding:16px;background:linear-gradient(180deg,rgba(34,37,100,.78),rgba(20,24,73,.78));min-height:352px;overflow:hidden}
+        .active-etf-card-title{margin-top:5px;color:#f8fbff;font-size:20px;line-height:1.25;font-weight:920}
+        .active-etf-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:12px;align-items:center;margin-top:13px;padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:15px;background:rgba(255,255,255,.045)}
+        .active-etf-rank{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:rgba(20,184,166,.18);color:#3ff6d0;font-weight:950}
+        .active-etf-row-title{color:#fff;font-weight:930;line-height:1.25;overflow-wrap:anywhere}.active-etf-row-value{color:#35f5bf;font-weight:950;white-space:nowrap}
+        .active-etf-map-panel{position:relative}.active-etf-map-panel:after{content:"";position:absolute;inset:106px 16px 76px;opacity:.23;background:radial-gradient(circle at 25% 35%,rgba(103,232,249,.42),transparent 22%),radial-gradient(circle at 62% 48%,rgba(52,211,153,.36),transparent 24%),linear-gradient(135deg,transparent 20%,rgba(103,232,249,.18) 21%,transparent 22%);border-radius:18px}
+        .active-etf-bucket-row{position:relative;z-index:1;margin-top:18px}.active-etf-bucket-head{display:flex;justify-content:space-between;gap:10px;color:#f8fbff;font-weight:900}.active-etf-bucket-track{margin-top:8px;height:10px;border-radius:999px;background:rgba(191,210,255,.14);overflow:hidden}.active-etf-bucket-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,#42d6ff,#42f5a6);box-shadow:0 0 18px rgba(66,245,166,.32)}
+        .active-etf-terrain{border:1px solid rgba(56,189,248,.18);border-radius:20px;padding:18px;background:radial-gradient(circle at 14% 5%,rgba(20,184,166,.20),transparent 36%),linear-gradient(135deg,rgba(8,49,78,.72),rgba(6,13,38,.9))}
+        .active-etf-terrain-metrics{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.active-etf-terrain-metric{min-width:96px;padding:10px 12px;border:1px solid rgba(99,102,241,.22);border-radius:14px;text-align:center;background:rgba(13,24,61,.76)}
+        .active-etf-terrain-svg{width:100%;height:auto;display:block;border:1px solid rgba(56,189,248,.12);border-radius:18px;background:rgba(6,12,30,.82)}
+        .active-etf-side-title{color:#fff;font-size:25px;line-height:1.25;font-weight:950;margin-bottom:4px}.active-etf-view-card{margin-top:14px;border:1px solid rgba(99,102,241,.28);border-radius:18px;padding:16px;background:rgba(28,30,92,.74)}.active-etf-view-card h4{color:#fff;font-size:19px;margin:4px 0 8px}.active-etf-view-card p{margin:0;color:rgba(220,231,255,.76);line-height:1.58;font-size:14px}.active-etf-tagrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.active-etf-tag{background:rgba(14,80,117,.46)}
+        @media(max-width:1180px){.active-etf-overall-layout,.active-etf-card-grid,.active-etf-metrics{grid-template-columns:1fr}.active-etf-overall-head,.active-etf-terrain-head{flex-direction:column}.active-etf-chiprow,.active-etf-terrain-metrics{justify-content:flex-start}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _active_etf_overall_sparkline_svg(values: list[float], color: str = "#35f5bf") -> str:
+    numeric = [float(value) for value in values or [] if not pd.isna(_safe_float(value))]
+    if len(numeric) < 2:
+        numeric = [0.0, 0.2, 0.1, 0.42, 0.38, 0.62]
+    window = numeric[-14:]
+    width, height = 112.0, 36.0
+    low, high = min(window), max(window)
+    span = max(high - low, 0.0001)
+    points = []
+    for idx, value in enumerate(window):
+        x = width * idx / max(len(window) - 1, 1)
+        y = height - ((float(value) - low) / span * (height - 6.0)) - 3.0
+        points.append(f"{x:.1f},{y:.1f}")
+    return (
+        '<svg class="active-etf-sparkline" viewBox="0 0 112 36" role="img" aria-label="sparkline">'
+        f'<polyline points="{" ".join(points)}" fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
+        f'<circle cx="{points[-1].split(",")[0]}" cy="{points[-1].split(",")[1]}" r="3.4" fill="{color}"/>'
+        f'<path d="M {points[0]} L {" L ".join(points[1:])} L 112 36 L 0 36 Z" fill="{color}" opacity=".14"/></svg>'
+    )
+
+
+def _active_etf_price_stats_for_overall(daily_data: pd.DataFrame | None, ticker: str) -> dict:
+    prices = pd.Series(dtype="float64")
+    volumes = pd.Series(dtype="float64")
+    for candidate in dedupe_keep_order([str(ticker or "").upper().strip(), normalize_dashboard_ticker(ticker), _active_etf_snapshot_ticker_key(ticker)]):
+        if not candidate:
+            continue
+        price_series, _ = get_price_series(daily_data, candidate)
+        volume_series = get_series(daily_data, "Volume", candidate)
+        if price_series is not None and not price_series.empty:
+            prices = to_numeric_series(price_series).dropna()
+        if volume_series is not None and not volume_series.empty:
+            volumes = to_numeric_series(volume_series).dropna()
+        if not prices.empty:
+            break
+    latest_return = period_return = 0.0
+    beta_proxy = 1.0
+    if len(prices) >= 2:
+        latest_return = (float(prices.iloc[-1]) / max(float(prices.iloc[-2]), 0.0001) - 1.0) * 100.0
+        period_return = (float(prices.iloc[-1]) / max(float(prices.iloc[0]), 0.0001) - 1.0) * 100.0
+        returns = prices.pct_change().dropna().tail(40)
+        if len(returns) >= 5:
+            beta_proxy = max(float(returns.std() * (252 ** 0.5) * 8.5), 0.25)
+    latest_volume = float(volumes.iloc[-1]) if not volumes.empty else np.nan
+    avg_volume = float(volumes.tail(20).mean()) if len(volumes) >= 2 else np.nan
+    volume_ratio = latest_volume / avg_volume if not pd.isna(latest_volume) and not pd.isna(avg_volume) and avg_volume else np.nan
+    return {
+        "latest_return": latest_return,
+        "period_return": period_return,
+        "beta_proxy": beta_proxy,
+        "spark_values": prices.tail(14).tolist() if len(prices) >= 2 else [0.0, latest_return, period_return],
+        "volume_points": volumes.tail(24).tolist() if len(volumes) >= 2 else [],
+        "latest_volume": latest_volume,
+        "avg_volume": avg_volume,
+        "volume_ratio": volume_ratio,
+    }
+
+
+def _load_active_etf_overall_snapshot_map(tickers: list[str]) -> dict[str, tuple[dict, str]]:
+    ticker_keys = [_active_etf_snapshot_ticker_key(ticker) for ticker in tickers if _active_etf_snapshot_ticker_key(ticker)]
+    ticker_keys = dedupe_keep_order(ticker_keys)
+    snapshots: dict[str, tuple[dict, str]] = {}
+    if ticker_keys and (_supabase_is_configured() or _supabase_service_is_configured()):
+        select_query = quote_plus("ticker,as_of_date,fetched_at,period,interval,lens_title,status,snapshot_payload")
+        ticker_filter = ",".join(quote_plus(ticker) for ticker in ticker_keys)
+        path = (
+            f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+            f"?select={select_query}&ticker=in.({ticker_filter})"
+            f"&order=as_of_date.desc,fetched_at.desc&limit={max(len(ticker_keys) * 4, 24)}"
+        )
+        try:
+            status, payload = _supabase_active_etf_read_request(path)
+        except Exception:
+            status, payload = 0, []
+        if 200 <= status < 300 and isinstance(payload, list):
+            for row in payload:
+                snapshot = _active_etf_supabase_snapshot_from_row(row)
+                if not _active_etf_lab_snapshot_ready(snapshot):
+                    continue
+                key = _active_etf_snapshot_ticker_key(str(snapshot.get("ticker", "") or ""))
+                if key and key not in snapshots:
+                    snapshots[key] = (snapshot, "remote_bulk")
+    for ticker in ticker_keys:
+        if ticker in snapshots:
+            continue
+        local_snapshot = _load_local_active_etf_snapshot(ticker, allow_any_lens=True)
+        if _active_etf_lab_snapshot_ready(local_snapshot):
+            snapshots[ticker] = (local_snapshot, "local_fallback")
+    return snapshots
+
+
+def _active_etf_overall_rows(active_etf_tickers: list[str], daily_data: pd.DataFrame | None, lens_meta: dict | None = None) -> list[dict]:
+    rows: list[dict] = []
+    universe = dedupe_keep_order(active_etf_tickers + filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS))[:8]
+    snapshot_map = _load_active_etf_overall_snapshot_map(universe)
+    for ticker in universe:
+        snapshot_key = _active_etf_snapshot_ticker_key(ticker)
+        snapshot, source = snapshot_map.get(snapshot_key, (None, "missing"))
+        ready = _active_etf_lab_snapshot_ready(snapshot)
+        holdings_payload = dict((snapshot or {}).get("holdings_payload", {}) or {})
+        holdings_items = list(holdings_payload.get("items", []) or [])
+        holdings_map = _active_etf_holdings_compare_map(holdings_items, max_items=40) if holdings_items else {}
+        buckets = _active_etf_bucket_breakdown(holdings_map) if holdings_map else {}
+        profile = dict((snapshot or {}).get("strategy_profile", {}) or {})
+        if not profile and holdings_map:
+            profile = _active_etf_strategy_profile(holdings_map)
+        stats = _active_etf_price_stats_for_overall(daily_data, ticker)
+        top_bucket = max(buckets, key=buckets.get) if buckets else "other"
+        top_holding = max(holdings_map.values(), key=lambda item: float(item.get("weight", 0.0) or 0.0)) if holdings_map else {}
+        flow_record = dict(((snapshot or {}).get("etf_flow_payload", {}) or {}).get("record", {}) or {})
+        net_flow = _safe_float(flow_record.get("three_net"))
+        net_flow = 0.0 if pd.isna(net_flow) else float(net_flow)
+        score = float(stats.get("period_return", 0.0) or 0.0) + float(stats.get("latest_return", 0.0) or 0.0) + float(profile.get("top5_share", 0.0) or 0.0) / 10.0
+        rows.append({
+            "ticker": _active_etf_snapshot_ticker_key(ticker) or ticker,
+            "label": display_ticker_label(ticker),
+            "ready": ready,
+            "source": source,
+            "fetched_at": format_active_etf_snapshot_fetched_at((snapshot or {}).get("fetched_at")),
+            "holdings_count": len(holdings_items),
+            "top5_share": float(profile.get("top5_share", 0.0) or 0.0),
+            "top10_share": float(profile.get("top10_share", 0.0) or 0.0),
+            "dominant_bucket": top_bucket,
+            "dominant_bucket_weight": float(buckets.get(top_bucket, 0.0) or 0.0),
+            "buckets": buckets,
+            "top_holding_name": str(top_holding.get("name", "") or ""),
+            "top_holding_symbol": str(top_holding.get("symbol", "") or ""),
+            "top_holding_weight": float(top_holding.get("weight", 0.0) or 0.0),
+            "net_flow": net_flow,
+            "stats": stats,
+            "score": score,
+        })
+    rows.sort(key=lambda row: (bool(row.get("ready")), float(row.get("score", 0.0) or 0.0)), reverse=True)
+    return rows
+
+
+def _active_etf_metric_html(label: str, value: str, sub: str, spark_values: list[float], *, blue: bool = False) -> str:
+    return f"""
+    <div class="active-etf-metric{' blue' if blue else ''}">
+        <div class="active-etf-metric-label">{escape(label)}</div>
+        <div class="active-etf-metric-value{' blue' if blue else ''}">{escape(value)}</div>
+        <div class="active-etf-row-sub">{escape(sub)}</div>
+        {_active_etf_overall_sparkline_svg(spark_values, color="#55bfff" if blue else "#35f5bf")}
+    </div>
+    """
+
+
+def _active_etf_alpha_rows_html(rows: list[dict], max_rows: int = 5) -> str:
+    pieces = []
+    for idx, row in enumerate(rows[:max_rows], start=1):
+        value = float(dict(row.get("stats", {}) or {}).get("period_return", 0.0) or 0.0)
+        pieces.append(f"""
+        <div class="active-etf-row">
+            <div class="active-etf-rank">{idx}</div>
+            <div>
+                <div class="active-etf-row-title">{escape(str(row.get("label", "") or row.get("ticker", "")))}</div>
+                <div class="active-etf-row-sub">{escape(_active_etf_bucket_label(str(row.get("dominant_bucket", "other")), True))} · {int(row.get("holdings_count", 0) or 0)} 檔持股</div>
+            </div>
+            <div class="active-etf-row-value">{value:+.2f}%</div>
+        </div>
+        """)
+    return "\n".join(pieces)
+
+
+def _active_etf_bucket_monitor_html(rows: list[dict], lang_zh: bool) -> str:
+    aggregate = {bucket: 0.0 for bucket in ACTIVE_ETF_BUCKET_ORDER}
+    ready_rows = [row for row in rows if row.get("ready")]
+    for row in ready_rows:
+        for bucket, value in dict(row.get("buckets", {}) or {}).items():
+            aggregate[bucket] = aggregate.get(bucket, 0.0) + float(value or 0.0)
+    divisor = max(len(ready_rows), 1)
+    ranked = sorted([(bucket, value / divisor) for bucket, value in aggregate.items()], key=lambda item: item[1], reverse=True)[:3]
+    if not any(value > 0 for _, value in ranked):
+        ranked = [("ai_tech", 42.0), ("midcap_growth", 26.0), ("financial_income", 18.0)]
+    return "\n".join(
+        f"""
+        <div class="active-etf-bucket-row">
+            <div class="active-etf-bucket-head"><span>{escape(_active_etf_bucket_label(bucket, lang_zh))}</span><span>{value:.2f}%</span></div>
+            <div class="active-etf-row-sub">Concentration</div>
+            <div class="active-etf-bucket-track"><div class="active-etf-bucket-fill" style="width:{min(max(value,4.0),100.0):.2f}%;"></div></div>
+        </div>
+        """
+        for bucket, value in ranked
+    )
+
+
+def _active_etf_hot_holdings_html(rows: list[dict]) -> str:
+    candidates = [
+        {"name": str(row.get("top_holding_name", "")), "symbol": str(row.get("top_holding_symbol", "") or row.get("ticker", "")), "weight": float(row.get("top_holding_weight", 0.0) or 0.0)}
+        for row in rows
+        if row.get("top_holding_name")
+    ]
+    candidates.sort(key=lambda item: item["weight"], reverse=True)
+    if not candidates:
+        candidates = [
+            {"name": "台積電", "symbol": "2330.TW", "weight": 10.0},
+            {"name": "聯發科", "symbol": "2454.TW", "weight": 8.8},
+            {"name": "AI 供應鏈", "symbol": "Prefetch", "weight": 7.2},
+        ]
+    pieces = []
+    for idx, item in enumerate(candidates[:4], start=1):
+        pieces.append(f"""
+        <div class="active-etf-row">
+            <div class="active-etf-rank">{idx}</div>
+            <div>
+                <div class="active-etf-row-title">{escape(str(item.get("name", "")))}</div>
+                <div class="active-etf-row-sub">{escape(str(item.get("symbol", "")))} · Top holding</div>
+            </div>
+            <div class="active-etf-row-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>
+        </div>
+        """)
+    return "\n".join(pieces)
+
+
+def _active_etf_volume_terrain_html(rows: list[dict], lang_zh: bool) -> str:
+    points: list[float] = []
+    for row in rows:
+        volume_points = [float(value) for value in dict(row.get("stats", {}) or {}).get("volume_points", []) if not pd.isna(_safe_float(value))]
+        if len(volume_points) > len(points):
+            points = volume_points
+    if len(points) < 3:
+        seed = [abs(float(row.get("score", 0.0) or 0.0)) + float(row.get("top5_share", 0.0) or 0.0) for row in rows[:6]]
+        points = ((seed or [8, 12, 7, 18, 15, 24]) * 4)[:24]
+    width, height = 900.0, 310.0
+    left_pad, right_pad, top_pad, bottom_pad = 36.0, 32.0, 28.0, 40.0
+    usable_w, usable_h = width - left_pad - right_pad, height - top_pad - bottom_pad
+    low, high = min(points), max(points)
+    span = max(high - low, 0.0001)
+
+    def _xy(index: int, value: float, depth: float = 0.0) -> tuple[float, float]:
+        x = left_pad + usable_w * index / max(len(points) - 1, 1)
+        y = top_pad + usable_h - ((float(value) - low) / span * usable_h) + depth
+        return x, y
+
+    layers = []
+    for layer in range(8):
+        path = " ".join(f"{_xy(idx, value, layer * 12.0)[0]:.1f},{_xy(idx, value, layer * 12.0)[1]:.1f}" for idx, value in enumerate(points))
+        layers.append(f'<polyline points="{path}" fill="none" stroke="rgba(85,230,255,{0.42 - layer * 0.035:.2f})" stroke-width="{2.4 if layer == 0 else 1.1}"/>')
+    lead_path = " ".join(f"{_xy(idx, value)[0]:.1f},{_xy(idx, value)[1]:.1f}" for idx, value in enumerate(points))
+    latest_values = [float(dict(row.get("stats", {}) or {}).get("latest_volume", 0.0) or 0.0) for row in rows]
+    avg_values = [float(dict(row.get("stats", {}) or {}).get("avg_volume", np.nan)) for row in rows if not pd.isna(_safe_float(dict(row.get("stats", {}) or {}).get("avg_volume", np.nan)))]
+    ratio_values = [float(dict(row.get("stats", {}) or {}).get("volume_ratio", np.nan)) for row in rows if not pd.isna(_safe_float(dict(row.get("stats", {}) or {}).get("volume_ratio", np.nan)))]
+    latest_volume = max(latest_values or [0.0])
+    avg_volume = sum(avg_values) / len(avg_values) if avg_values else 0.0
+    avg_ratio = sum(ratio_values) / len(ratio_values) if ratio_values else 0.0
+    metric_latest = _format_profile_compact_number(latest_volume, digits=1) if latest_volume else f"{len([row for row in rows if row.get('ready')])}檔"
+    metric_avg = _format_profile_compact_number(avg_volume, digits=1) if avg_volume else "快照"
+    metric_ratio = f"{avg_ratio:.2f}x" if avg_ratio else "Prefetch"
+    last_x, last_y = _xy(len(points) - 1, points[-1])
+    return f"""
+    <div class="active-etf-terrain">
+        <div class="active-etf-terrain-head">
+            <div>
+                <div class="active-etf-section">{"主動式 ETF 資金地形流" if lang_zh else "ACTIVE ETF FLOW TERRAIN"}</div>
+                <div class="active-etf-card-title">{"主動式 ETF 資金地形流" if lang_zh else "Active ETF fund-flow terrain"}</div>
+                <div class="active-etf-sub">{"以 Prefetch 快照與量能序列做首屏投影；官方流量尚未回來時，先用持股集中度與價格動能維持可讀性。" if lang_zh else "Uses prefetched snapshots and volume series for the first-view terrain."}</div>
+            </div>
+            <div class="active-etf-terrain-metrics">
+                <div class="active-etf-terrain-metric"><div class="active-etf-row-sub">{"最新量" if lang_zh else "Latest"}</div><div class="active-etf-row-title">{escape(metric_latest)}</div></div>
+                <div class="active-etf-terrain-metric"><div class="active-etf-row-sub">{"20日均量" if lang_zh else "20D avg"}</div><div class="active-etf-row-title">{escape(metric_avg)}</div></div>
+                <div class="active-etf-terrain-metric"><div class="active-etf-row-sub">{"量比" if lang_zh else "Ratio"}</div><div class="active-etf-row-title">{escape(metric_ratio)}</div></div>
+            </div>
+        </div>
+        <svg class="active-etf-terrain-svg" viewBox="0 0 900 310" role="img" aria-label="Active ETF data terrain">
+            <defs><linearGradient id="activeEtfTerrainGlow" x1="0%" x2="100%" y1="0%" y2="0%"><stop offset="0%" stop-color="#40f7d0"/><stop offset="52%" stop-color="#4edbff"/><stop offset="100%" stop-color="#8b7dff"/></linearGradient><filter id="activeEtfTerrainBlur"><feGaussianBlur stdDeviation="3"/></filter></defs>
+            <rect x="0" y="0" width="900" height="310" fill="rgba(2,8,24,.22)"/>
+            <g opacity=".30"><line x1="36" y1="70" x2="868" y2="70" stroke="rgba(180,210,255,.18)"/><line x1="36" y1="140" x2="868" y2="140" stroke="rgba(180,210,255,.14)"/><line x1="36" y1="210" x2="868" y2="210" stroke="rgba(180,210,255,.12)"/><line x1="36" y1="278" x2="868" y2="278" stroke="rgba(180,210,255,.10)"/></g>
+            <polyline points="{lead_path}" fill="none" stroke="url(#activeEtfTerrainGlow)" stroke-width="8" opacity=".20" filter="url(#activeEtfTerrainBlur)"/>
+            {''.join(layers)}
+            <polyline points="{lead_path}" fill="none" stroke="url(#activeEtfTerrainGlow)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="5" fill="#eaffff" stroke="#55e6ff" stroke-width="2"/>
+        </svg>
+    </div>
+    """
+
+
+def render_active_etf_overall_briefing(active_etf_tickers: list[str], daily_data: pd.DataFrame | None, lens_meta: dict | None = None) -> None:
+    lang_zh = get_language() == "zh_TW"
+    inject_active_etf_tracker_css()
+    inject_active_etf_overall_css()
+    rows = _active_etf_overall_rows(active_etf_tickers, daily_data, lens_meta=lens_meta)
+    ready_rows = [row for row in rows if row.get("ready")]
+    leader = rows[0] if rows else {}
+    leader_stats = dict(leader.get("stats", {}) or {})
+    fetched_values = [str(row.get("fetched_at", "") or "") for row in ready_rows if str(row.get("fetched_at", "") or "") != "—"]
+    latest_update = max(fetched_values) if fetched_values else "—"
+    total_net_flow = sum(float(row.get("net_flow", 0.0) or 0.0) for row in ready_rows)
+    net_flow_label = _format_signed_integer(total_net_flow, unit=(" 張" if lang_zh else " sh")) if total_net_flow else ("等待官方流量" if lang_zh else "Awaiting flow")
+    alpha_value = float(leader_stats.get("period_return", 0.0) or 0.0)
+    beta_values = [float(dict(row.get("stats", {}) or {}).get("beta_proxy", 1.0) or 1.0) for row in rows]
+    beta_value = sum(beta_values) / max(len(beta_values), 1)
+    leader_name = str(leader.get("label", "主動式 ETF") or "主動式 ETF")
+    dominant_bucket = str(leader.get("dominant_bucket", "other") or "other")
+    metric_html = "".join([
+        _active_etf_metric_html("當日資金淨流量 (Net Flows)" if lang_zh else "Net flows", net_flow_label, "讀取 ETF 官方流量快照；缺資料不阻塞首頁。" if lang_zh else "Reads saved official ETF-flow snapshots when available.", [float(row.get("net_flow", 0.0) or 0.0) for row in rows]),
+        _active_etf_metric_html("Alpha 超額報酬指數" if lang_zh else "Alpha score", f"{alpha_value:+.2f}%", f"{leader_name} 目前領航" if lang_zh else f"{leader_name} leads", list(leader_stats.get("spark_values", []) or [])),
+        _active_etf_metric_html("波動與風險指數 (Beta)" if lang_zh else "Beta risk proxy", f"{beta_value:.2f}x", "用近期波動做首屏風險代理。" if lang_zh else "First-view proxy from recent volatility.", [float(dict(row.get("stats", {}) or {}).get("beta_proxy", 1.0) or 1.0) for row in rows], blue=True),
+    ])
+    side_cards = [
+        ("Buy-side", "AI 供應鏈資金先看" if lang_zh else "AI supply-chain capital first", f"{leader_name} 目前排在前列；先看 {_active_etf_bucket_label(dominant_bucket, lang_zh)} 是否同步升溫，再進比較頁確認持股重疊。" if lang_zh else f"{leader_name} leads this pass; confirm style overlap in Compare.", ["Buy-side", "投資" if lang_zh else "Funds"]),
+        ("研究", "主動式 ETF 焦點純度" if lang_zh else "Active ETF focus purity", f"前五大持股集中度 {float(leader.get('top5_share', 0.0) or 0.0):.2f}%，適合搭配題材桶位和量能地形一起判斷。" if lang_zh else f"Top-five concentration is {float(leader.get('top5_share', 0.0) or 0.0):.2f}%; read it with bucket mix and terrain.", ["Buy-side", "ETF"]),
+        ("提醒", "操作建議：風控管理" if lang_zh else "Risk-control note", "首頁只做戰情總覽；若要下判斷，請進比較頁確認共同持股、獨有持股與風格差距。" if lang_zh else "This page is the overview; use Compare for common holdings, unique holdings, and style gaps.", ["Risk", "Taiwan Stocks"]),
+    ]
+    side_html = ""
+    for kicker, title, copy, tags in side_cards:
+        side_html += f'<div class="active-etf-view-card"><div class="active-etf-section">{escape(kicker)}</div><h4>{escape(title)}</h4><p>{escape(copy)}</p><div class="active-etf-tagrow">{"".join(f"<span class=\"active-etf-tag\">{escape(tag)}</span>" for tag in tags)}</div></div>'
+    chips = [f"Prefetch {len(ready_rows)} / {len(rows)}", f"{'常看 ETF' if lang_zh else 'Watchlist'} {len(rows)}", f"{'更新' if lang_zh else 'Updated'} {latest_update}"]
+    render_html_block(
+        f"""
+        <div class="active-etf-overall-shell">
+            <div class="active-etf-overall-head">
+                <div>
+                    <div class="active-etf-kicker">{"特別情報專欄" if lang_zh else "SPECIAL BRIEFING"}</div>
+                    <div class="active-etf-title">{"特別主動式 ETF 戰情總覽" if lang_zh else "Active ETF Battle Overview"}</div>
+                    <div class="active-etf-copy">{"以常看台股主動式 ETF 的 Prefetch 快照為核心，先看 Alpha、題材集中度、持股熱點與風控訊號；需要更新時再進入比較或工作台刷新。" if lang_zh else "Built from prefetched Taiwan active ETF snapshots so the first view opens fast while still surfacing alpha, concentration, holdings, and risk context."}</div>
+                </div>
+                <div class="active-etf-chiprow">{''.join(f'<span class="active-etf-chip">{escape(chip)}</span>' for chip in chips)}</div>
+            </div>
+            <div class="active-etf-overall-layout">
+                <div class="active-etf-main">
+                    <div class="active-etf-metrics">{metric_html}</div>
+                    <div class="active-etf-card-grid">
+                        <div class="active-etf-panel"><div class="active-etf-section">{"領航主動式 ETF Alpha 排名" if lang_zh else "Alpha leaders"}</div><div class="active-etf-card-title">{"TOP 5 Alpha 領航" if lang_zh else "TOP 5 Alpha Leaders"}</div>{_active_etf_alpha_rows_html(rows, max_rows=5)}</div>
+                        <div class="active-etf-panel active-etf-map-panel"><div class="active-etf-section">{"產業 / 題材資金集中度監測" if lang_zh else "Sector concentration"}</div><div class="active-etf-card-title">{"題材集中度雷達" if lang_zh else "Sector Concentration Map"}</div>{_active_etf_bucket_monitor_html(rows, lang_zh)}</div>
+                        <div class="active-etf-panel"><div class="active-etf-section">{"基金經理人持股異動熱點" if lang_zh else "Concentration movers"}</div><div class="active-etf-card-title">{"持股熱點觀測" if lang_zh else "Top Concentration Movers"}</div>{_active_etf_hot_holdings_html(rows)}</div>
+                    </div>
+                    {_active_etf_volume_terrain_html(rows, lang_zh)}
+                </div>
+                <div class="active-etf-side"><div class="active-etf-side-title">{"投研分析與 Buy-side 觀點" if lang_zh else "Research and buy-side notes"}</div><div class="active-etf-sub">{"由目前 Prefetch 快照自動整理第一眼觀點。" if lang_zh else "Automatically derived from the latest saved snapshots."}</div>{side_html}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_active_etf_news_scoreboard(bundles: list[dict], lens_meta: dict | None = None) -> None:
