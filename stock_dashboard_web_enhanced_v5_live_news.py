@@ -21337,6 +21337,7 @@ def render_active_etf_lab_dashboard(
         return
 
     inject_active_etf_tracker_css()
+    render_active_etf_overall_briefing(active_etf_tickers, daily_data, lens_meta=lens_meta)
 
     bundles_cache: list[dict] | None = None
 
@@ -21373,7 +21374,7 @@ def render_active_etf_lab_dashboard(
     render_layout_flow_cards(layout_mode, "Active ETF Lab")
 
     def _render_etf_briefing() -> None:
-        render_active_etf_overall_briefing(active_etf_tickers, daily_data, lens_meta=lens_meta)
+        return
 
     def _render_etf_pair_compare() -> None:
         left_etf, right_etf = render_active_etf_pair_picker(active_etf_tickers)
@@ -30691,14 +30692,15 @@ def generate_dashboard():
         st.error(t("no_market_data"))
         return
 
-    render_home_news_briefing(
-        daily_data,
-        intraday_data,
-        dashboard_tickers,
-        lens_meta,
-        dashboard_mode=dashboard_mode,
-        selected_supply_chain_groups=selected_supply_chain_groups,
-    )
+    if dashboard_mode != "Active ETF Lab":
+        render_home_news_briefing(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta,
+            dashboard_mode=dashboard_mode,
+            selected_supply_chain_groups=selected_supply_chain_groups,
+        )
 
     if dashboard_mode == "Active ETF Lab":
         render_active_etf_lab_dashboard(
