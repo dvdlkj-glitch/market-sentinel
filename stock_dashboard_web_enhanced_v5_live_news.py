@@ -5164,7 +5164,18 @@ MARKET_SCOPE_DEFAULT_GROUPS = {
 }
 
 TAIWAN_TICKER_METADATA = {
-    "2330.TW": {"code": "2330", "zh": "台積電", "en": "TSMC"},
+    "2330.TW": {
+        "code": "2330",
+        "zh": "台積電",
+        "en": "TSMC",
+        "aliases": [
+            "Taiwan Semiconductor Manufacturing",
+            "Taiwan Semiconductor Manufacturing Co Ltd",
+            "Taiwan Semiconductor Manufacturing Co., Ltd.",
+            "Taiwan Semiconductor Manufacturing Company",
+            "Taiwan Semiconductor Manufacturing Company Limited",
+        ],
+    },
     "2454.TW": {"code": "2454", "zh": "聯發科", "en": "MediaTek"},
     "2303.TW": {"code": "2303", "zh": "聯電", "en": "UMC"},
     "3711.TW": {"code": "3711", "zh": "日月光投控", "en": "ASE", "aliases": ["ASE", "日月光", "日月光控股", "Advanced Semiconductor Engineering"]},
@@ -25160,19 +25171,47 @@ def _active_etf_bucket_monitor_html(rows: list[dict], lang_zh: bool) -> str:
     )
 
 
+def _active_etf_holding_display_payload(row: dict) -> dict:
+    raw_name = str(row.get("top_holding_name", "") or "").strip()
+    raw_symbol = str(row.get("top_holding_symbol", "") or "").strip()
+    fallback_symbol = raw_symbol or str(row.get("ticker", "") or "").strip()
+    weight = float(row.get("top_holding_weight", 0.0) or 0.0)
+
+    if get_language() != "zh_TW":
+        return {
+            "name": raw_name or fallback_symbol or "Holding",
+            "symbol": fallback_symbol,
+            "weight": weight,
+        }
+
+    resolved_symbol = _active_etf_lookup_symbol_code(raw_name)
+    if not resolved_symbol and raw_symbol:
+        normalized_symbol = normalize_dashboard_ticker(raw_symbol)
+        if normalized_symbol and is_taiwan_ticker(normalized_symbol):
+            resolved_symbol = normalized_symbol
+
+    display_name = resolve_holding_display_name(resolved_symbol or raw_name)
+    return {
+        "name": display_name if display_name and display_name != "N/A" else (raw_name or "持股"),
+        "symbol": resolved_symbol or raw_symbol or fallback_symbol,
+        "weight": weight,
+    }
+
+
 def _active_etf_hot_holdings_html(rows: list[dict]) -> str:
     candidates = [
-        {"name": str(row.get("top_holding_name", "")), "symbol": str(row.get("top_holding_symbol", "") or row.get("ticker", "")), "weight": float(row.get("top_holding_weight", 0.0) or 0.0)}
+        _active_etf_holding_display_payload(row)
         for row in rows
         if row.get("top_holding_name")
     ]
     candidates.sort(key=lambda item: item["weight"], reverse=True)
     if not candidates:
         candidates = [
-            {"name": "台積電", "symbol": "2330.TW", "weight": 10.0},
-            {"name": "聯發科", "symbol": "2454.TW", "weight": 8.8},
+            {"name": "2330 台積電", "symbol": "2330.TW", "weight": 10.0},
+            {"name": "2454 聯發科", "symbol": "2454.TW", "weight": 8.8},
             {"name": "AI 供應鏈", "symbol": "Prefetch", "weight": 7.2},
         ]
+    holding_note = "主要持股" if get_language() == "zh_TW" else "Top holding"
     pieces = []
     for idx, item in enumerate(candidates[:4], start=1):
         pieces.append(f"""
@@ -25180,7 +25219,7 @@ def _active_etf_hot_holdings_html(rows: list[dict]) -> str:
             <div class="active-etf-rank">{idx}</div>
             <div>
                 <div class="active-etf-row-title">{escape(str(item.get("name", "")))}</div>
-                <div class="active-etf-row-sub">{escape(str(item.get("symbol", "")))} · Top holding</div>
+                <div class="active-etf-row-sub">{escape(str(item.get("symbol", "")))} · {holding_note}</div>
             </div>
             <div class="active-etf-row-value">{float(item.get("weight", 0.0) or 0.0):.2f}%</div>
         </div>
