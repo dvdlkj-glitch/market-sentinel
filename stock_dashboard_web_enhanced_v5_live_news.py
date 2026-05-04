@@ -4644,20 +4644,20 @@ def _render_market_entry_overall_view_inner(
         "background:linear-gradient(180deg,rgba(15,30,60,0.95) 0%,rgba(8,18,40,0.9) 100%);"
         "border:1px solid rgba(56,189,248,0.3);border-top:none;border-radius:0 0 14px 14px;"
         "padding:7px 22px 8px;display:flex;align-items:center;gap:10px;}"
-        ".meo-toptab-title{font-size:0.95rem;font-weight:800;color:rgba(255,255,255,0.9);letter-spacing:-0.01em;}"
-        ".meo-toptab-time{font-size:0.72rem;color:rgba(255,255,255,0.4);font-variant-numeric:tabular-nums;}"
-        ".meo-headline{font-size:1.55rem;font-weight:800;color:rgba(255,255,255,0.95);"
+        ".meo-toptab-title{font-size:1.15rem;font-weight:800;color:rgba(255,255,255,0.9);letter-spacing:-0.01em;}"
+        ".meo-toptab-time{font-size:0.85rem;color:rgba(255,255,255,0.4);font-variant-numeric:tabular-nums;}"
+        ".meo-headline{font-size:2.0rem;font-weight:800;color:rgba(255,255,255,0.95);"
         "letter-spacing:-0.01em;margin:14px 0 14px;}"
         ".meo-summary-block{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);"
         "border-radius:14px;padding:12px 16px;margin-bottom:12px;}"
-        ".meo-summary-label{font-size:0.85rem;font-weight:700;color:rgba(255,255,255,0.65);margin-bottom:6px;}"
-        ".meo-summary-list{font-size:0.74rem;color:rgba(255,255,255,0.5);line-height:1.7;padding-left:20px;margin:0;}"
+        ".meo-summary-label{font-size:1.0rem;font-weight:700;color:rgba(255,255,255,0.65);margin-bottom:6px;}"
+        ".meo-summary-list{font-size:0.92rem;color:rgba(255,255,255,0.5);line-height:1.7;padding-left:20px;margin:0;}"
         ".meo-summary-list li{margin-bottom:2px;}"
         ".meo-card{background:linear-gradient(180deg,rgba(15,22,42,0.85) 0%,rgba(10,16,32,0.95) 100%);"
         "border:1px solid rgba(56,189,248,0.1);border-radius:14px;padding:16px 18px;height:100%;}"
-        ".meo-card-title{font-size:0.78rem;font-weight:700;color:rgba(255,255,255,0.55);"
+        ".meo-card-title{font-size:0.95rem;font-weight:700;color:rgba(255,255,255,0.55);"
         "letter-spacing:0.02em;margin-bottom:6px;}"
-        ".meo-card-big{font-size:2.1rem;font-weight:800;color:rgba(255,255,255,0.95);"
+        ".meo-card-big{font-size:2.6rem;font-weight:800;color:rgba(255,255,255,0.95);"
         "letter-spacing:-0.02em;line-height:1.1;font-variant-numeric:tabular-nums;}"
         ".meo-card-foot{display:flex;justify-content:space-between;margin-top:10px;"
         "font-size:0.65rem;color:rgba(255,255,255,0.4);}"
@@ -4665,35 +4665,35 @@ def _render_market_entry_overall_view_inner(
         ".meo-card-lo{color:rgba(255,159,10,0.7);font-weight:600;}"
         ".meo-rank-card{background:linear-gradient(180deg,rgba(15,22,42,0.85) 0%,rgba(10,16,32,0.95) 100%);"
         "border:1px solid rgba(56,189,248,0.1);border-radius:14px;padding:14px 16px;height:100%;}"
-        ".meo-rank-card-title{font-size:0.92rem;font-weight:800;color:rgba(255,255,255,0.85);"
+        ".meo-rank-card-title{font-size:1.1rem;font-weight:800;color:rgba(255,255,255,0.85);"
         "letter-spacing:0.01em;margin-bottom:10px;padding-bottom:8px;"
         "border-bottom:1px solid rgba(255,255,255,0.07);}"
         ".meo-rank-row{display:flex;align-items:center;gap:10px;padding:6px 0;}"
-        ".meo-rank-num{font-size:0.78rem;font-weight:800;color:rgba(244,197,106,0.7);width:24px;flex-shrink:0;}"
-        ".meo-rank-label{flex:1;font-size:0.85rem;font-weight:600;color:rgba(255,255,255,0.85);"
+        ".meo-rank-num{font-size:0.95rem;font-weight:800;color:rgba(244,197,106,0.7);width:24px;flex-shrink:0;}"
+        ".meo-rank-label{flex:1;font-size:1.0rem;font-weight:600;color:rgba(255,255,255,0.85);"
         "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
         ".meo-rank-pill{background:rgba(48,209,88,0.15);border:1px solid rgba(48,209,88,0.4);"
-        "color:#30d158;font-size:0.78rem;font-weight:700;padding:3px 10px;border-radius:14px;"
+        "color:#30d158;font-size:0.92rem;font-weight:700;padding:4px 12px;border-radius:14px;"
         "font-variant-numeric:tabular-nums;}"
         ".meo-rank-pill.down{background:rgba(255,59,48,0.15);border-color:rgba(255,59,48,0.4);color:#ff3b30;}"
         ".meo-volume-row{display:grid;grid-template-columns:60px 1fr 50px 56px 64px;"
         "align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04);}"
         ".meo-volume-row:last-child{border-bottom:none;}"
-        ".meo-volume-tkr{font-size:0.72rem;font-weight:700;color:rgba(255,255,255,0.85);}"
-        ".meo-volume-name{font-size:0.55rem;color:rgba(255,255,255,0.3);}"
+        ".meo-volume-tkr{font-size:0.88rem;font-weight:700;color:rgba(255,255,255,0.85);}"
+        ".meo-volume-name{font-size:0.7rem;color:rgba(255,255,255,0.3);}"
         ".meo-volume-bars{display:flex;flex-direction:column;gap:2px;}"
         ".meo-volume-bar{height:5px;border-radius:3px;background:rgba(255,255,255,0.05);overflow:hidden;}"
         ".meo-volume-bar-fill{height:100%;border-radius:3px;}"
-        ".meo-volume-ratio{font-size:0.85rem;font-weight:800;text-align:right;font-variant-numeric:tabular-nums;}"
-        ".meo-volume-amount{font-size:0.72rem;color:rgba(255,255,255,0.5);text-align:right;font-variant-numeric:tabular-nums;}"
+        ".meo-volume-ratio{font-size:1.0rem;font-weight:800;text-align:right;font-variant-numeric:tabular-nums;}"
+        ".meo-volume-amount{font-size:0.85rem;color:rgba(255,255,255,0.5);text-align:right;font-variant-numeric:tabular-nums;}"
         ".meo-supply-table{width:100%;border-collapse:collapse;margin-top:10px;}"
-        ".meo-supply-table th{font-size:0.68rem;font-weight:700;color:rgba(255,255,255,0.4);"
+        ".meo-supply-table th{font-size:0.85rem;font-weight:700;color:rgba(255,255,255,0.4);"
         "text-align:left;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.07);}"
-        ".meo-supply-table td{font-size:0.78rem;padding:9px 12px;"
+        ".meo-supply-table td{font-size:0.95rem;padding:9px 12px;"
         "border-bottom:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.7);}"
-        ".meo-supply-rank{font-size:0.7rem;font-weight:700;color:rgba(244,197,106,0.6);}"
+        ".meo-supply-rank{font-size:0.88rem;font-weight:700;color:rgba(244,197,106,0.6);}"
         ".meo-supply-name{font-weight:600;color:rgba(255,255,255,0.85);}"
-        ".meo-supply-bar-track{display:inline-block;width:120px;height:6px;"
+        ".meo-supply-bar-track{display:inline-block;width:160px;height:6px;"
         "background:rgba(255,255,255,0.06);border-radius:3px;vertical-align:middle;"
         "margin-left:8px;overflow:hidden;}"
         ".meo-supply-bar-fill{display:block;height:100%;border-radius:3px;"
@@ -4703,13 +4703,13 @@ def _render_market_entry_overall_view_inner(
         ".meo-supply-leader-pct{font-weight:700;color:#30d158;font-variant-numeric:tabular-nums;}"
         ".meo-editor-panel{background:linear-gradient(180deg,rgba(15,22,42,0.85) 0%,rgba(10,16,32,0.95) 100%);"
         "border:1px solid rgba(244,197,106,0.18);border-radius:14px;padding:14px 16px;height:100%;}"
-        ".meo-editor-kicker{font-size:0.62rem;font-weight:800;letter-spacing:0.1em;"
+        ".meo-editor-kicker{font-size:0.78rem;font-weight:800;letter-spacing:0.1em;"
         "text-transform:uppercase;color:rgba(244,197,106,0.7);margin-bottom:6px;}"
-        ".meo-editor-title{font-size:0.92rem;font-weight:700;color:rgba(255,255,255,0.85);margin-bottom:10px;}"
-        ".meo-editor-note-title{font-size:0.85rem;font-weight:700;color:rgba(255,255,255,0.85);margin-bottom:4px;}"
-        ".meo-editor-note-body{font-size:0.7rem;color:rgba(255,255,255,0.45);line-height:1.55;margin-bottom:6px;}"
+        ".meo-editor-title{font-size:1.05rem;font-weight:700;color:rgba(255,255,255,0.85);margin-bottom:10px;}"
+        ".meo-editor-note-title{font-size:0.98rem;font-weight:700;color:rgba(255,255,255,0.85);margin-bottom:4px;}"
+        ".meo-editor-note-body{font-size:0.85rem;color:rgba(255,255,255,0.45);line-height:1.55;margin-bottom:6px;}"
         ".meo-editor-note-tags{display:flex;gap:4px;flex-wrap:wrap;}"
-        ".meo-editor-note-tag{font-size:0.6rem;color:rgba(56,189,248,0.7);"
+        ".meo-editor-note-tag{font-size:0.75rem;color:rgba(56,189,248,0.7);"
         "background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.18);"
         "border-radius:5px;padding:2px 7px;}"
         "</style>"
@@ -4836,37 +4836,95 @@ def _meo_build_auto_summary(tickers, lang_zh):
 
 
 def _meo_fetch_indices():
+    """Fetch TAIEX + TX with multi-source fallback for price, high, low, sparkline."""
+    def _valid(v):
+        try:
+            v = float(v)
+            return v if (v == v and v > 0) else None
+        except Exception:
+            return None
+
     taiex = {"price": None, "high": None, "low": None, "spark": None}
     tx    = {"price": None, "high": None, "low": None, "spark": None}
+
+    # Source 1: Taiwan futures lab snapshot (TAIFEX)
     try:
         snap = fetch_taiwan_futures_lab_snapshot()
         if isinstance(snap, dict):
             t_data = snap.get("taiex", {}) or {}
             x_data = snap.get("tx", {}) or {}
-            taiex["price"] = _safe_float(t_data.get("price"))
-            taiex["high"]  = _safe_float(t_data.get("day_high"))
-            taiex["low"]   = _safe_float(t_data.get("day_low"))
-            tx["price"]    = _safe_float(x_data.get("price"))
-            tx["high"]     = _safe_float(x_data.get("day_high"))
-            tx["low"]      = _safe_float(x_data.get("day_low"))
+            for src_key, dst in [(t_data, taiex), (x_data, tx)]:
+                # Try multiple field name conventions
+                price = (_valid(src_key.get("price")) or
+                         _valid(src_key.get("close")) or
+                         _valid(src_key.get("z")))
+                hi    = (_valid(src_key.get("day_high")) or
+                         _valid(src_key.get("high")) or
+                         _valid(src_key.get("h")))
+                lo    = (_valid(src_key.get("day_low")) or
+                         _valid(src_key.get("low")) or
+                         _valid(src_key.get("l")))
+                if price: dst["price"] = price
+                if hi:    dst["high"]  = hi
+                if lo:    dst["low"]   = lo
     except Exception:
         pass
+
+    # Source 2: yfinance global reference data for sparkline + fill missing fields
     try:
-        gr_data = fetch_global_reference_data("1mo", "1d")
+        gr_data = fetch_global_reference_data("3mo", "1d")
         if gr_data is not None:
             taiex_close = get_price_series(gr_data, "^TWII")
             if taiex_close is not None and not taiex_close.empty:
-                taiex["spark"] = taiex_close.tail(30).tolist()
-                if taiex["price"] is None:
-                    taiex["price"] = float(taiex_close.iloc[-1])
-                if taiex["high"] is None:
-                    taiex["high"] = float(taiex_close.tail(30).max())
-                if taiex["low"] is None:
-                    taiex["low"] = float(taiex_close.tail(30).min())
-                if tx["spark"] is None:
-                    tx["spark"] = taiex["spark"]
+                series = taiex_close.dropna()
+                if not series.empty:
+                    taiex["spark"] = series.tail(30).tolist()
+                    if not taiex["price"]:
+                        taiex["price"] = float(series.iloc[-1])
+                    # High/low from last 5 trading days for "today range" approximation
+                    if not taiex["high"]:
+                        taiex["high"] = float(series.tail(5).max())
+                    if not taiex["low"]:
+                        taiex["low"] = float(series.tail(5).min())
+
+            # TX sparkline fallback: try ^TXF or use TAIEX series shape
+            tx_close = None
+            for tx_sym in ("TX=F", "TXF=F"):
+                try:
+                    tx_close = get_price_series(gr_data, tx_sym)
+                    if tx_close is not None and not tx_close.empty:
+                        break
+                except Exception:
+                    pass
+            if tx_close is None or (tx_close is not None and tx_close.dropna().empty):
+                # Fall back to TAIEX shape (TX usually tracks closely)
+                tx["spark"] = taiex.get("spark")
+                # If TX price still missing, infer from TAIEX (TX usually within ±1% of TAIEX)
+                if not tx["price"] and taiex["price"]:
+                    tx["price"] = taiex["price"]
+                if not tx["high"] and taiex["high"]:
+                    tx["high"] = taiex["high"]
+                if not tx["low"] and taiex["low"]:
+                    tx["low"] = taiex["low"]
+            else:
+                series = tx_close.dropna()
+                tx["spark"] = series.tail(30).tolist()
+                if not tx["price"]:
+                    tx["price"] = float(series.iloc[-1])
+                if not tx["high"]:
+                    tx["high"] = float(series.tail(5).max())
+                if not tx["low"]:
+                    tx["low"] = float(series.tail(5).min())
+
+        # Sanity check: if TX price is suspiciously small (< 1000) but TAIEX is large,
+        # the TX field probably had bad data — fall back to TAIEX value.
+        if tx["price"] and taiex["price"] and tx["price"] < taiex["price"] * 0.1:
+            tx["price"] = taiex["price"]
+            tx["high"]  = tx["high"] or taiex["high"]
+            tx["low"]   = tx["low"]  or taiex["low"]
     except Exception:
         pass
+
     return taiex, tx
 
 
@@ -4893,7 +4951,7 @@ def _meo_render_index_card(idx_data, title, lang_zh):
             last_y = h - ((spark[-1] - mn) / rng) * h
             spark_svg = (
                 f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
-                f'style="width:100%;height:60px;display:block;margin-top:6px;">'
+                f'style="width:100%;height:90px;display:block;margin-top:8px;">'
                 f'<defs><linearGradient id="meo-spark-grad" x1="0" y1="0" x2="0" y2="1">'
                 f'<stop offset="0%" stop-color="rgba(56,189,248,0.4)"/>'
                 f'<stop offset="100%" stop-color="rgba(56,189,248,0)"/>'
@@ -5000,30 +5058,54 @@ def _meo_render_volume_heat(tickers, intraday_data, lang_zh):
 
 
 def _meo_render_total_volume(tickers, intraday_data, lang_zh):
+    """
+    Display turnover summary. Tries multiple sources:
+    1. TAIEX volume from yfinance (full market proxy)
+    2. Sum of selected tickers' volumes (fallback)
+    """
     total = 0
     daily_totals = []
+    label = "成交量" if lang_zh else "Volume"
+
+    # Source 1: TAIEX total volume from yfinance (full market proxy)
     try:
-        for tkr in tickers[:20]:
-            try:
-                vd = _compute_volume_from_intraday(intraday_data, tkr)
-                if vd["today_vol"]:
-                    total += vd["today_vol"]
-            except Exception:
-                pass
-        if intraday_data is not None and not intraday_data.empty:
-            try:
-                vol_cols = [c for c in intraday_data.columns
-                            if (isinstance(c, tuple) and "Volume" in c)
-                            or (str(c).startswith("Volume"))]
-                if vol_cols:
-                    vol_df = intraday_data[vol_cols].copy()
-                    vol_df.index = pd.to_datetime(vol_df.index, utc=True).tz_convert(TW_TZ)
-                    daily = vol_df.groupby(vol_df.index.normalize()).sum().sum(axis=1)
-                    daily_totals = daily.tail(15).tolist()
-            except Exception:
-                pass
+        gr_data = fetch_global_reference_data("3mo", "1d")
+        if gr_data is not None:
+            taiex_vol = get_series(gr_data, "Volume", "^TWII")
+            if taiex_vol is not None and not taiex_vol.empty:
+                taiex_vol = pd.to_numeric(taiex_vol, errors="coerce").dropna()
+                if not taiex_vol.empty:
+                    total = int(taiex_vol.iloc[-1])
+                    daily_totals = taiex_vol.tail(15).tolist()
+                    label = "成交量(全市場)" if lang_zh else "Volume (Market)"
     except Exception:
         pass
+
+    # Source 2: fallback to sum of selected tickers
+    if not total:
+        try:
+            for tkr in tickers[:30]:
+                try:
+                    vd = _compute_volume_from_intraday(intraday_data, tkr)
+                    if vd["today_vol"]:
+                        total += vd["today_vol"]
+                except Exception:
+                    pass
+            if intraday_data is not None and not intraday_data.empty:
+                try:
+                    vol_cols = [c for c in intraday_data.columns
+                                if (isinstance(c, tuple) and "Volume" in c)
+                                or (str(c).startswith("Volume"))]
+                    if vol_cols:
+                        vol_df = intraday_data[vol_cols].copy()
+                        vol_df.index = pd.to_datetime(vol_df.index, utc=True).tz_convert(TW_TZ)
+                        daily = vol_df.groupby(vol_df.index.normalize()).sum().sum(axis=1)
+                        daily_totals = daily.tail(15).tolist()
+                except Exception:
+                    pass
+            label = "成交量(自選)" if lang_zh else "Volume (Watchlist)"
+        except Exception:
+            pass
 
     total_str = _fmt_volume(total) if total else "—"
 
@@ -5043,7 +5125,7 @@ def _meo_render_total_volume(tickers, intraday_data, lang_zh):
                 bars += f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" rx="1.5" fill="#38bdf8" opacity="0.85"/>'
             bars_svg = (
                 f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
-                f'style="width:100%;height:80px;display:block;margin-top:8px;">'
+                f'style="width:100%;height:110px;display:block;margin-top:10px;">'
                 f'{bars}</svg>'
             )
         except Exception:
@@ -5051,10 +5133,10 @@ def _meo_render_total_volume(tickers, intraday_data, lang_zh):
 
     panel_html = (
         f'<div class="meo-card">'
-        f'<div class="meo-card-title">📊 {"交易總額" if lang_zh else "Total Turnover"}</div>'
+        f'<div class="meo-card-title">📊 {escape(label)}</div>'
         f'<div class="meo-card-big">{total_str}</div>'
         f'{bars_svg}'
-        f'<div style="font-size:0.6rem;color:rgba(255,255,255,0.3);margin-top:6px;text-align:center;">'
+        f'<div style="font-size:0.7rem;color:rgba(255,255,255,0.35);margin-top:8px;text-align:center;">'
         f'{"近 15 日成交量" if lang_zh else "Last 15 days volume"}</div>'
         f'</div>'
     )
