@@ -5200,13 +5200,37 @@ def _meo_render_top_movers(daily_data, intraday_data, tickers, filter_fn, title,
 
 
 def _meo_render_etf_top3(lens_meta, lang_zh):
+    """
+    ETF TOP 3 — uses the user's Prefetch system (prefetch_active_etf_snapshots_job).
+    Strategy:
+      1. Try peek_active_etf_workspace_snapshot() to read pre-built snapshots
+      2. Deserialize bundle and use it directly with compute_lens_winner_fields
+      3. Fall back to fresh fetch only if NO ticker has a ready snapshot
+    """
     rows_html = ""
+    via_prefetch = False
     try:
         etf_tickers = filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS)
-        if etf_tickers and lens_meta:
+        if not etf_tickers:
+            etf_tickers = []
+
+        # ── Step 1: Read prefetched snapshots ────────────────────────────
+        etf_bundles = []
+        for tkr in etf_tickers:
+            try:
+                snapshot = peek_active_etf_workspace_snapshot(tkr, lens_meta=lens_meta)
+                if isinstance(snapshot, dict) and str(snapshot.get("status", "")) == "ready":
+                    bundle = _deserialize_active_etf_bundle(snapshot.get("bundle"))
+                    if bundle:
+                        etf_bundles.append(bundle)
+                        via_prefetch = True
+            except Exception:
+                pass
+
+        # ── Step 2: Fall back to fresh fetch if no prefetch hits ─────────
+        if not etf_bundles and etf_tickers and lens_meta:
             etf_daily    = fetch_daily_data(etf_tickers, lens_meta["period"], lens_meta["interval"])
             etf_intraday = fetch_intraday_data(etf_tickers)
-            etf_bundles = []
             for tkr in etf_tickers[:6]:
                 try:
                     b = collect_ticker_context(etf_daily, etf_intraday, tkr, news_limit=2, lens_meta=lens_meta)
@@ -5214,26 +5238,32 @@ def _meo_render_etf_top3(lens_meta, lang_zh):
                         etf_bundles.append(b)
                 except Exception:
                     pass
-            etf_bundles.sort(
-                key=lambda b: float(compute_lens_winner_fields(b, lens_meta).get("lens_score", 0)),
-                reverse=True,
+
+        # ── Sort & build rows ────────────────────────────────────────────
+        etf_bundles.sort(
+            key=lambda b: float(compute_lens_winner_fields(b, lens_meta).get("lens_score", 0)),
+            reverse=True,
+        )
+        for i, bundle in enumerate(etf_bundles[:3], 1):
+            tkr = bundle["ticker"]
+            # Try to get change_pct from bundle's intraday/analysis directly
+            intraday_block = bundle.get("intraday", {}) or {}
+            analysis_block = bundle.get("analysis", {}) or {}
+            chg = (coerce_float(intraday_block.get("change_pct"))
+                   if not pd.isna(coerce_float(intraday_block.get("change_pct")))
+                   else coerce_float(analysis_block.get("latest_move")))
+            lbl = display_ticker_label(tkr).split(" ", 1)
+            code = escape(lbl[0])
+            name = escape(lbl[1][:14]) if len(lbl) > 1 else ""
+            pill_cls = "meo-rank-pill" if (pd.notna(chg) and chg >= 0) else "meo-rank-pill down"
+            chg_str = (f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%") if pd.notna(chg) else "—"
+            rows_html += (
+                f'<div class="meo-rank-row">'
+                f'<div class="meo-rank-num">#{i}</div>'
+                f'<div class="meo-rank-label">{code} {name}</div>'
+                f'<div class="{pill_cls}">{chg_str}</div>'
+                f'</div>'
             )
-            for i, bundle in enumerate(etf_bundles[:3], 1):
-                tkr = bundle["ticker"]
-                snap = build_taiwan_display_price_snapshot(etf_daily, etf_intraday, tkr)
-                chg = coerce_float(snap.get("latest_move", pd.NA))
-                lbl = display_ticker_label(tkr).split(" ", 1)
-                code = escape(lbl[0])
-                name = escape(lbl[1][:14]) if len(lbl) > 1 else ""
-                pill_cls = "meo-rank-pill" if (pd.notna(chg) and chg >= 0) else "meo-rank-pill down"
-                chg_str = (f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%") if pd.notna(chg) else "—"
-                rows_html += (
-                    f'<div class="meo-rank-row">'
-                    f'<div class="meo-rank-num">#{i}</div>'
-                    f'<div class="meo-rank-label">{code} {name}</div>'
-                    f'<div class="{pill_cls}">{chg_str}</div>'
-                    f'</div>'
-                )
     except Exception:
         pass
 
@@ -5244,9 +5274,17 @@ def _meo_render_etf_top3(lens_meta, lang_zh):
         )
 
     title = "主動式 ETF 焦點 TOP 3" if lang_zh else "ACTIVE ETF TOP 3"
+    # Show small badge indicating data source
+    src_badge = ""
+    if via_prefetch:
+        src_badge = (
+            f'<span style="font-size:0.6rem;color:rgba(48,209,88,0.7);margin-left:8px;'
+            f'background:rgba(48,209,88,0.08);padding:1px 6px;border-radius:4px;">'
+            f'{"快照" if lang_zh else "Cached"}</span>'
+        )
     panel_html = (
         f'<div class="meo-rank-card">'
-        f'<div class="meo-rank-card-title">{escape(title)}</div>'
+        f'<div class="meo-rank-card-title">{escape(title)}{src_badge}</div>'
         f'{rows_html}</div>'
     )
     st.markdown(panel_html, unsafe_allow_html=True)
@@ -5312,7 +5350,10 @@ def _meo_render_supply_chain_table(lens_meta, lang_zh):
         f'<div class="meo-rank-card" style="padding:18px 22px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
         f'<div class="meo-rank-card-title" style="border-bottom:none;padding-bottom:0;margin-bottom:0;">'
-        f'📊 {"供應鏈漲幅對比總控" if lang_zh else "Supply Chain Strength Compare"}</div>'
+        f'📊 {"供應鏈漲幅對比總控" if lang_zh else "Supply Chain Strength Compare"}'
+        f'<span style="font-size:0.65rem;color:rgba(48,209,88,0.7);margin-left:10px;'
+        f'background:rgba(48,209,88,0.08);padding:2px 8px;border-radius:5px;font-weight:600;">'
+        f'{"快照" if lang_zh else "Cached"}</span></div>'
         f'<div>{chips}</div></div>'
         f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">'
         f'<table class="meo-supply-table"><thead><tr>'
