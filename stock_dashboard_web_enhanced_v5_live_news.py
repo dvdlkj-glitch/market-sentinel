@@ -1501,6 +1501,9 @@ def render_rt_volume_overview(
   </div>
 </div>"""
 
+    # ── Sort: highest volume ratio first, unknowns last ──────────────────
+    rows.sort(key=lambda r: (r["vol_ratio"] or 0), reverse=True)
+
     # ── Volume rows ───────────────────────────────────────────────────────
     rows_html = ""
     for i, row in enumerate(rows):
@@ -1528,6 +1531,14 @@ def render_rt_volume_overview(
         is_last = (i == len(rows) - 1)
         border_r = "0 0 18px 18px" if is_last else "0"
 
+        hot_badge = ""
+        if vol_ratio and vol_ratio >= 2.0:
+            hot_badge = (
+                '<span style="font-size:0.58rem;font-weight:700;'
+                'color:#ff9f0a;border:1px solid rgba(255,159,10,0.4);'
+                'border-radius:4px;padding:1px 5px;margin-left:4px;">HOT</span>'
+            )
+
         rows_html += f"""
 <div style="
   background: rgba(22,22,30,0.97);
@@ -1535,36 +1546,43 @@ def render_rt_volume_overview(
   border-right: 1px solid rgba(255,255,255,0.05);
   border-bottom: 1px solid rgba(255,255,255,0.05);
   border-radius: {border_r};
-  padding: 9px 20px;
+  padding: 8px 18px;
   display: grid;
-  grid-template-columns: 110px 1fr 52px 72px 64px;
+  grid-template-columns: 120px 1fr 64px 80px 68px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   {glow}
 ">
-  <!-- Ticker + name -->
-  <div>
-    <div style="font-size:0.75rem; font-weight:700; color:rgba(255,255,255,0.85);
-      letter-spacing:0.04em;">{code}</div>
-    <div style="font-size:0.62rem; color:rgba(255,255,255,0.3); margin-top:1px;
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{name}</div>
+  <!-- Ticker + name + hot badge -->
+  <div style="display:flex;align-items:center;gap:0;overflow:hidden;">
+    <div>
+      <div style="font-size:0.73rem;font-weight:700;color:rgba(255,255,255,0.88);
+        letter-spacing:0.04em;white-space:nowrap;">{code}{hot_badge}</div>
+      <div style="font-size:0.60rem;color:rgba(255,255,255,0.28);margin-top:1px;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;">{name}</div>
+    </div>
   </div>
-  <!-- Volume bar -->
-  <div style="position:relative; height:6px; background:rgba(255,255,255,0.06);
-    border-radius:3px; overflow:hidden;">
-    <div style="position:absolute; left:0; top:0; bottom:0; width:{bar_pct};
-      background:linear-gradient(90deg, {color}66, {color});
-      border-radius:3px; transition:width 0.6s ease;"></div>
+  <!-- Volume bar + rank label -->
+  <div>
+    <div style="position:relative;height:5px;background:rgba(255,255,255,0.06);
+      border-radius:3px;overflow:hidden;margin-bottom:3px;">
+      <div style="position:absolute;left:0;top:0;bottom:0;width:{bar_pct};
+        background:linear-gradient(90deg,{color}44,{color});
+        border-radius:3px;"></div>
+    </div>
+    <div style="font-size:0.55rem;color:rgba(255,255,255,0.2);">
+      #{i+1} {"量排名" if is_zh else "by vol"}
+    </div>
   </div>
   <!-- Ratio -->
-  <div style="font-size:0.72rem; font-weight:600; color:{ratio_color};
-    text-align:right; font-variant-numeric:tabular-nums;">{ratio_str}</div>
+  <div style="font-size:0.72rem;font-weight:700;color:{ratio_color};
+    text-align:right;font-variant-numeric:tabular-nums;">{ratio_str}</div>
   <!-- Absolute vol -->
-  <div style="font-size:0.72rem; color:rgba(255,255,255,0.5);
-    text-align:right; font-variant-numeric:tabular-nums;">{vol_str}</div>
+  <div style="font-size:0.70rem;color:rgba(255,255,255,0.45);
+    text-align:right;font-variant-numeric:tabular-nums;">{vol_str}</div>
   <!-- Change % -->
-  <div style="font-size:0.72rem; font-weight:600; color:{color};
-    text-align:right; font-variant-numeric:tabular-nums;">{chg_str}</div>
+  <div style="font-size:0.72rem;font-weight:700;color:{color};
+    text-align:right;font-variant-numeric:tabular-nums;">{chg_str}</div>
 </div>"""
 
     st.markdown(header_html + rows_html, unsafe_allow_html=True)
@@ -1630,7 +1648,7 @@ def render_rt_alert_sidebar(tickers: list[str], lang_zh: bool) -> None:
     else:
         st.caption("尚無提醒設定" if lang_zh else "No alerts set")
 
-    # Add new alert
+    # Add new alert — fetch current price from last known live quote in session
     with st.expander("➕ " + ("新增提醒" if lang_zh else "Add alert"), expanded=False):
         alert_ticker = st.selectbox(
             "代號" if lang_zh else "Symbol",
@@ -1645,13 +1663,19 @@ def render_rt_alert_sidebar(tickers: list[str], lang_zh: bool) -> None:
             horizontal=True,
             key="rt_alert_cond_radio",
         )
-        q = {}
-        current_price = coerce_float(q.get("price", 0.0)) or 0.0
+        # Use last known quote from session_state cache as default price
+        cached_quotes: dict = st.session_state.get("rt_last_live_quotes", {})
+        q = cached_quotes.get(alert_ticker, {})
+        current_price = float(coerce_float(q.get("price", 0.0)) or 0.0)
+        # Step size depends on price magnitude
+        price_step = 0.01 if current_price < 5 else 0.1 if current_price < 50 else 0.5 if current_price < 500 else 5.0
         alert_price = st.number_input(
-            "目標價" if lang_zh else "Target price",
+            ("目標價" + (f"（現價 {current_price:,.2f}）" if current_price else ""))
+            if lang_zh
+            else ("Target price" + (f" (now {current_price:,.2f})" if current_price else "")),
             min_value=0.0,
             value=current_price,
-            step=0.5,
+            step=price_step,
             format="%.2f",
             key="rt_alert_price_input",
         )
@@ -1768,15 +1792,15 @@ def render_realtime_sidebar_selector(lang: str) -> list[str]:
     col_add_sel, col_add_vis = st.columns(2)
     if col_add_sel.button("加入勾選股票" if is_zh else "Add highlighted", use_container_width=True, key="rt_btn_add_candidates"):
         if candidates:
-            st.session_state["rt_selected_tickers"] = dedupe_keep_order(
-                merge_ticker_selection(current_selected, candidates, selected_scope)
-            )
+            updated = dedupe_keep_order(merge_ticker_selection(current_selected, candidates, selected_scope))
+            st.session_state["rt_selected_tickers"] = updated
             st.session_state["rt_candidates"] = []
+            _rt_save_watchlist([t for t in updated if t not in set(RT_PINNED_TICKERS)])
             st.rerun()
     if col_add_vis.button("全選目前可見" if is_zh else "Add all visible", use_container_width=True, key="rt_btn_add_all_visible"):
-        st.session_state["rt_selected_tickers"] = dedupe_keep_order(
-            merge_ticker_selection(current_selected, available_not_selected, selected_scope)
-        )
+        updated = dedupe_keep_order(merge_ticker_selection(current_selected, available_not_selected, selected_scope))
+        st.session_state["rt_selected_tickers"] = updated
+        _rt_save_watchlist([t for t in updated if t not in set(RT_PINNED_TICKERS)])
         st.rerun()
 
     # ── Custom symbol input ───────────────────────────────────────────────
@@ -1798,13 +1822,15 @@ def render_realtime_sidebar_selector(lang: str) -> list[str]:
     custom_tickers = filter_tickers_for_market_scope(custom_tickers, selected_scope)
     if st.button("加入自訂代號" if is_zh else "Add custom symbols", use_container_width=True, key="rt_btn_add_custom"):
         if custom_tickers:
-            st.session_state["rt_selected_tickers"] = dedupe_keep_order(
+            updated = dedupe_keep_order(
                 merge_ticker_selection(
                     list(st.session_state.get("rt_selected_tickers", [])),
                     custom_tickers,
                     selected_scope,
                 )
             )
+            st.session_state["rt_selected_tickers"] = updated
+            _rt_save_watchlist([t for t in updated if t not in set(RT_PINNED_TICKERS)])
             st.rerun()
 
     # ── Symbol search ─────────────────────────────────────────────────────
@@ -1836,14 +1862,16 @@ def render_realtime_sidebar_selector(lang: str) -> list[str]:
             st.session_state["rt_search_picks"] = search_picks
             if st.button("加入搜尋結果" if is_zh else "Add search results", use_container_width=True, key="rt_btn_add_search"):
                 if search_picks:
-                    st.session_state["rt_selected_tickers"] = dedupe_keep_order(
+                    updated = dedupe_keep_order(
                         merge_ticker_selection(
                             list(st.session_state.get("rt_selected_tickers", [])),
                             search_picks,
                             selected_scope,
                         )
                     )
+                    st.session_state["rt_selected_tickers"] = updated
                     st.session_state["rt_search_picks"] = []
+                    _rt_save_watchlist([t for t in updated if t not in set(RT_PINNED_TICKERS)])
                     st.rerun()
         else:
             st.caption(t("search_results_empty"))
@@ -2130,11 +2158,128 @@ def _render_realtime_price_card(
 
 
 
+def _render_rt_breadth_strip(
+    tickers: list[str],
+    live_quotes: dict,
+    lang_zh: bool,
+) -> None:
+    """
+    Full-width market breadth strip between header and volume section.
+    Shows: N up / N down / N flat · average move · strongest · weakest
+    Color of the strip scales from red (all down) to green (all up).
+    """
+    ups, downs, flats = [], [], []
+    moves = []
+
+    for tkr in tickers:
+        q   = live_quotes.get(tkr, {})
+        chg = coerce_float(q.get("change_pct", pd.NA))
+        if pd.isna(chg):
+            flats.append(tkr)
+        elif chg > 0:
+            ups.append((tkr, chg))
+            moves.append(chg)
+        elif chg < 0:
+            downs.append((tkr, chg))
+            moves.append(chg)
+        else:
+            flats.append(tkr)
+
+    total = len(tickers) or 1
+    up_pct = len(ups) / total
+
+    # Gradient colour: red → amber → green
+    if up_pct >= 0.7:
+        strip_color = "#30d158"
+        strip_bg    = "rgba(48,209,88,0.08)"
+    elif up_pct >= 0.4:
+        strip_color = "#ff9f0a"
+        strip_bg    = "rgba(255,159,10,0.08)"
+    else:
+        strip_color = "#ff3b30"
+        strip_bg    = "rgba(255,59,48,0.08)"
+
+    avg_move   = sum(moves) / len(moves) if moves else 0
+    avg_sign   = "▲" if avg_move > 0 else "▼" if avg_move < 0 else "─"
+    avg_str    = f"{avg_sign} {abs(avg_move):.2f}%"
+
+    strongest  = max(ups,   key=lambda x: x[1])  if ups   else None
+    weakest    = min(downs, key=lambda x: x[1])   if downs else None
+
+    def _chip(ticker, chg, positive: bool) -> str:
+        lbl   = escape(display_ticker_label(ticker).split(" ")[0])
+        color = "#30d158" if positive else "#ff3b30"
+        arrow = "▲" if positive else "▼"
+        return (
+            f'<span style="display:inline-flex;align-items:center;gap:4px;'
+            f'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);'
+            f'border-radius:8px;padding:2px 8px;font-size:0.68rem;">'
+            f'<span style="color:{color}">{arrow}</span>'
+            f'<span style="color:rgba(255,255,255,0.7);font-weight:600;">{lbl}</span>'
+            f'<span style="color:{color};font-weight:700;">{abs(chg):.2f}%</span>'
+            f'</span>'
+        )
+
+    strong_chip = _chip(strongest[0], strongest[1], True)  if strongest else ""
+    weak_chip   = _chip(weakest[0],   weakest[1],   False) if weakest   else ""
+
+    up_label   = "漲" if lang_zh else "Up"
+    down_label = "跌" if lang_zh else "Down"
+    avg_label  = "均漲跌" if lang_zh else "Avg"
+    best_label = "最強" if lang_zh else "Top"
+    weak_label_str = "最弱" if lang_zh else "Weak"
+
+    st.markdown(f"""
+<div style="
+  display:flex; align-items:center; flex-wrap:wrap; gap:10px;
+  background:{strip_bg};
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:12px; padding:8px 16px; margin:8px 0 12px;
+">
+  <!-- breadth pills -->
+  <div style="display:flex;gap:6px;align-items:center;">
+    <span style="font-size:0.72rem;font-weight:700;color:#30d158;">
+      ▲ {len(ups)} {up_label}
+    </span>
+    <span style="color:rgba(255,255,255,0.15);">|</span>
+    <span style="font-size:0.72rem;font-weight:700;color:#ff3b30;">
+      ▼ {len(downs)} {down_label}
+    </span>
+    <span style="color:rgba(255,255,255,0.15);">|</span>
+    <span style="font-size:0.72rem;color:rgba(255,255,255,0.35);">
+      ─ {len(flats)}
+    </span>
+  </div>
+
+  <!-- breadth bar -->
+  <div style="flex:1;min-width:80px;max-width:140px;height:4px;
+    background:rgba(255,59,48,0.3);border-radius:2px;overflow:hidden;">
+    <div style="height:100%;width:{int(up_pct*100)}%;
+      background:#30d158;border-radius:2px;transition:width 0.6s ease;"></div>
+  </div>
+
+  <!-- average move -->
+  <span style="font-size:0.72rem;color:{strip_color};font-weight:600;
+    font-variant-numeric:tabular-nums;">
+    {avg_label} {avg_str}
+  </span>
+
+  <!-- strongest / weakest chips -->
+  <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;">
+    {(f'<span style="font-size:0.62rem;color:rgba(255,255,255,0.3);">{best_label}</span>' + strong_chip) if strong_chip else ""}
+    {(f'<span style="font-size:0.62rem;color:rgba(255,255,255,0.3);">{weak_label_str}</span>' + weak_chip) if weak_chip else ""}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+
 def render_realtime_dashboard(tickers: list[str], layout_mode: str = "Advanced") -> None:
     """
-    Real-Time Price Dashboard main render function.
-    Auto-refreshes during market hours via streamlit-autorefresh.
-    Falls back gracefully if the package is not installed.
+    Real-Time Price Dashboard — full redesign with:
+    • Countdown timer to next autorefresh
+    • Market breadth strip (X up / Y down / net move)
+    • Persistent live_quotes cache for alert price defaults
+    • Volume overview + Apple-widget price cards
     """
     try:
         from streamlit_autorefresh import st_autorefresh
@@ -2143,80 +2288,132 @@ def render_realtime_dashboard(tickers: list[str], layout_mode: str = "Advanced")
         has_autorefresh = False
 
     lang_zh = get_lang() == "繁體中文"
-
-    tw_open = is_taiwan_market_open()
-    us_open = is_us_market_open()
+    tw_open  = is_taiwan_market_open()
+    us_open  = is_us_market_open()
     any_open = tw_open or us_open
+    refresh_sec = int(st.session_state.get("realtime_refresh_interval", 60))
 
     if any_open and has_autorefresh:
-        refresh_ms = int(st.session_state.get("realtime_refresh_interval", 60)) * 1000
-        st_autorefresh(interval=refresh_ms, key="realtime_autorefresh")
-
-    if tw_open and us_open:
-        status_text = "🟢 台美市場皆開盤 — 自動刷新中" if lang_zh else "🟢 Both markets open — auto-refreshing"
-    elif tw_open:
-        status_text = "🟢 台灣市場開盤中 — 自動刷新中" if lang_zh else "🟢 Taiwan market open — auto-refreshing"
-    elif us_open:
-        status_text = "🟢 美股開盤中 — 自動刷新中" if lang_zh else "🟢 US market open — auto-refreshing"
-    else:
-        status_text = "⚪ 目前休市 — 僅手動刷新" if lang_zh else "⚪ Markets closed — manual refresh only"
-
-    if not has_autorefresh:
-        status_text += (
-            "（需安裝 streamlit-autorefresh）"
-            if lang_zh
-            else " (run: pip install streamlit-autorefresh)"
-        )
+        st_autorefresh(interval=refresh_sec * 1000, key="realtime_autorefresh")
 
     from datetime import datetime
-    now_str = datetime.now().strftime("%H:%M:%S")
+    now_str  = datetime.now().strftime("%H:%M:%S")
+    now_full = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    col_title, col_status = st.columns([2, 1])
-    with col_title:
-        st.markdown(f"## {'即時報價看板' if lang_zh else 'Real-Time Price Dashboard'}")
-    with col_status:
-        st.markdown(
-            f"""
-            <div style="text-align:right; padding-top:12px;">
-                <div style="font-size:0.85rem;">{status_text}</div>
-                <div style="font-size:0.75rem; opacity:0.6;">
-                    {'最後抓取' if lang_zh else 'Last fetched'}: {now_str}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    # ── Market status badge ───────────────────────────────────────────────
+    if tw_open and us_open:
+        mkt_dot, mkt_label = "#30d158", ("台美開盤" if lang_zh else "TW + US Open")
+    elif tw_open:
+        mkt_dot, mkt_label = "#30d158", ("台灣開盤" if lang_zh else "Taiwan Open")
+    elif us_open:
+        mkt_dot, mkt_label = "#30d158", ("美股開盤" if lang_zh else "US Open")
+    else:
+        mkt_dot, mkt_label = "#8e8e93", ("休市中" if lang_zh else "Markets Closed")
+
+    auto_str = (
+        ("自動刷新中" if lang_zh else "Auto-refreshing")
+        if (any_open and has_autorefresh)
+        else ("手動模式" if lang_zh else "Manual mode")
+    )
+
+    # ── Header strip ─────────────────────────────────────────────────────
+    st.markdown(f"""
+<div style="
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:6px;
+">
+  <div style="display:flex; align-items:center; gap:10px;">
+    <span style="font-size:1.4rem; font-weight:800; letter-spacing:-0.02em;
+      color:rgba(255,255,255,0.92);">
+      {"即時報價看板" if lang_zh else "Real-Time Dashboard"}
+    </span>
+    <div style="display:flex;align-items:center;gap:5px;
+      background:rgba(255,255,255,0.05);border-radius:20px;
+      padding:3px 10px;border:1px solid rgba(255,255,255,0.07);">
+      <div style="width:7px;height:7px;border-radius:50%;
+        background:{mkt_dot};box-shadow:0 0 7px {mkt_dot};"></div>
+      <span style="font-size:0.72rem;color:rgba(255,255,255,0.5);">
+        {mkt_label} · {auto_str}
+      </span>
+    </div>
+  </div>
+  <div style="text-align:right;">
+    <div style="font-size:0.85rem;font-weight:600;color:rgba(255,255,255,0.7);
+      font-variant-numeric:tabular-nums;">{now_str}</div>
+    <div style="font-size:0.65rem;color:rgba(255,255,255,0.3);">{now_full[:10]}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── JS Countdown timer ────────────────────────────────────────────────
+    if any_open and has_autorefresh:
+        st.components.v1.html(f"""
+<div id="rt-countdown" style="
+  font-size:0.72rem; color:rgba(255,255,255,0.35);
+  font-variant-numeric:tabular-nums; margin-bottom:4px;
+"></div>
+<script>
+(function() {{
+  var total = {refresh_sec};
+  var start = Date.now();
+  var label = '{"下次刷新" if lang_zh else "Next refresh"}';
+  function tick() {{
+    var elapsed = Math.floor((Date.now() - start) / 1000);
+    var left = Math.max(0, total - elapsed);
+    var el = document.getElementById('rt-countdown');
+    if (el) {{
+      var pct = Math.round((elapsed / total) * 100);
+      el.innerHTML = label + ' <b style="color:rgba(255,255,255,0.55);">' + left + 's</b>'
+        + ' <span style="display:inline-block;width:80px;height:3px;'
+        + 'background:rgba(255,255,255,0.08);border-radius:2px;vertical-align:middle;'
+        + 'margin-left:6px;overflow:hidden;">'
+        + '<span style="display:block;height:100%;width:' + pct + '%;'
+        + 'background:rgba(48,209,88,0.6);border-radius:2px;transition:width 0.9s linear;"></span>'
+        + '</span>';
+    }}
+    if (left > 0) setTimeout(tick, 950);
+  }}
+  tick();
+}})();
+</script>
+""", height=28)
 
     if not tickers:
-        st.info("請從側邊欄選擇至少一個標的。" if lang_zh else "Select at least one ticker from the sidebar to begin.")
+        st.info("請從側邊欄選擇至少一個標的。" if lang_zh else "Select at least one ticker from the sidebar.")
         return
 
-    btn_col, _ = st.columns([1, 4])
+    # ── Refresh button ────────────────────────────────────────────────────
+    btn_col, _ = st.columns([1, 5])
     with btn_col:
-        if st.button("🔄 " + ("立即刷新" if lang_zh else "Refresh now"), key="realtime_manual_refresh"):
+        if st.button("🔄 " + ("立即刷新" if lang_zh else "Refresh"), key="realtime_manual_refresh"):
             try:
                 fetch_rt_live_quotes.clear()
                 fetch_intraday_data.clear()
+                fetch_twse_realtime.clear()
             except Exception:
                 st.cache_data.clear()
             st.rerun()
 
-    st.divider()
-
+    # ── Fetch data ────────────────────────────────────────────────────────
     ticker_tuple = tuple(tickers)
-    with st.spinner("載入報價中…" if lang_zh else "Loading prices…"):
+    with st.spinner("載入中…" if lang_zh else "Loading…"):
         live_quotes   = fetch_rt_live_quotes(ticker_tuple)
         intraday_data = fetch_intraday_data(list(tickers))
+
+    # Persist live quotes so alert sidebar can read current prices
+    st.session_state["rt_last_live_quotes"] = live_quotes
 
     # ── Fire price alerts ─────────────────────────────────────────────────
     _rt_check_alerts(live_quotes, lang_zh)
 
-    # ── Pinned volume overview (always shown at top) ──────────────────────
+    # ── Market breadth strip ──────────────────────────────────────────────
+    _render_rt_breadth_strip(tickers, live_quotes, lang_zh)
+
+    # ── Volume overview ───────────────────────────────────────────────────
     render_rt_volume_overview(tickers, live_quotes, intraday_data, lang_zh)
 
     # ── Price cards ───────────────────────────────────────────────────────
     cards_per_row = {"Standard": 2, "Advanced": 3, "Expert": 4}.get(layout_mode, 3)
-
     for row_start in range(0, len(tickers), cards_per_row):
         row_tickers = tickers[row_start: row_start + cards_per_row]
         cols = st.columns(len(row_tickers), gap="medium")
@@ -4384,6 +4581,674 @@ def render_supply_chain_focus_section(config_key: str, lens_meta: dict | None = 
     )
 
 
+# US ticker → company name map for display in MEO + RT panels
+RT_US_NAME_MAP: dict = {
+    "NVDA": "NVIDIA", "AAPL": "Apple", "AMD": "AMD", "AMZN": "Amazon",
+    "INTC": "Intel", "MU": "Micron", "MSFT": "Microsoft", "TSLA": "Tesla",
+    "META": "Meta", "GOOG": "Alphabet", "GOOGL": "Alphabet",
+    "AVGO": "Broadcom", "QCOM": "Qualcomm",
+    "SPY": "S&P 500", "QQQ": "Nasdaq", "SMH": "Semi ETF", "SOXX": "Semi ETF",
+    "GLD": "Gold ETF", "TLT": "Bond ETF",
+}
+
+
+def render_market_entry_overall_view(
+    daily_data,
+    intraday_data,
+    tickers,
+    lens_meta,
+    lang_zh,
+):
+    """
+    Today's Market Entry Overall View — top-of-dashboard scoreboard.
+    Wrapped in try/except so it never breaks the parent dashboard.
+    """
+    try:
+        _render_market_entry_overall_view_inner(
+            daily_data=daily_data,
+            intraday_data=intraday_data,
+            tickers=tickers,
+            lens_meta=lens_meta,
+            lang_zh=lang_zh,
+        )
+    except Exception as _meo_exc:
+        import traceback
+        st.warning(
+            ("[!] 今日市場入口總覽載入失敗" if lang_zh else "[!] Market entry overview failed")
+            + "\n\n" + str(_meo_exc)
+        )
+        with st.expander("詳細錯誤" if lang_zh else "Traceback", expanded=False):
+            st.code(traceback.format_exc(), language="python")
+
+
+def _render_market_entry_overall_view_inner(
+    daily_data,
+    intraday_data,
+    tickers,
+    lens_meta,
+    lang_zh,
+):
+    is_zh = lang_zh
+    now_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M")
+
+    # CSS (inline as string to avoid heredoc issues)
+    css = (
+        "<style>"
+        ".meo-shell{background:linear-gradient(135deg,rgba(8,16,38,0.98) 0%,rgba(4,8,22,1) 100%);"
+        "border:1px solid rgba(56,189,248,0.18);border-radius:22px;padding:22px 26px;"
+        "margin-bottom:22px;box-shadow:0 8px 40px rgba(0,0,0,0.5),inset 0 1px 0 rgba(56,189,248,0.1);"
+        "position:relative;overflow:hidden;}"
+        ".meo-shell::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);"
+        "width:60%;height:1px;background:linear-gradient(90deg,transparent,rgba(56,189,248,0.6),transparent);}"
+        ".meo-toptab{position:absolute;top:-1px;left:50%;transform:translateX(-50%);"
+        "background:linear-gradient(180deg,rgba(15,30,60,0.95) 0%,rgba(8,18,40,0.9) 100%);"
+        "border:1px solid rgba(56,189,248,0.3);border-top:none;border-radius:0 0 14px 14px;"
+        "padding:7px 22px 8px;display:flex;align-items:center;gap:10px;}"
+        ".meo-toptab-title{font-size:0.95rem;font-weight:800;color:rgba(255,255,255,0.9);letter-spacing:-0.01em;}"
+        ".meo-toptab-time{font-size:0.72rem;color:rgba(255,255,255,0.4);font-variant-numeric:tabular-nums;}"
+        ".meo-headline{font-size:1.55rem;font-weight:800;color:rgba(255,255,255,0.95);"
+        "letter-spacing:-0.01em;margin:14px 0 14px;}"
+        ".meo-summary-block{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);"
+        "border-radius:14px;padding:12px 16px;margin-bottom:12px;}"
+        ".meo-summary-label{font-size:0.85rem;font-weight:700;color:rgba(255,255,255,0.65);margin-bottom:6px;}"
+        ".meo-summary-list{font-size:0.74rem;color:rgba(255,255,255,0.5);line-height:1.7;padding-left:20px;margin:0;}"
+        ".meo-summary-list li{margin-bottom:2px;}"
+        ".meo-card{background:linear-gradient(180deg,rgba(15,22,42,0.85) 0%,rgba(10,16,32,0.95) 100%);"
+        "border:1px solid rgba(56,189,248,0.1);border-radius:14px;padding:16px 18px;height:100%;}"
+        ".meo-card-title{font-size:0.78rem;font-weight:700;color:rgba(255,255,255,0.55);"
+        "letter-spacing:0.02em;margin-bottom:6px;}"
+        ".meo-card-big{font-size:2.1rem;font-weight:800;color:rgba(255,255,255,0.95);"
+        "letter-spacing:-0.02em;line-height:1.1;font-variant-numeric:tabular-nums;}"
+        ".meo-card-foot{display:flex;justify-content:space-between;margin-top:10px;"
+        "font-size:0.65rem;color:rgba(255,255,255,0.4);}"
+        ".meo-card-hi{color:rgba(56,189,248,0.7);font-weight:600;}"
+        ".meo-card-lo{color:rgba(255,159,10,0.7);font-weight:600;}"
+        ".meo-rank-card{background:linear-gradient(180deg,rgba(15,22,42,0.85) 0%,rgba(10,16,32,0.95) 100%);"
+        "border:1px solid rgba(56,189,248,0.1);border-radius:14px;padding:14px 16px;height:100%;}"
+        ".meo-rank-card-title{font-size:0.92rem;font-weight:800;color:rgba(255,255,255,0.85);"
+        "letter-spacing:0.01em;margin-bottom:10px;padding-bottom:8px;"
+        "border-bottom:1px solid rgba(255,255,255,0.07);}"
+        ".meo-rank-row{display:flex;align-items:center;gap:10px;padding:6px 0;}"
+        ".meo-rank-num{font-size:0.78rem;font-weight:800;color:rgba(244,197,106,0.7);width:24px;flex-shrink:0;}"
+        ".meo-rank-label{flex:1;font-size:0.85rem;font-weight:600;color:rgba(255,255,255,0.85);"
+        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
+        ".meo-rank-pill{background:rgba(48,209,88,0.15);border:1px solid rgba(48,209,88,0.4);"
+        "color:#30d158;font-size:0.78rem;font-weight:700;padding:3px 10px;border-radius:14px;"
+        "font-variant-numeric:tabular-nums;}"
+        ".meo-rank-pill.down{background:rgba(255,59,48,0.15);border-color:rgba(255,59,48,0.4);color:#ff3b30;}"
+        ".meo-volume-row{display:grid;grid-template-columns:60px 1fr 50px 56px 64px;"
+        "align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04);}"
+        ".meo-volume-row:last-child{border-bottom:none;}"
+        ".meo-volume-tkr{font-size:0.72rem;font-weight:700;color:rgba(255,255,255,0.85);}"
+        ".meo-volume-name{font-size:0.55rem;color:rgba(255,255,255,0.3);}"
+        ".meo-volume-bars{display:flex;flex-direction:column;gap:2px;}"
+        ".meo-volume-bar{height:5px;border-radius:3px;background:rgba(255,255,255,0.05);overflow:hidden;}"
+        ".meo-volume-bar-fill{height:100%;border-radius:3px;}"
+        ".meo-volume-ratio{font-size:0.85rem;font-weight:800;text-align:right;font-variant-numeric:tabular-nums;}"
+        ".meo-volume-amount{font-size:0.72rem;color:rgba(255,255,255,0.5);text-align:right;font-variant-numeric:tabular-nums;}"
+        ".meo-supply-table{width:100%;border-collapse:collapse;margin-top:10px;}"
+        ".meo-supply-table th{font-size:0.68rem;font-weight:700;color:rgba(255,255,255,0.4);"
+        "text-align:left;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.07);}"
+        ".meo-supply-table td{font-size:0.78rem;padding:9px 12px;"
+        "border-bottom:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.7);}"
+        ".meo-supply-rank{font-size:0.7rem;font-weight:700;color:rgba(244,197,106,0.6);}"
+        ".meo-supply-name{font-weight:600;color:rgba(255,255,255,0.85);}"
+        ".meo-supply-bar-track{display:inline-block;width:120px;height:6px;"
+        "background:rgba(255,255,255,0.06);border-radius:3px;vertical-align:middle;"
+        "margin-left:8px;overflow:hidden;}"
+        ".meo-supply-bar-fill{display:block;height:100%;border-radius:3px;"
+        "background:linear-gradient(90deg,#38bdf8,#67e8f9);}"
+        ".meo-supply-pct{font-weight:700;color:#67e8f9;font-variant-numeric:tabular-nums;}"
+        ".meo-supply-avg{color:rgba(255,255,255,0.6);font-variant-numeric:tabular-nums;}"
+        ".meo-supply-leader-pct{font-weight:700;color:#30d158;font-variant-numeric:tabular-nums;}"
+        ".meo-editor-panel{background:linear-gradient(180deg,rgba(15,22,42,0.85) 0%,rgba(10,16,32,0.95) 100%);"
+        "border:1px solid rgba(244,197,106,0.18);border-radius:14px;padding:14px 16px;height:100%;}"
+        ".meo-editor-kicker{font-size:0.62rem;font-weight:800;letter-spacing:0.1em;"
+        "text-transform:uppercase;color:rgba(244,197,106,0.7);margin-bottom:6px;}"
+        ".meo-editor-title{font-size:0.92rem;font-weight:700;color:rgba(255,255,255,0.85);margin-bottom:10px;}"
+        ".meo-editor-note-title{font-size:0.85rem;font-weight:700;color:rgba(255,255,255,0.85);margin-bottom:4px;}"
+        ".meo-editor-note-body{font-size:0.7rem;color:rgba(255,255,255,0.45);line-height:1.55;margin-bottom:6px;}"
+        ".meo-editor-note-tags{display:flex;gap:4px;flex-wrap:wrap;}"
+        ".meo-editor-note-tag{font-size:0.6rem;color:rgba(56,189,248,0.7);"
+        "background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.18);"
+        "border-radius:5px;padding:2px 7px;}"
+        "</style>"
+    )
+    st.markdown(css, unsafe_allow_html=True)
+
+    # HEADER
+    eyebrow = "今日市場入口總覽" if is_zh else "Daily Market Entry"
+    title_t = "進場第一眼:市場摘要與核心數據" if is_zh else "Market Entry Overall View"
+    header_html = (
+        f'<div class="meo-shell">'
+        f'<div class="meo-toptab">'
+        f'<span class="meo-toptab-title">📊 {escape(eyebrow)}</span>'
+        f'<span class="meo-toptab-time">{now_str}</span>'
+        f'</div>'
+        f'<div class="meo-headline">{escape(title_t)}</div>'
+        f'</div>'
+    )
+    st.markdown(header_html, unsafe_allow_html=True)
+
+    # ROW 1: Auto Summary (left wide) + Editor (right narrow)
+    row1_left, row1_right = st.columns([3, 1], gap="medium")
+
+    with row1_left:
+        summary_lines = _meo_build_auto_summary(tickers, is_zh)
+        bullets = "".join("<li>" + escape(line) + "</li>" for line in summary_lines)
+        block_html = (
+            f'<div class="meo-summary-block">'
+            f'<div class="meo-summary-label">📋 {"摘要:系統自動整理" if is_zh else "Auto Summary"}</div>'
+            f'<ul class="meo-summary-list">{bullets}</ul>'
+            f'</div>'
+        )
+        st.markdown(block_html, unsafe_allow_html=True)
+
+    with row1_right:
+        notes = []
+        try:
+            notes = _load_editor_notes()
+        except Exception:
+            pass
+        if notes:
+            note = notes[0]
+            tags_html = "".join(
+                '<span class="meo-editor-note-tag">' + escape(tg) + '</span>'
+                for tg in note.get("tags", [])[:3]
+            )
+            panel_html = (
+                f'<div class="meo-editor-panel">'
+                f'<div class="meo-editor-kicker">{"版主特別分析" if is_zh else "Editor Note"}</div>'
+                f'<div class="meo-editor-note-title">{escape(note.get("title",""))}</div>'
+                f'<div class="meo-editor-note-body">{escape(note.get("body","")[:120])}</div>'
+                f'<div class="meo-editor-note-tags">{tags_html}</div>'
+                f'</div>'
+            )
+        else:
+            panel_html = (
+                f'<div class="meo-editor-panel">'
+                f'<div class="meo-editor-kicker">{"版主特別分析" if is_zh else "Editor Note"}</div>'
+                f'<div class="meo-editor-title">{"尚無版主筆記" if is_zh else "No editor notes yet"}</div>'
+                f'<div class="meo-editor-note-body">'
+                f'{"前往供應鏈或 ETF Dashboard 新增。" if is_zh else "Add notes from Supply Chain or ETF Dashboard."}'
+                f'</div></div>'
+            )
+        st.markdown(panel_html, unsafe_allow_html=True)
+
+    # ROW 2: TAIEX | TX | Volume Heat | Total Volume
+    taiex_data, tx_data = _meo_fetch_indices()
+
+    row2 = st.columns([1, 1, 1.4, 1.2], gap="medium")
+
+    with row2[0]:
+        _meo_render_index_card(taiex_data, ("台股加權指數" if is_zh else "TAIEX"), is_zh)
+    with row2[1]:
+        _meo_render_index_card(tx_data, ("台指期指數" if is_zh else "TX Futures"), is_zh)
+    with row2[2]:
+        _meo_render_volume_heat(tickers, intraday_data, is_zh)
+    with row2[3]:
+        _meo_render_total_volume(tickers, intraday_data, is_zh)
+
+    st.markdown("<div style='margin:10px 0'></div>", unsafe_allow_html=True)
+
+    # ROW 3: TW Tech TOP 5 | US Tech TOP 5 | Active ETF TOP 3
+    row3 = st.columns(3, gap="medium")
+
+    with row3[0]:
+        _meo_render_top_movers(
+            daily_data, intraday_data, tickers,
+            filter_fn=lambda t: is_taiwan_ticker(t),
+            title=("台股科技股漲幅 TOP 5" if is_zh else "TW TECH TOP 5"),
+            n=5, lang_zh=is_zh,
+        )
+    with row3[1]:
+        _meo_render_top_movers(
+            daily_data, intraday_data, tickers,
+            filter_fn=lambda t: not is_taiwan_ticker(t),
+            title=("美股科技股漲幅 TOP 5" if is_zh else "US TECH TOP 5"),
+            n=5, lang_zh=is_zh, use_us_names=True,
+        )
+    with row3[2]:
+        _meo_render_etf_top3(lens_meta, is_zh)
+
+    st.markdown("<div style='margin:10px 0'></div>", unsafe_allow_html=True)
+
+    # ROW 4: Supply chain comparison table
+    _meo_render_supply_chain_table(lens_meta, is_zh)
+
+
+def _meo_build_auto_summary(tickers, lang_zh):
+    bullets = []
+    try:
+        n_tw = sum(1 for t in tickers if is_taiwan_ticker(t))
+        n_us = len(tickers) - n_tw
+        if lang_zh:
+            bullets.append(f"目前監控 {len(tickers)} 檔標的(台股 {n_tw}、美股 {n_us})。")
+            bullets.append("請至下方供應鏈漲幅對比區查看整組強度排序。")
+            bullets.append("版主特別分析可在右側查看當日提醒;供應鏈與 ETF Dashboard 可新增筆記。")
+        else:
+            bullets.append(f"Tracking {len(tickers)} tickers ({n_tw} TW, {n_us} US).")
+            bullets.append("See supply chain strength ranking in the table below.")
+            bullets.append("Editor notes appear on the right; add new ones from Supply Chain or ETF Dashboard.")
+    except Exception:
+        bullets = ["—"]
+    return bullets
+
+
+def _meo_fetch_indices():
+    taiex = {"price": None, "high": None, "low": None, "spark": None}
+    tx    = {"price": None, "high": None, "low": None, "spark": None}
+    try:
+        snap = fetch_taiwan_futures_lab_snapshot()
+        if isinstance(snap, dict):
+            t_data = snap.get("taiex", {}) or {}
+            x_data = snap.get("tx", {}) or {}
+            taiex["price"] = _safe_float(t_data.get("price"))
+            taiex["high"]  = _safe_float(t_data.get("day_high"))
+            taiex["low"]   = _safe_float(t_data.get("day_low"))
+            tx["price"]    = _safe_float(x_data.get("price"))
+            tx["high"]     = _safe_float(x_data.get("day_high"))
+            tx["low"]      = _safe_float(x_data.get("day_low"))
+    except Exception:
+        pass
+    try:
+        gr_data = fetch_global_reference_data("1mo", "1d")
+        if gr_data is not None:
+            taiex_close = get_price_series(gr_data, "^TWII")
+            if taiex_close is not None and not taiex_close.empty:
+                taiex["spark"] = taiex_close.tail(30).tolist()
+                if taiex["price"] is None:
+                    taiex["price"] = float(taiex_close.iloc[-1])
+                if taiex["high"] is None:
+                    taiex["high"] = float(taiex_close.tail(30).max())
+                if taiex["low"] is None:
+                    taiex["low"] = float(taiex_close.tail(30).min())
+                if tx["spark"] is None:
+                    tx["spark"] = taiex["spark"]
+    except Exception:
+        pass
+    return taiex, tx
+
+
+def _meo_render_index_card(idx_data, title, lang_zh):
+    price = idx_data.get("price")
+    hi    = idx_data.get("high")
+    lo    = idx_data.get("low")
+    spark = idx_data.get("spark") or []
+
+    price_str = f"{price:,.2f}" if price else "—"
+    hi_str    = f"{hi:,.2f}"    if hi    else "—"
+    lo_str    = f"{lo:,.2f}"    if lo    else "—"
+
+    spark_svg = ""
+    if spark and len(spark) >= 2:
+        try:
+            mn, mx = min(spark), max(spark)
+            rng = mx - mn if mx > mn else 1
+            w, h = 280, 60
+            pts = " ".join(
+                f"{(i/(len(spark)-1))*w:.1f},{h - ((v - mn)/rng)*h:.1f}"
+                for i, v in enumerate(spark)
+            )
+            last_y = h - ((spark[-1] - mn) / rng) * h
+            spark_svg = (
+                f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
+                f'style="width:100%;height:60px;display:block;margin-top:6px;">'
+                f'<defs><linearGradient id="meo-spark-grad" x1="0" y1="0" x2="0" y2="1">'
+                f'<stop offset="0%" stop-color="rgba(56,189,248,0.4)"/>'
+                f'<stop offset="100%" stop-color="rgba(56,189,248,0)"/>'
+                f'</linearGradient></defs>'
+                f'<polyline points="0,{h} {pts} {w},{h}" fill="url(#meo-spark-grad)" stroke="none"/>'
+                f'<polyline points="{pts}" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linejoin="round"/>'
+                f'<circle cx="{w}" cy="{last_y:.1f}" r="3" fill="#38bdf8"/>'
+                f'</svg>'
+            )
+        except Exception:
+            spark_svg = ""
+
+    card_html = (
+        f'<div class="meo-card">'
+        f'<div class="meo-card-title">{escape(title)}</div>'
+        f'<div class="meo-card-big">{price_str}</div>'
+        f'{spark_svg}'
+        f'<div class="meo-card-foot">'
+        f'<span>{"最高" if lang_zh else "High"} <span class="meo-card-hi">{hi_str}</span></span>'
+        f'<span>{"最低" if lang_zh else "Low"} <span class="meo-card-lo">{lo_str}</span></span>'
+        f'</div></div>'
+    )
+    st.markdown(card_html, unsafe_allow_html=True)
+
+
+def _meo_render_volume_heat(tickers, intraday_data, lang_zh):
+    rows = []
+    for tkr in tickers[:8]:
+        try:
+            vd = _compute_volume_from_intraday(intraday_data, tkr)
+            if vd["today_vol"]:
+                rows.append({
+                    "ticker": tkr,
+                    "today_vol": vd["today_vol"],
+                    "avg_vol":   vd["avg_vol"],
+                    "vol_ratio": vd["vol_ratio"],
+                })
+        except Exception:
+            pass
+
+    rows.sort(key=lambda r: (r["vol_ratio"] or 0), reverse=True)
+    rows = rows[:5]
+
+    if not rows:
+        empty_html = (
+            f'<div class="meo-card">'
+            f'<div class="meo-card-title">📊 {"市場熱度交易量" if lang_zh else "Volume Heat"}</div>'
+            f'<div style="padding:30px 0;text-align:center;color:rgba(255,255,255,0.3);font-size:0.7rem;">'
+            f'{"資料載入中" if lang_zh else "Loading…"}</div></div>'
+        )
+        st.markdown(empty_html, unsafe_allow_html=True)
+        return
+
+    max_vol = max((r["today_vol"] or 0) for r in rows) or 1
+    max_avg = max((r["avg_vol"] or 0) for r in rows) or 1
+
+    rows_html = ""
+    for r in rows:
+        tkr   = r["ticker"]
+        today = r["today_vol"] or 0
+        avg   = r["avg_vol"] or 0
+        ratio = r["vol_ratio"]
+        ratio_str = f"{ratio:.1f}x" if ratio else "—"
+        ratio_color = "#67e8f9" if (ratio and ratio >= 1.0) else "#94a3b8"
+        today_pct = (today / max_vol) * 100
+        avg_pct   = (avg / max_avg) * 100 if max_avg else 0
+        today_str = _fmt_volume(today)
+        avg_str   = _fmt_volume(avg) if avg else "—"
+        lbl = display_ticker_label(tkr)
+        parts = lbl.split(" ", 1)
+        code = escape(parts[0])
+        name = escape(parts[1][:4]) if len(parts) > 1 else ""
+        rows_html += (
+            f'<div class="meo-volume-row">'
+            f'<div><div class="meo-volume-tkr">{code}</div>'
+            f'<div class="meo-volume-name">{name}</div></div>'
+            f'<div class="meo-volume-bars">'
+            f'<div class="meo-volume-bar"><div class="meo-volume-bar-fill" style="width:{today_pct:.1f}%;background:#67e8f9;"></div></div>'
+            f'<div class="meo-volume-bar"><div class="meo-volume-bar-fill" style="width:{avg_pct:.1f}%;background:#ef4444;"></div></div>'
+            f'</div>'
+            f'<div class="meo-volume-ratio" style="color:{ratio_color};">{ratio_str}</div>'
+            f'<div class="meo-volume-amount">{today_str}</div>'
+            f'<div class="meo-volume-amount" style="color:rgba(239,68,68,0.7);">{avg_str}</div>'
+            f'</div>'
+        )
+
+    panel_html = (
+        f'<div class="meo-card">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'
+        f'<div>'
+        f'<div class="meo-card-title">📊 {"市場熱度交易量" if lang_zh else "Volume Heat"}</div>'
+        f'<div style="font-size:0.62rem;color:rgba(255,255,255,0.3);">'
+        f'{"今日熱度 vs. 5日均量" if lang_zh else "Today vs. 5-day avg"}</div>'
+        f'</div>'
+        f'<div style="display:flex;gap:6px;">'
+        f'<span style="display:inline-flex;align-items:center;gap:3px;font-size:0.6rem;color:rgba(255,255,255,0.45);">'
+        f'<span style="width:7px;height:7px;border-radius:50%;background:#67e8f9;"></span>{"倍數" if lang_zh else "Today"}</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:3px;font-size:0.6rem;color:rgba(255,255,255,0.45);">'
+        f'<span style="width:7px;height:7px;border-radius:50%;background:#ef4444;"></span>{"5日均量" if lang_zh else "5d Avg"}</span>'
+        f'</div></div>'
+        f'{rows_html}</div>'
+    )
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+
+def _meo_render_total_volume(tickers, intraday_data, lang_zh):
+    total = 0
+    daily_totals = []
+    try:
+        for tkr in tickers[:20]:
+            try:
+                vd = _compute_volume_from_intraday(intraday_data, tkr)
+                if vd["today_vol"]:
+                    total += vd["today_vol"]
+            except Exception:
+                pass
+        if intraday_data is not None and not intraday_data.empty:
+            try:
+                vol_cols = [c for c in intraday_data.columns
+                            if (isinstance(c, tuple) and "Volume" in c)
+                            or (str(c).startswith("Volume"))]
+                if vol_cols:
+                    vol_df = intraday_data[vol_cols].copy()
+                    vol_df.index = pd.to_datetime(vol_df.index, utc=True).tz_convert(TW_TZ)
+                    daily = vol_df.groupby(vol_df.index.normalize()).sum().sum(axis=1)
+                    daily_totals = daily.tail(15).tolist()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    total_str = _fmt_volume(total) if total else "—"
+
+    bars_svg = ""
+    if daily_totals and len(daily_totals) >= 2:
+        try:
+            mx = max(daily_totals)
+            n = len(daily_totals)
+            w, h = 240, 80
+            bar_w = w / n * 0.7
+            gap = w / n * 0.3
+            bars = ""
+            for i, v in enumerate(daily_totals):
+                bh = (v / mx) * (h - 6) if mx > 0 else 0
+                x = i * (bar_w + gap)
+                y = h - bh
+                bars += f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" rx="1.5" fill="#38bdf8" opacity="0.85"/>'
+            bars_svg = (
+                f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
+                f'style="width:100%;height:80px;display:block;margin-top:8px;">'
+                f'{bars}</svg>'
+            )
+        except Exception:
+            pass
+
+    panel_html = (
+        f'<div class="meo-card">'
+        f'<div class="meo-card-title">📊 {"交易總額" if lang_zh else "Total Turnover"}</div>'
+        f'<div class="meo-card-big">{total_str}</div>'
+        f'{bars_svg}'
+        f'<div style="font-size:0.6rem;color:rgba(255,255,255,0.3);margin-top:6px;text-align:center;">'
+        f'{"近 15 日成交量" if lang_zh else "Last 15 days volume"}</div>'
+        f'</div>'
+    )
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+
+def _meo_render_top_movers(daily_data, intraday_data, tickers, filter_fn, title, n, lang_zh, use_us_names=False):
+    rows = []
+    for tkr in tickers:
+        try:
+            if not filter_fn(tkr):
+                continue
+            if is_taiwan_ticker(tkr):
+                snap = build_taiwan_display_price_snapshot(daily_data, intraday_data, tkr)
+                chg = coerce_float(snap.get("latest_move", pd.NA))
+            else:
+                isnap = get_intraday_snapshot(intraday_data, tkr)
+                chg = coerce_float(isnap.get("change_pct", pd.NA))
+                if pd.isna(chg):
+                    series = get_price_series(daily_data, tkr)
+                    if series is not None and len(series) >= 2:
+                        chg = float((series.iloc[-1] / series.iloc[-2] - 1) * 100)
+            if pd.notna(chg):
+                rows.append({"ticker": tkr, "chg": float(chg)})
+        except Exception:
+            pass
+    rows.sort(key=lambda r: r["chg"], reverse=True)
+    rows = rows[:n]
+
+    rows_html = ""
+    if not rows:
+        rows_html = (
+            f'<div style="padding:14px 0;text-align:center;color:rgba(255,255,255,0.3);font-size:0.7rem;">'
+            f'{"資料載入中" if lang_zh else "Loading…"}</div>'
+        )
+    else:
+        for i, r in enumerate(rows, 1):
+            tkr = r["ticker"]
+            chg = r["chg"]
+            lbl = display_ticker_label(tkr)
+            parts = lbl.split(" ", 1)
+            code = escape(parts[0])
+            name = escape(parts[1]) if len(parts) > 1 else ""
+            if use_us_names and not name:
+                name = escape(RT_US_NAME_MAP.get(tkr.upper(), ""))
+            pill_cls = "meo-rank-pill" if chg >= 0 else "meo-rank-pill down"
+            chg_str = f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%"
+            rows_html += (
+                f'<div class="meo-rank-row">'
+                f'<div class="meo-rank-num">#{i}</div>'
+                f'<div class="meo-rank-label">{code} {name}</div>'
+                f'<div class="{pill_cls}">{chg_str}</div>'
+                f'</div>'
+            )
+    panel_html = (
+        f'<div class="meo-rank-card">'
+        f'<div class="meo-rank-card-title">{escape(title)}</div>'
+        f'{rows_html}</div>'
+    )
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+
+def _meo_render_etf_top3(lens_meta, lang_zh):
+    rows_html = ""
+    try:
+        etf_tickers = filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS)
+        if etf_tickers and lens_meta:
+            etf_daily    = fetch_daily_data(etf_tickers, lens_meta["period"], lens_meta["interval"])
+            etf_intraday = fetch_intraday_data(etf_tickers)
+            etf_bundles = []
+            for tkr in etf_tickers[:6]:
+                try:
+                    b = collect_ticker_context(etf_daily, etf_intraday, tkr, news_limit=2, lens_meta=lens_meta)
+                    if b:
+                        etf_bundles.append(b)
+                except Exception:
+                    pass
+            etf_bundles.sort(
+                key=lambda b: float(compute_lens_winner_fields(b, lens_meta).get("lens_score", 0)),
+                reverse=True,
+            )
+            for i, bundle in enumerate(etf_bundles[:3], 1):
+                tkr = bundle["ticker"]
+                snap = build_taiwan_display_price_snapshot(etf_daily, etf_intraday, tkr)
+                chg = coerce_float(snap.get("latest_move", pd.NA))
+                lbl = display_ticker_label(tkr).split(" ", 1)
+                code = escape(lbl[0])
+                name = escape(lbl[1][:14]) if len(lbl) > 1 else ""
+                pill_cls = "meo-rank-pill" if (pd.notna(chg) and chg >= 0) else "meo-rank-pill down"
+                chg_str = (f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%") if pd.notna(chg) else "—"
+                rows_html += (
+                    f'<div class="meo-rank-row">'
+                    f'<div class="meo-rank-num">#{i}</div>'
+                    f'<div class="meo-rank-label">{code} {name}</div>'
+                    f'<div class="{pill_cls}">{chg_str}</div>'
+                    f'</div>'
+                )
+    except Exception:
+        pass
+
+    if not rows_html:
+        rows_html = (
+            f'<div style="padding:14px 0;text-align:center;color:rgba(255,255,255,0.3);font-size:0.7rem;">'
+            f'{"資料載入中" if lang_zh else "Loading…"}</div>'
+        )
+
+    title = "主動式 ETF 焦點 TOP 3" if lang_zh else "ACTIVE ETF TOP 3"
+    panel_html = (
+        f'<div class="meo-rank-card">'
+        f'<div class="meo-rank-card-title">{escape(title)}</div>'
+        f'{rows_html}</div>'
+    )
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+
+def _meo_render_supply_chain_table(lens_meta, lang_zh):
+    rows = []
+    try:
+        all_keys = list(SUPPLY_CHAIN_FOCUS_CONFIGS.keys())
+        rows = build_supply_chain_overview_rows(all_keys, lens_meta=lens_meta, force_refresh=False)
+    except Exception:
+        pass
+    rows = rows[:5] if rows else []
+
+    if not rows:
+        empty_html = (
+            f'<div class="meo-rank-card">'
+            f'<div class="meo-rank-card-title">📊 {"供應鏈漲幅對比總控" if lang_zh else "Supply Chain Comparison"}</div>'
+            f'<div style="padding:20px 0;text-align:center;color:rgba(255,255,255,0.3);font-size:0.7rem;">'
+            f'{"資料載入中" if lang_zh else "Loading…"}</div></div>'
+        )
+        st.markdown(empty_html, unsafe_allow_html=True)
+        return
+
+    max_move = max((coerce_float(r.get("aggregate_move_sum", 0)) or 0) for r in rows) or 1
+
+    table_rows = ""
+    leader_rows = ""
+    for i, r in enumerate(rows, 1):
+        title_l = str(r.get("title", "—"))
+        move = coerce_float(r.get("aggregate_move_sum", 0)) or 0
+        avg  = move / max(1, int(coerce_float(r.get("total", 1)) or 1))
+        bar_pct = (abs(move) / max_move) * 100
+        leader_name = str(r.get("leader_name", "—"))
+        leader_chg = coerce_float(r.get("leader_move", 0)) or 0
+        table_rows += (
+            f'<tr>'
+            f'<td><span class="meo-supply-rank">#{i:02d}</span></td>'
+            f'<td><span class="meo-supply-name">{escape(title_l)}</span></td>'
+            f'<td><span class="meo-supply-pct">+{move:.2f}%</span>'
+            f'<span class="meo-supply-bar-track">'
+            f'<span class="meo-supply-bar-fill" style="width:{bar_pct:.1f}%;"></span></span></td>'
+            f'<td><span class="meo-supply-avg">+{avg:.2f}%</span></td>'
+            f'</tr>'
+        )
+        leader_rows += (
+            f'<tr>'
+            f'<td><span class="meo-supply-rank">#{i:02d}</span></td>'
+            f'<td><span class="meo-supply-name">{escape(leader_name)}</span></td>'
+            f'<td><span class="meo-supply-leader-pct">+{leader_chg:.2f}%</span></td>'
+            f'</tr>'
+        )
+
+    snapshot_time = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M")
+    chips = (
+        f'<span style="font-size:0.65rem;color:rgba(255,255,255,0.45);margin-right:14px;">'
+        f'{len(rows)} {"個供應鏈" if lang_zh else "chains"}</span>'
+        f'<span style="font-size:0.65rem;color:rgba(255,255,255,0.3);">'
+        f'{"快照" if lang_zh else "Snapshot"} {snapshot_time}</span>'
+    )
+
+    panel_html = (
+        f'<div class="meo-rank-card" style="padding:18px 22px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+        f'<div class="meo-rank-card-title" style="border-bottom:none;padding-bottom:0;margin-bottom:0;">'
+        f'📊 {"供應鏈漲幅對比總控" if lang_zh else "Supply Chain Strength Compare"}</div>'
+        f'<div>{chips}</div></div>'
+        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">'
+        f'<table class="meo-supply-table"><thead><tr>'
+        f'<th style="width:50px;">{"排序" if lang_zh else "Rank"}</th>'
+        f'<th>{"供應鏈" if lang_zh else "Chain"}</th>'
+        f'<th>{"整體漲幅" if lang_zh else "Total Move"}</th>'
+        f'<th style="width:80px;">{"平均漲幅" if lang_zh else "Avg"}</th>'
+        f'</tr></thead><tbody>{table_rows}</tbody></table>'
+        f'<table class="meo-supply-table"><thead><tr>'
+        f'<th style="width:50px;">#</th>'
+        f'<th>{"最強一檔個股" if lang_zh else "Strongest Stock"}</th>'
+        f'<th style="width:90px;">{"最強一檔漲幅" if lang_zh else "Move %"}</th>'
+        f'</tr></thead><tbody>{leader_rows}</tbody></table>'
+        f'</div></div>'
+    )
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+
 def render_general_market_dashboard_layout(
     daily_data: pd.DataFrame,
     intraday_data: pd.DataFrame | None,
@@ -4395,6 +5260,15 @@ def render_general_market_dashboard_layout(
     global_reference_quotes = fetch_live_reference_quotes(tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES))
     global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
     lang_zh = get_lang() == "繁體中文"
+
+    # ── 今日市場入口總覽 (Market Entry Overall View) ────────────────────────
+    render_market_entry_overall_view(
+        daily_data=daily_data,
+        intraday_data=intraday_data,
+        tickers=tickers,
+        lens_meta=lens_meta,
+        lang_zh=lang_zh,
+    )
 
     render_dashboard_layout_intro(layout_mode, "General Market", tickers)
     render_layout_flow_cards(layout_mode, "General Market")
@@ -21357,6 +22231,16 @@ def render_active_etf_lab_dashboard(
 
     inject_active_etf_tracker_css()
 
+    # ── 進場第一眼：市場摘要與版主觀點 ────────────────────────────────────────
+    render_market_first_read_desk(
+        daily_data=daily_data,
+        intraday_data=intraday_data,
+        tickers=active_etf_tickers,
+        selected_keys=[],          # no supply-chain groups in ETF mode
+        lens_meta=lens_meta,
+        lang_zh=lang_zh,
+    )
+
     bundles_cache: list[dict] | None = None
 
     def _ensure_bundles() -> list[dict]:
@@ -22312,6 +23196,471 @@ def render_supply_chain_sidebar_selector(selected_lang: str) -> tuple[list[str],
     return tickers, selected_groups
 
 
+
+# =============================================================================
+# 進場第一眼：市場摘要與版主觀點
+# =============================================================================
+
+_EDITOR_NOTES_FILE = Path(__file__).parent / "editor_notes.json"
+
+def _load_editor_notes() -> list[dict]:
+    try:
+        return json.loads(_EDITOR_NOTES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+def _save_editor_notes(notes: list[dict]) -> None:
+    try:
+        _EDITOR_NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _taiwan_top5_from_data(daily_data, intraday_data, tickers: list[str]) -> list[dict]:
+    """Pick top-5 Taiwan tickers by today's % change."""
+    rows = []
+    tw_tickers = [t for t in tickers if is_taiwan_ticker(t)]
+    for tkr in tw_tickers:
+        snap = build_taiwan_display_price_snapshot(daily_data, intraday_data, tkr)
+        chg  = coerce_float(snap.get("latest_move", pd.NA))
+        if pd.notna(chg):
+            rows.append({"ticker": tkr, "change_pct": chg,
+                         "source": str(snap.get("price_source", ""))})
+    rows.sort(key=lambda r: r["change_pct"], reverse=True)
+    return rows[:5]
+
+
+def render_market_first_read_desk(
+    daily_data,
+    intraday_data,
+    tickers: list[str],
+    selected_keys: list[str],
+    lens_meta: dict | None,
+    lang_zh: bool,
+) -> None:
+    """
+    進場第一眼：市場摘要與版主觀點
+    三欄自動摘要（台股 TOP 5 / 最強供應鏈 / ETF 焦點）+ 版主筆記管理。
+    Self-contained: fetches its own ETF data so it works regardless of
+    what daily_data the caller provides.
+    """
+    try:
+        _render_market_first_read_desk_inner(
+            daily_data=daily_data,
+            intraday_data=intraday_data,
+            tickers=tickers,
+            selected_keys=selected_keys,
+            lens_meta=lens_meta,
+            lang_zh=lang_zh,
+        )
+    except Exception as _frd_exc:
+        # Show full error so the user can report exactly what went wrong.
+        # Use st.warning so the message is visible (not just a small caption).
+        import traceback
+        tb = traceback.format_exc()
+        st.warning(
+            ("⚠️ 進場第一眼載入失敗" if lang_zh else "⚠️ First-read desk failed to load")
+            + f"\n\n```\n{_frd_exc}\n```"
+        )
+        with st.expander("詳細錯誤訊息" if lang_zh else "Show traceback", expanded=False):
+            st.code(tb, language="python")
+
+
+def _render_market_first_read_desk_inner(
+    daily_data,
+    intraday_data,
+    tickers: list[str],
+    selected_keys: list[str],
+    lens_meta: dict | None,
+    lang_zh: bool,
+) -> None:
+    """
+    Flat (non-nested) layout to avoid Streamlit nested-columns issues.
+    Renders the entire first-read desk inside a SINGLE st.columns([3,2]) call;
+    the three summary panels are rendered as side-by-side HTML cards inside
+    the left column instead of a second nested st.columns(3).
+    """
+    now_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M")
+    is_zh   = lang_zh
+
+    # ── Independent ETF data fetch (so this works in any dashboard) ───────
+    etf_ticker_list = filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS)
+    etf_daily, etf_intraday = None, None
+    if etf_ticker_list and lens_meta:
+        try:
+            etf_daily    = fetch_daily_data(etf_ticker_list, lens_meta["period"], lens_meta["interval"])
+            etf_intraday = fetch_intraday_data(etf_ticker_list)
+        except Exception:
+            pass
+    _etf_data  = etf_daily    if etf_daily    is not None else daily_data
+    _etf_intra = etf_intraday if etf_intraday is not None else intraday_data
+
+    # ── CSS ───────────────────────────────────────────────────────────────
+    st.markdown("""
+<style>
+.frd-shell {
+  background: linear-gradient(135deg, rgba(15,25,50,0.97) 0%, rgba(10,16,38,0.99) 100%);
+  border: 1px solid rgba(56,189,248,0.12);
+  border-radius: 20px; padding: 22px 24px 18px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(56,189,248,0.08);
+}
+.frd-eyebrow { font-size:0.68rem; font-weight:800; letter-spacing:0.12em;
+  color:rgba(56,189,248,0.7); text-transform:uppercase; margin-bottom:6px; }
+.frd-title { font-size:1.45rem; font-weight:800; color:rgba(255,255,255,0.92);
+  letter-spacing:-0.01em; line-height:1.2; margin-bottom:4px; }
+.frd-copy  { font-size:0.74rem; color:rgba(255,255,255,0.4); margin-bottom:6px; }
+.frd-header-row { display:flex; justify-content:space-between; align-items:flex-start; }
+.frd-updated-pill { font-size:0.62rem; color:rgba(255,255,255,0.4);
+  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.07);
+  border-radius:20px; padding:3px 10px; white-space:nowrap;
+  font-variant-numeric:tabular-nums; }
+.frd-summary-bar { background:rgba(255,255,255,0.02);
+  border:1px solid rgba(255,255,255,0.06); border-radius:14px;
+  padding:10px 14px 8px; margin-bottom:10px; }
+.frd-summary-label { font-size:0.85rem; font-weight:700; color:rgba(255,255,255,0.6); margin-bottom:2px; }
+.frd-summary-sub   { font-size:0.72rem; color:rgba(255,255,255,0.35); }
+
+.frd-3col { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
+.frd-panel {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 14px;
+  padding: 16px 16px;
+  min-height: 320px;
+}
+.frd-panel-kicker { font-size:0.72rem; font-weight:800; letter-spacing:0.08em;
+  text-transform:uppercase; color:rgba(56,189,248,0.6); margin-bottom:6px; }
+.frd-panel-title { font-size:1.0rem; font-weight:700;
+  color:rgba(255,255,255,0.85); margin-bottom:10px; }
+.frd-rank-row {
+  display:flex; align-items:center; gap:10px;
+  padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.05);
+}
+.frd-rank-row:last-child { border-bottom:none; }
+.frd-rank-num { font-size:0.78rem; font-weight:700; color:rgba(56,189,248,0.6);
+  width:18px; flex-shrink:0; }
+.frd-rank-name { font-size:0.85rem; font-weight:600; color:rgba(255,255,255,0.85);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.frd-rank-sub  { font-size:0.7rem; color:rgba(255,255,255,0.4); }
+.frd-rank-chg.up   { font-size:0.85rem; font-weight:700; color:#ff3b30; }
+.frd-rank-chg.down { font-size:0.85rem; font-weight:700; color:#30d158; }
+.frd-rank-chg.flat { font-size:0.85rem; color:#8e8e93; }
+.frd-chain-big { font-size:2.0rem; font-weight:800; letter-spacing:-0.02em;
+  margin:6px 0 2px; }
+.frd-chain-sub { font-size:0.78rem; color:rgba(255,255,255,0.55); line-height:1.45; }
+
+.frd-editor-panel { background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.07); border-radius:14px;
+  padding:14px 16px; min-height:280px; }
+.frd-editor-kicker { font-size:0.58rem; font-weight:800; letter-spacing:0.1em;
+  text-transform:uppercase; color:rgba(244,197,106,0.7); margin-bottom:6px; }
+.frd-editor-title { font-size:0.86rem; font-weight:700;
+  color:rgba(255,255,255,0.85); margin-bottom:12px; }
+.frd-note-card { background:rgba(255,255,255,0.03);
+  border:1px solid rgba(255,255,255,0.07); border-radius:10px;
+  padding:10px 12px; margin-bottom:8px; }
+.frd-note-header { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+.frd-note-type { font-size:0.56rem; font-weight:800; letter-spacing:0.08em;
+  text-transform:uppercase; color:rgba(255,255,255,0.35); }
+.frd-note-conv-h { font-size:0.56rem; font-weight:700; padding:1px 6px;
+  border-radius:4px; background:rgba(255,59,48,0.15); color:#ff3b30;
+  border:1px solid rgba(255,59,48,0.3); }
+.frd-note-conv-m { font-size:0.56rem; font-weight:700; padding:1px 6px;
+  border-radius:4px; background:rgba(255,159,10,0.15); color:#ff9f0a;
+  border:1px solid rgba(255,159,10,0.3); }
+.frd-note-conv-l { font-size:0.56rem; font-weight:700; padding:1px 6px;
+  border-radius:4px; background:rgba(142,142,147,0.15); color:#8e8e93;
+  border:1px solid rgba(142,142,147,0.3); }
+.frd-note-title { font-size:0.78rem; font-weight:700;
+  color:rgba(255,255,255,0.82); margin-bottom:3px; }
+.frd-note-body  { font-size:0.68rem; color:rgba(255,255,255,0.45); line-height:1.5; }
+.frd-note-tags  { display:flex; gap:4px; flex-wrap:wrap; margin-top:5px; }
+.frd-note-tag   { font-size:0.56rem; color:rgba(56,189,248,0.6);
+  background:rgba(56,189,248,0.07); border:1px solid rgba(56,189,248,0.15);
+  border-radius:4px; padding:1px 6px; }
+</style>
+""", unsafe_allow_html=True)
+
+    # ── Header (no nested columns; pure HTML) ─────────────────────────────
+    eyebrow_t = "今日情報專欄" if is_zh else "Daily Intelligence"
+    title_t   = "進場第一眼：市場摘要與版主觀點" if is_zh else "Market First-Read Desk"
+    copy_t    = ("自動摘要會整合台股漲幅、最強供應鏈與主動式 ETF 焦點；"
+                 "版主分析則放你的額外判讀，讓使用者一來先讀重點。"
+                 if is_zh else
+                 "Auto brief ranks Taiwan movers, the strongest supply-chain group, "
+                 "and active ETF focus names; editor notes keep your extra analysis visible at the top.")
+    upd_t = ("更新" if is_zh else "Updated") + " " + now_str
+
+    st.markdown(f"""
+<div class="frd-shell">
+  <div class="frd-header-row">
+    <div style="flex:1; min-width:0;">
+      <div class="frd-eyebrow">{eyebrow_t}</div>
+      <div class="frd-title">{escape(title_t)}</div>
+      <div class="frd-copy">{escape(copy_t)}</div>
+    </div>
+    <div class="frd-updated-pill">{escape(upd_t)}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Main content: SINGLE layer of st.columns([3,2]) ───────────────────
+    left_col, right_col = st.columns([3, 2], gap="medium")
+
+    # ╔═══════════════════════════════════════════════════════════════════╗
+    # ║ LEFT COLUMN — auto summary (3 panels rendered as ONE HTML grid)   ║
+    # ╚═══════════════════════════════════════════════════════════════════╝
+    with left_col:
+        # Panel 1: Taiwan Top 5 — build HTML
+        try:
+            top5 = _taiwan_top5_from_data(daily_data, intraday_data, tickers)
+        except Exception:
+            top5 = []
+
+        p1_rows = ""
+        for i, row in enumerate(top5, 1):
+            chg  = row["change_pct"]
+            lbl  = display_ticker_label(row["ticker"])
+            parts = lbl.split(" ", 1)
+            code  = escape(parts[0])
+            name  = escape(parts[1]) if len(parts) > 1 else ""
+            sub   = escape(row["ticker"]) + (" · live" if "intraday" in row.get("source", "") else "")
+            if chg > 0:
+                cls, s = "up", f"+{chg:.2f}%"
+            elif chg < 0:
+                cls, s = "down", f"{chg:.2f}%"
+            else:
+                cls, s = "flat", "0.00%"
+            p1_rows += (
+                f'<div class="frd-rank-row">'
+                f'<div class="frd-rank-num">{i}</div>'
+                f'<div style="flex:1;overflow:hidden;">'
+                f'<div class="frd-rank-name">{code} {name}</div>'
+                f'<div class="frd-rank-sub">{sub}</div></div>'
+                f'<div class="frd-rank-chg {cls}">{s}</div>'
+                f'</div>'
+            )
+        if not p1_rows:
+            p1_rows = f'<div class="frd-rank-sub" style="padding:8px 0;">{"資料載入中" if is_zh else "Loading…"}</div>'
+
+        p1_html = (
+            f'<div class="frd-panel">'
+            f'<div class="frd-panel-kicker">{"台股漲幅 TOP 5" if is_zh else "TW MOVERS TOP 5"}</div>'
+            f'<div class="frd-panel-title">{"目前範圍內最強五檔" if is_zh else "Fastest movers in scope"}</div>'
+            f'{p1_rows}'
+            f'</div>'
+        )
+
+        # Panel 2: Strongest Supply Chain
+        try:
+            chain_rows = (
+                build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=False)
+                if selected_keys else []
+            )
+        except Exception:
+            chain_rows = []
+
+        if chain_rows:
+            leader      = chain_rows[0]
+            move        = coerce_float(leader.get("aggregate_move_sum", 0)) or 0.0
+            title_l     = str(leader.get("title", "—"))
+            risers      = str(leader.get("risers", "—"))
+            total_c     = str(leader.get("total", "—"))
+            leader_name = str(leader.get("leader_name", ""))
+            leader_chg  = coerce_float(leader.get("leader_move"))
+            move_color  = "#ff3b30" if move > 0 else "#30d158" if move < 0 else "#8e8e93"
+            move_str    = f"+{move:.2f}%" if move > 0 else f"{move:.2f}%"
+
+            p2_sub = ""
+            for i, row in enumerate(chain_rows[:3], 1):
+                m  = coerce_float(row.get("aggregate_move_sum", 0)) or 0
+                mc = "#ff3b30" if m > 0 else "#30d158" if m < 0 else "#8e8e93"
+                ms = f"+{m:.2f}%" if m > 0 else f"{m:.2f}%"
+                p2_sub += (
+                    f'<div class="frd-rank-row">'
+                    f'<div class="frd-rank-num">{i}</div>'
+                    f'<div style="flex:1;overflow:hidden;">'
+                    f'<div class="frd-rank-name">{escape(str(row.get("title",""))[:18])}</div>'
+                    f'<div class="frd-rank-sub">{escape(str(row.get("leader_name","")))}</div>'
+                    f'</div>'
+                    f'<div class="frd-rank-chg" style="color:{mc};font-size:0.85rem;font-weight:700;">{ms}</div>'
+                    f'</div>'
+                )
+            leader_chg_str = (
+                f"+{leader_chg:.2f}%" if pd.notna(leader_chg) and leader_chg > 0 else
+                (f"{leader_chg:.2f}%" if pd.notna(leader_chg) and leader_chg < 0 else "")
+            )
+            p2_html = (
+                f'<div class="frd-panel">'
+                f'<div class="frd-panel-kicker">{"最強供應鏈" if is_zh else "STRONGEST CHAIN"}</div>'
+                f'<div class="frd-panel-title">{escape(title_l[:20])}</div>'
+                f'<div class="frd-chain-big" style="color:{move_color};">{move_str}</div>'
+                f'<div class="frd-chain-sub">{escape(risers)} / {escape(total_c)} '
+                f'{"檔上漲" if is_zh else "risers"} · {"領先" if is_zh else "Leader"} '
+                f'{escape(leader_name)} {leader_chg_str}</div>'
+                f'<div style="margin-top:8px;">{p2_sub}</div>'
+                f'</div>'
+            )
+        else:
+            no_chain = (
+                "請先選擇供應鏈群組" if is_zh else "Select supply chain groups first"
+            )
+            p2_html = (
+                f'<div class="frd-panel">'
+                f'<div class="frd-panel-kicker">{"最強供應鏈" if is_zh else "STRONGEST CHAIN"}</div>'
+                f'<div class="frd-panel-title">{"供應鏈資料" if is_zh else "Chain data"}</div>'
+                f'<div class="frd-chain-sub" style="padding:8px 0;">{no_chain}</div>'
+                f'</div>'
+            )
+
+        # Panel 3: Active ETF Top 3
+        etf_rows_html = ""
+        try:
+            etfs = filter_active_etf_tickers(ACTIVE_ETF_QUICK_PICK_SYMBOLS)
+            if etfs and _etf_data is not None:
+                etf_bundles = []
+                for tkr in etfs[:6]:
+                    try:
+                        b = collect_ticker_context(_etf_data, _etf_intra, tkr, news_limit=3, lens_meta=lens_meta)
+                        if b:
+                            etf_bundles.append(b)
+                    except Exception:
+                        pass
+                etf_bundles.sort(
+                    key=lambda b: float(compute_lens_winner_fields(b, lens_meta).get("lens_score", 0)),
+                    reverse=True,
+                )
+                for i, bundle in enumerate(etf_bundles[:3], 1):
+                    tkr   = bundle["ticker"]
+                    score = float(compute_lens_winner_fields(bundle, lens_meta).get("lens_score", 0))
+                    snap  = build_taiwan_display_price_snapshot(_etf_data, _etf_intra, tkr)
+                    chg   = coerce_float(snap.get("latest_move", pd.NA))
+                    trend = bundle["analysis"].get("trend", "—")
+                    lbl   = display_ticker_label(tkr).split(" ", 1)
+                    code  = escape(lbl[0])
+                    name  = escape(lbl[1]) if len(lbl) > 1 else ""
+                    chg_c = "#ff3b30" if pd.notna(chg) and chg > 0 else "#30d158" if pd.notna(chg) and chg < 0 else "#8e8e93"
+                    chg_s = (f"+{chg:.2f}%" if chg > 0 else f"{chg:.2f}%") if pd.notna(chg) else "—"
+                    etf_rows_html += (
+                        f'<div class="frd-rank-row">'
+                        f'<div class="frd-rank-num">{i}</div>'
+                        f'<div style="flex:1;overflow:hidden;">'
+                        f'<div class="frd-rank-name">{code} {name[:12]}</div>'
+                        f'<div class="frd-rank-sub">{escape(tkr)} · {escape(str(trend)[:14])}</div>'
+                        f'</div>'
+                        f'<div style="text-align:right;">'
+                        f'<div class="frd-rank-chg" style="color:{chg_c};font-size:0.85rem;font-weight:700;">{chg_s}</div>'
+                        f'<div class="frd-rank-sub">{score:.1f}</div>'
+                        f'</div>'
+                        f'</div>'
+                    )
+        except Exception:
+            etf_rows_html = ""
+
+        if not etf_rows_html:
+            etf_rows_html = f'<div class="frd-rank-sub" style="padding:8px 0;">{"資料載入中" if is_zh else "Loading…"}</div>'
+
+        p3_html = (
+            f'<div class="frd-panel">'
+            f'<div class="frd-panel-kicker">{"主動式 ETF 焦點 TOP 3" if is_zh else "ACTIVE ETF TOP 3"}</div>'
+            f'<div class="frd-panel-title">{"最受矚目的三檔" if is_zh else "Attention score leaders"}</div>'
+            f'{etf_rows_html}'
+            f'</div>'
+        )
+
+        # Combine all 3 panels into single HTML grid (no nested st.columns)
+        st.markdown(f"""
+<div class="frd-summary-bar">
+  <div class="frd-summary-label">{"摘要：系統自動整理" if is_zh else "Auto Market Summary"}</div>
+  <div class="frd-summary-sub">{"使用目前 Dashboard 資料與已建立快照產生。" if is_zh else "Generated from current dashboard data and saved snapshots."}</div>
+</div>
+<div class="frd-3col">{p1_html}{p2_html}{p3_html}</div>
+""", unsafe_allow_html=True)
+
+    # ╔═══════════════════════════════════════════════════════════════════╗
+    # ║ RIGHT COLUMN — editor notes                                       ║
+    # ╚═══════════════════════════════════════════════════════════════════╝
+    with right_col:
+        try:
+            saved_notes = _load_editor_notes()
+        except Exception:
+            saved_notes = []
+        if "editor_notes" not in st.session_state:
+            st.session_state["editor_notes"] = saved_notes
+        notes = st.session_state["editor_notes"]
+
+        st.markdown(f"""
+<div class="frd-editor-panel">
+  <div class="frd-editor-kicker">{"版主特別分析" if is_zh else "Editor Analysis"}</div>
+  <div class="frd-editor-title">{"由版主提供的額外分析內容。" if is_zh else "Curated notes from the dashboard owner."}</div>
+</div>
+""", unsafe_allow_html=True)
+
+        if notes:
+            for i, note in enumerate(notes):
+                conv = note.get("conviction", "中")
+                conv_cls = {"高": "frd-note-conv-h", "中": "frd-note-conv-m", "低": "frd-note-conv-l"}.get(conv, "frd-note-conv-m")
+                tags_html = "".join(
+                    f'<span class="frd-note-tag">{escape(tg)}</span>'
+                    for tg in note.get("tags", [])
+                )
+                # Render note card and delete button as a single block
+                # (no nested st.columns to maximise compatibility)
+                st.markdown(f"""
+<div class="frd-note-card">
+  <div class="frd-note-header">
+    <span class="frd-note-type">{escape(note.get("type",""))}</span>
+    <span class="{conv_cls}">{escape(conv)}</span>
+  </div>
+  <div class="frd-note-title">{escape(note.get("title",""))}</div>
+  <div class="frd-note-body">{escape(note.get("body",""))}</div>
+  <div class="frd-note-tags">{tags_html}</div>
+</div>
+""", unsafe_allow_html=True)
+                if st.button("✕ " + ("刪除此則" if is_zh else "Delete"),
+                             key=f"del_note_{i}", use_container_width=False):
+                    notes.pop(i)
+                    st.session_state["editor_notes"] = notes
+                    try: _save_editor_notes(notes)
+                    except Exception: pass
+                    st.rerun()
+        else:
+            st.caption("尚無版主筆記。" if is_zh else "No editor notes yet.")
+
+        with st.expander("➕ " + ("新增版主分析" if is_zh else "Add editor note"), expanded=False):
+            n_type = st.selectbox(
+                "類型" if is_zh else "Type",
+                ["觀察", "研究", "提醒"] if is_zh else ["Observation", "Research", "Alert"],
+                key="new_note_type",
+            )
+            n_conv = st.selectbox(
+                "重要度" if is_zh else "Conviction",
+                ["高", "中", "低"] if is_zh else ["High", "Mid", "Low"],
+                index=1, key="new_note_conv",
+            )
+            n_title = st.text_input("標題" if is_zh else "Title", key="new_note_title")
+            n_body  = st.text_area("內容" if is_zh else "Body", height=80, key="new_note_body")
+            n_tags  = st.text_input(
+                "標籤（逗號分隔）" if is_zh else "Tags (comma-separated)",
+                key="new_note_tags"
+            )
+            if st.button("儲存筆記" if is_zh else "Save note", key="save_note_btn", use_container_width=True):
+                if n_title.strip():
+                    tag_list = [tg.strip() for tg in n_tags.replace("，",",").split(",") if tg.strip()]
+                    notes.append({
+                        "type": n_type, "conviction": n_conv,
+                        "title": n_title.strip(), "body": n_body.strip(),
+                        "tags": tag_list,
+                    })
+                    st.session_state["editor_notes"] = notes
+                    try: _save_editor_notes(notes)
+                    except Exception: pass
+                    st.rerun()
+
+    st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+
+
+
 def render_supply_chain_lab_dashboard(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -22334,6 +23683,16 @@ def render_supply_chain_lab_dashboard(
             else "No supply-chain themes are selected yet. Choose the chains you want from the left sidebar first."
         )
         return
+
+    # ── 進場第一眼：市場摘要與版主觀點 ───────────────────────────────────────
+    render_market_first_read_desk(
+        daily_data=daily_data,
+        intraday_data=intraday_data,
+        tickers=tickers,
+        selected_keys=selected_keys,
+        lens_meta=lens_meta,
+        lang_zh=lang_zh,
+    )
 
     timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
     chips = [
