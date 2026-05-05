@@ -4281,12 +4281,13 @@ def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict |
     left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
     right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
     # Path A (cheapest): both workspace snapshots are ready, so we synthesize
-    # the pair compare in-memory. _persist_active_etf_pair_snapshot also writes
-    # to Supabase as of v1.3.7.
+    # the pair compare in-memory. v1.3.8.2: pass mirror_supabase=False so
+    # the user does not pay the ~500ms Supabase write on a read path. The
+    # Supabase row is populated by the prefetch job, not here.
     if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
         synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
         if _active_etf_lab_snapshot_ready(synthesized):
-            return _persist_active_etf_pair_snapshot(synthesized)
+            return _persist_active_etf_pair_snapshot(synthesized, mirror_supabase=False)
     # Path B: a previous run already wrote a pair snapshot to the local JSON
     # store on this machine.
     store = _active_etf_lab_snapshot_store()
@@ -4294,7 +4295,9 @@ def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict |
     if _active_etf_lab_snapshot_ready(snapshot):
         return snapshot
     # Path C (v1.3.7): the GitHub Actions prefetch job may have warmed up this
-    # pair on a different machine. Pull it back from Supabase.
+    # pair on a different machine. Pull it back from Supabase. v1.3.8.2:
+    # mirror_supabase=False here too -- we just READ from Supabase, writing
+    # the same payload right back is a wasted round trip.
     try:
         remote = _load_supabase_active_etf_pair_snapshot(left_ticker, right_ticker)
     except Exception:
@@ -4303,7 +4306,7 @@ def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict |
         # Mirror the remote pair snapshot into the local store so subsequent
         # reads on this machine are even faster.
         try:
-            return _persist_active_etf_pair_snapshot(remote)
+            return _persist_active_etf_pair_snapshot(remote, mirror_supabase=False)
         except Exception:
             return remote
     return None
@@ -31895,10 +31898,15 @@ def _active_etf_capital_momentum_cards(
 # (and falls back gracefully for missing fields), so no schema migration.
 # ===========================================================================
 def _inject_active_etf_compare_v2_css() -> None:
-    """Inject scoped styles for the v1.3.8 compare board. Idempotent per session."""
-    if st.session_state.get("_etf_cv2_css_injected", False):
-        return
-    st.session_state["_etf_cv2_css_injected"] = True
+    """Inject scoped styles for the v1.3.8 compare board.
+
+    v1.3.8.2 fix: We do NOT guard with session_state. Streamlit clears the
+    page DOM on every rerun (e.g. when the user switches the ETF pair) but
+    keeps session_state intact. A session-scoped guard therefore prevents
+    re-injection on the second rerun, leaving the page without CSS and the
+    dashboard rendering as unstyled stacked divs. Browsers dedupe identical
+    <style> blocks for free, so calling st.markdown unconditionally is safe.
+    """
     st.markdown(
         """
         <style>
@@ -33924,7 +33932,23 @@ def _empty_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict
     }
 
 
-def _persist_active_etf_pair_snapshot(snapshot: dict) -> dict:
+def _persist_active_etf_pair_snapshot(snapshot: dict, *, mirror_supabase: bool = True) -> dict:
+    """Persist a pair compare snapshot to the local store.
+
+    When ``mirror_supabase`` is True (the default), also upserts to Supabase
+    so other runners can pick the snapshot up. **User-facing read paths**
+    (``peek_active_etf_pair_snapshot`` Path A and Path C) pass
+    ``mirror_supabase=False`` to keep pair switching snappy: Path A's
+    in-memory synthesis already takes ~100-300ms, and adding a synchronous
+    ~500ms Supabase write on top makes pair switching feel sluggish without
+    any user-visible benefit. Path C *just read* from Supabase, so writing
+    back is a redundant round trip. Supabase mirroring is restricted to:
+
+      * ``prefetch_active_etf_pair_compare_snapshots_job`` (the GitHub
+        Actions warm-up path)
+      * ``get_active_etf_pair_compare_snapshot`` after a force-refresh
+        rebuild (the user explicitly asked for fresh data)
+    """
     left_ticker = _active_etf_snapshot_ticker_key(str((snapshot or {}).get("left_ticker", "") or ""))
     right_ticker = _active_etf_snapshot_ticker_key(str((snapshot or {}).get("right_ticker", "") or ""))
     if not left_ticker or not right_ticker:
@@ -33939,12 +33963,11 @@ def _persist_active_etf_pair_snapshot(snapshot: dict) -> dict:
     items[_active_etf_pair_snapshot_key(left_ticker, right_ticker)] = safe_snapshot
     store["items"] = items
     _write_active_etf_lab_snapshot_store(store)
-    # v1.3.7: also persist to Supabase using the synthetic-ticker encoding so
-    # prefetched pair compares warm up the Streamlit Cloud runtime.
-    try:
-        _upsert_supabase_active_etf_pair_snapshot(safe_snapshot)
-    except Exception:
-        pass
+    if mirror_supabase:
+        try:
+            _upsert_supabase_active_etf_pair_snapshot(safe_snapshot)
+        except Exception:
+            pass
     return safe_snapshot
 
 
