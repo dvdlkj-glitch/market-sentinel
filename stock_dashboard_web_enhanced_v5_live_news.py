@@ -1,10 +1,33 @@
 #!/usr/bin/env python
 """
-Version: HORIZON Release LEO Supply Chain v1.3.6
-Updated: 2026-04-23
-Highlights:
-- Added Taiwan Futures Lab with direction-aware break-even planning.
-- Added feasibility ratio, recent range proxy, settlement-pressure warning, and fresher TWSE/TAIFEX market fetches.
+Version: HORIZON Release LEO Supply Chain v1.3.7
+Updated: 2026-05-05
+Highlights (v1.3.7 patch over v1.3.6):
+- Removed duplicate function definitions for fetch_twse_etf_institutional_flow,
+  render_active_etf_tracker_section, _active_etf_holdings_map. The kept versions
+  enforce a hard deadline so prefetch jobs no longer hang on TWSE rate limits.
+- Active ETF Lab now restores prefetched daily/intraday frames from snapshots
+  before falling back to live yfinance, removing 3-8s of first-paint waiting.
+- Pair compare no longer rebuilds the side that already has a ready snapshot.
+- New ETF official-data fetcher (NAV, premium/discount, fund size, creation/
+  redemption units, average daily turnover) wired into the workspace snapshot
+  via a new etf_official_payload field. JSONB additive only - no Supabase
+  schema migration required.
+- New Active ETF compare "Capital momentum" card showing premium/discount,
+  fund size, 30D net creation, expense ratio, 30D turnover side-by-side.
+- NEW: Pair compare prefetch job (prefetch_active_etf_pair_compare_snapshots_job)
+  warms up dual-ETF compare snapshots in Supabase using a synthetic ticker key
+  ("PAIR::A::B"). The first time a user opens a configured pair, the compare
+  is served straight from Supabase with no synthesis or fetch -- effectively
+  zero wait. Configurable via ACTIVE_ETF_SNAPSHOT_PAIRS env var; defaults to
+  all unordered combinations of configured tickers (capped at 24 pairs).
+- peek_active_etf_pair_snapshot now has a Path C fallback that reads from
+  Supabase when neither workspace synthesis nor the local store is available.
+- Cleaned up dead code (_ensure_bundles).
+Carry-overs from v1.3.6:
+- Taiwan Futures Lab with direction-aware break-even planning.
+- Feasibility ratio, recent range proxy, settlement-pressure warning, and
+  fresher TWSE/TAIFEX market fetches.
 - Kept the existing theme and dashboard analysis functions intact.
 """
 from __future__ import annotations
@@ -3906,6 +3929,124 @@ def _upsert_supabase_active_etf_snapshot(snapshot: dict) -> bool:
     return 200 <= status < 300
 
 
+# ---------------------------------------------------------------------------
+# v1.3.7: Supabase persistence for pair compare snapshots.
+# Reuses the existing active_etf_snapshot table by encoding the pair as a
+# synthetic ticker key ("PAIR::<left>::<right>"), so no schema migration is
+# needed. This lets prefetch jobs running in GitHub Actions warm up pair
+# compares for the Streamlit Cloud runtime.
+# ---------------------------------------------------------------------------
+def _active_etf_pair_supabase_ticker_key(left_ticker: str, right_ticker: str) -> str:
+    left = _active_etf_snapshot_ticker_key(left_ticker)
+    right = _active_etf_snapshot_ticker_key(right_ticker)
+    if not left or not right:
+        return ""
+    return f"PAIR::{left}::{right}"
+
+
+def _active_etf_pair_supabase_row_from_snapshot(snapshot: dict) -> dict:
+    """Convert a pair compare snapshot dict into a Supabase row.
+
+    The pair-compare schema does not include period / interval / lens_title,
+    so we slot in the defaults to satisfy the existing on_conflict constraint
+    and keep the JSONB payload intact otherwise.
+    """
+    snapshot = dict(snapshot or {})
+    left = _active_etf_snapshot_ticker_key(str(snapshot.get("left_ticker", "") or ""))
+    right = _active_etf_snapshot_ticker_key(str(snapshot.get("right_ticker", "") or ""))
+    pair_key = _active_etf_pair_supabase_ticker_key(left, right)
+    payload = dict(snapshot)
+    payload["ticker"] = pair_key
+    payload.setdefault("kind", "compare")
+    fetched_at = str(snapshot.get("fetched_at") or pd.Timestamp.now(tz=TW_TZ).isoformat())
+    return {
+        "ticker": pair_key,
+        "as_of_date": _active_etf_snapshot_as_of_date(snapshot),
+        "fetched_at": fetched_at,
+        "period": DEFAULT_PERIOD,
+        "interval": DEFAULT_INTERVAL,
+        "lens_title": DEFAULT_TREND_LENS,
+        "status": str(snapshot.get("status", "ready") or "ready"),
+        "snapshot_payload": _active_etf_lab_snapshot_safe(payload),
+    }
+
+
+def _upsert_supabase_active_etf_pair_snapshot(snapshot: dict) -> bool:
+    """Persist a pair compare snapshot to Supabase using the synthetic-ticker
+    encoding. Returns True iff the upsert succeeded.
+    """
+    if not isinstance(snapshot, dict):
+        return False
+    if not _supabase_service_is_configured():
+        return False
+    left = _active_etf_snapshot_ticker_key(str(snapshot.get("left_ticker", "") or ""))
+    right = _active_etf_snapshot_ticker_key(str(snapshot.get("right_ticker", "") or ""))
+    if not left or not right:
+        return False
+    row = _active_etf_pair_supabase_row_from_snapshot(snapshot)
+    path = (
+        f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+        f"?on_conflict={quote_plus('ticker,as_of_date,period,interval,lens_title')}"
+    )
+    try:
+        status, _ = _supabase_service_request(
+            "POST",
+            path,
+            payload=[row],
+            extra_headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+        )
+    except Exception:
+        return False
+    return 200 <= status < 300
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_supabase_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
+    """Load a previously-persisted pair compare snapshot from Supabase.
+
+    Returns ``None`` if Supabase is not configured, the row is missing, or the
+    payload cannot be parsed. The 5-minute cache mirrors the workspace
+    snapshot reader so refreshes propagate quickly without hammering Supabase.
+    """
+    pair_key = _active_etf_pair_supabase_ticker_key(left_ticker, right_ticker)
+    if not pair_key:
+        return None
+    select_query = quote_plus("ticker,as_of_date,fetched_at,period,interval,lens_title,status,snapshot_payload")
+    path = (
+        f"/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+        f"?select={select_query}&ticker=eq.{quote_plus(pair_key)}"
+        f"&order=as_of_date.desc,fetched_at.desc&limit=1"
+    )
+    try:
+        status, payload = _supabase_active_etf_read_request(path)
+    except Exception:
+        return None
+    if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
+        return None
+    row = payload[0]
+    raw = row.get("snapshot_payload", {})
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        return None
+    snapshot = dict(raw)
+    snapshot.setdefault("kind", "compare")
+    snapshot.setdefault("status", str(row.get("status", "ready") or "ready"))
+    snapshot.setdefault("fetched_at", str(row.get("fetched_at", "") or ""))
+    # Guard the ticker fields in case the JSONB blob lost them in transit.
+    if not snapshot.get("left_ticker") or not snapshot.get("right_ticker"):
+        ticker_field = str(row.get("ticker", "") or "")
+        if ticker_field.startswith("PAIR::"):
+            parts = ticker_field.split("::", 2)
+            if len(parts) == 3:
+                snapshot.setdefault("left_ticker", parts[1])
+                snapshot.setdefault("right_ticker", parts[2])
+    return snapshot
+
+
 def _active_etf_lab_snapshot_safe(value):
     if value is None or value is pd.NA:
         return None
@@ -4130,15 +4271,33 @@ def _peek_active_etf_workspace_snapshot_exact(ticker: str, lens_meta: dict | Non
 def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
     left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
     right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
+    # Path A (cheapest): both workspace snapshots are ready, so we synthesize
+    # the pair compare in-memory. _persist_active_etf_pair_snapshot also writes
+    # to Supabase as of v1.3.7.
     if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
         synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
         if _active_etf_lab_snapshot_ready(synthesized):
             return _persist_active_etf_pair_snapshot(synthesized)
+    # Path B: a previous run already wrote a pair snapshot to the local JSON
+    # store on this machine.
     store = _active_etf_lab_snapshot_store()
     snapshot = (store.get("items", {}) or {}).get(_active_etf_pair_snapshot_key(left_ticker, right_ticker))
-    if not _active_etf_lab_snapshot_ready(snapshot):
-        return None
-    return snapshot
+    if _active_etf_lab_snapshot_ready(snapshot):
+        return snapshot
+    # Path C (v1.3.7): the GitHub Actions prefetch job may have warmed up this
+    # pair on a different machine. Pull it back from Supabase.
+    try:
+        remote = _load_supabase_active_etf_pair_snapshot(left_ticker, right_ticker)
+    except Exception:
+        remote = None
+    if _active_etf_lab_snapshot_ready(remote):
+        # Mirror the remote pair snapshot into the local store so subsequent
+        # reads on this machine are even faster.
+        try:
+            return _persist_active_etf_pair_snapshot(remote)
+        except Exception:
+            return remote
+    return None
 
 
 def _clear_active_etf_lab_refresh_caches() -> None:
@@ -4146,7 +4305,7 @@ def _clear_active_etf_lab_refresh_caches() -> None:
         _clear_supply_chain_refresh_caches()
     except Exception:
         pass
-    for cached_func in (
+    cached_funcs = [
         fetch_daily_data,
         fetch_intraday_data,
         fetch_ticker_news,
@@ -4160,11 +4319,128 @@ def _clear_active_etf_lab_refresh_caches() -> None:
         fetch_active_etf_holdings_snapshot,
         fetch_twse_etf_institutional_flow,
         fetch_active_etf_underlying_signal,
-    ):
+    ]
+    # v1.3.7: include the new official-data fetcher when it is defined.
+    # Guarded by getattr so this file remains importable even if someone trims
+    # the official-data block in the future.
+    extra_func = globals().get("fetch_active_etf_official_payload")
+    if extra_func is not None:
+        cached_funcs.append(extra_func)
+    pair_remote_loader = globals().get("_load_supabase_active_etf_pair_snapshot")
+    if pair_remote_loader is not None:
+        cached_funcs.append(pair_remote_loader)
+    for cached_func in cached_funcs:
         try:
             cached_func.clear()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# v1.3.7: Restore daily / intraday data from prefetched workspace snapshots.
+# This avoids hitting yfinance during the first paint of Active ETF Lab.
+# ---------------------------------------------------------------------------
+def _restore_active_etf_market_data_from_snapshots(
+    tickers: list[str],
+    lens_meta: dict | None = None,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None] | None:
+    """Try to reconstruct yfinance-compatible MultiIndex frames from snapshots.
+
+    Returns ``(daily_df, intraday_df)`` if every ticker has a ready workspace
+    snapshot with a usable ``daily_ohlc`` payload. Returns ``None`` otherwise,
+    so the caller can fall back to live ``fetch_daily_data`` / ``fetch_intraday_data``.
+
+    Both frames use a ``(field, ticker)`` MultiIndex column layout, matching
+    what ``yf.download(group_by='column')`` produces. The downstream readers
+    (``get_series`` / ``get_price_series``) already understand this layout.
+
+    Defensive throughout: any unexpected payload shape returns ``None`` so the
+    UI never breaks, just falls back to live fetch.
+    """
+    try:
+        normalized_tickers = [
+            normalize_dashboard_ticker(t) or str(t or "").upper().strip()
+            for t in (tickers or [])
+        ]
+        normalized_tickers = [t for t in normalized_tickers if t]
+        if not normalized_tickers:
+            return None
+
+        daily_columns: dict[tuple[str, str], pd.Series] = {}
+        intraday_columns: dict[tuple[str, str], pd.Series] = {}
+
+        for ticker in normalized_tickers:
+            snapshot, _ = inspect_active_etf_workspace_snapshot(ticker, lens_meta=lens_meta)
+            if not _active_etf_lab_snapshot_ready(snapshot):
+                return None
+            bundle = _deserialize_active_etf_bundle(snapshot.get("bundle"))
+            if not bundle:
+                return None
+
+            daily_ohlc = bundle.get("daily_ohlc")
+            if not isinstance(daily_ohlc, pd.DataFrame) or daily_ohlc.empty:
+                return None
+            daily_ohlc = daily_ohlc.copy()
+            try:
+                daily_ohlc.index = pd.to_datetime(daily_ohlc.index, errors="coerce")
+            except Exception:
+                return None
+            for column in daily_ohlc.columns:
+                series = daily_ohlc[column]
+                if isinstance(series, pd.DataFrame):
+                    # Defensive: if a duplicate column name turned the slice
+                    # into a frame, take the first column.
+                    if series.empty:
+                        continue
+                    series = series.iloc[:, 0]
+                daily_columns[(str(column), ticker)] = series
+
+            intraday_ohlc = bundle.get("intraday_ohlc")
+            if isinstance(intraday_ohlc, pd.DataFrame) and not intraday_ohlc.empty:
+                intraday_ohlc = intraday_ohlc.copy()
+                try:
+                    intraday_ohlc.index = pd.to_datetime(intraday_ohlc.index, errors="coerce")
+                except Exception:
+                    intraday_ohlc = None
+                if isinstance(intraday_ohlc, pd.DataFrame) and not intraday_ohlc.empty:
+                    for column in intraday_ohlc.columns:
+                        series = intraday_ohlc[column]
+                        if isinstance(series, pd.DataFrame):
+                            if series.empty:
+                                continue
+                            series = series.iloc[:, 0]
+                        intraday_columns[(str(column), ticker)] = series
+
+        if not daily_columns:
+            return None
+
+        daily_frame = pd.DataFrame(daily_columns)
+        if daily_frame.empty:
+            return None
+        try:
+            daily_frame = daily_frame.sort_index()
+        except Exception:
+            pass
+        try:
+            daily_frame.columns = pd.MultiIndex.from_tuples(daily_frame.columns)
+        except Exception:
+            pass
+
+        intraday_frame: pd.DataFrame | None = None
+        if intraday_columns:
+            intraday_frame = pd.DataFrame(intraday_columns)
+            try:
+                intraday_frame = intraday_frame.sort_index()
+            except Exception:
+                pass
+            try:
+                intraday_frame.columns = pd.MultiIndex.from_tuples(intraday_frame.columns)
+            except Exception:
+                pass
+
+        return daily_frame, intraday_frame
+    except Exception:
+        return None
 
 
 def _build_active_etf_workspace_live_bundle(
@@ -4237,6 +4513,30 @@ def _build_active_etf_workspace_snapshot(
         if fast_prefetch_mode
         else fetch_twse_etf_institutional_flow(ticker)
     )
+    # v1.3.7: New official ETF data block. Honours ACTIVE_ETF_PREFETCH_FAST_MODE
+    # internally, so it is safe to call unconditionally.
+    try:
+        etf_official_payload = fetch_active_etf_official_payload(ticker)
+    except Exception as exc:
+        etf_official_payload = {
+            "ticker": str(ticker or "").upper().strip(),
+            "status": "missing",
+            "errors": {"unhandled": str(exc)},
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "source": ACTIVE_ETF_OFFICIAL_SOURCE_LABEL,
+        }
+    # v1.3.7: Pure derivation off prefetched daily_data; no extra network call.
+    try:
+        turnover_summary = _compute_active_etf_turnover_summary(daily_data, ticker)
+    except Exception:
+        turnover_summary = {}
+    if isinstance(etf_official_payload, dict):
+        etf_official_payload = dict(etf_official_payload)
+        etf_official_payload.setdefault("turnover", {})
+        if isinstance(etf_official_payload["turnover"], dict):
+            etf_official_payload["turnover"].update(turnover_summary or {})
+        else:
+            etf_official_payload["turnover"] = dict(turnover_summary or {})
     holdings_items = list((holdings_payload or {}).get("items", []) or [])
     holdings_map = _active_etf_holdings_compare_map(holdings_items, max_items=40) if holdings_items else {}
     signal_cache: dict[str, dict] = {}
@@ -4271,6 +4571,7 @@ def _build_active_etf_workspace_snapshot(
         "bundle": _serialize_active_etf_bundle(bundle),
         "holdings_payload": _active_etf_lab_snapshot_safe(holdings_payload),
         "etf_flow_payload": _active_etf_lab_snapshot_safe(etf_flow_payload),
+        "etf_official_payload": _active_etf_lab_snapshot_safe(etf_official_payload),
         "strategy_profile": _active_etf_lab_snapshot_safe(strategy_profile),
         "lookthrough_payload": _active_etf_clean_lookthrough_snapshot(lookthrough_payload) if lookthrough_payload else {},
         "underlying_signals": underlying_signals,
@@ -4537,6 +4838,256 @@ def prefetch_active_etf_snapshots_job(
         "lens_title": str(lens_meta.get("title", DEFAULT_TREND_LENS) or DEFAULT_TREND_LENS),
         "period": str(lens_meta.get("period", DEFAULT_PERIOD) or DEFAULT_PERIOD),
         "interval": str(lens_meta.get("interval", DEFAULT_INTERVAL) or DEFAULT_INTERVAL),
+        "shard_index": resolved_shard_index,
+        "shard_count": resolved_shard_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# v1.3.7: Active ETF pair compare prefetch job
+# Designed to run AFTER prefetch_active_etf_snapshots_job has populated the
+# individual workspace snapshots. Synthesizes pair compares for the configured
+# pair list (or for all combinations of the active ETF universe by default)
+# and persists them to both the local store and Supabase.
+# ---------------------------------------------------------------------------
+def parse_active_etf_pair_snapshot_pairs(
+    raw_value: str | None = None,
+    *,
+    fallback_tickers: list[str] | None = None,
+    max_default_pairs: int | None = None,
+) -> list[tuple[str, str]]:
+    """Parse an environment variable describing which pair compares to prefetch.
+
+    Accepted formats (any combination of separators):
+        ACTIVE_ETF_SNAPSHOT_PAIRS="00982A.TW|00981A.TW, 00988A.TW|00981A.TW"
+        ACTIVE_ETF_SNAPSHOT_PAIRS="00982A.TW>00981A.TW; 00988A.TW>00981A.TW"
+
+    When no env var is provided, falls back to "all unordered combinations of
+    the configured active ETF tickers", capped at ``max_default_pairs`` (default
+    24, controllable via ``ACTIVE_ETF_PAIR_MAX_DEFAULT_PAIRS``).
+    """
+    source_value = str(raw_value or os.environ.get("ACTIVE_ETF_SNAPSHOT_PAIRS", "")).strip()
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(left: str, right: str) -> None:
+        left_norm = normalize_dashboard_ticker(left)
+        right_norm = normalize_dashboard_ticker(right)
+        if not left_norm or not right_norm or left_norm == right_norm:
+            return
+        if not is_taiwan_active_etf(left_norm) or not is_taiwan_active_etf(right_norm):
+            return
+        # Treat (A, B) and (B, A) as the same pair so we don't waste budget.
+        key = tuple(sorted([left_norm, right_norm]))
+        if key in seen:
+            return
+        seen.add(key)
+        pairs.append((left_norm, right_norm))
+
+    if source_value:
+        for token in re.split(r"[,;]+", source_value):
+            token = token.strip()
+            if not token:
+                continue
+            sides = [piece.strip() for piece in re.split(r"[|>/]+", token) if piece.strip()]
+            if len(sides) < 2:
+                continue
+            _add(sides[0], sides[1])
+        return pairs
+
+    base_tickers = list(fallback_tickers or [])
+    if not base_tickers:
+        base_tickers = parse_active_etf_snapshot_tickers()
+    base_tickers = [t for t in dedupe_keep_order(base_tickers) if is_taiwan_active_etf(t)]
+
+    if max_default_pairs is None:
+        try:
+            max_default_pairs = int(str(os.environ.get("ACTIVE_ETF_PAIR_MAX_DEFAULT_PAIRS", "24") or 24))
+        except Exception:
+            max_default_pairs = 24
+
+    for i in range(len(base_tickers)):
+        for j in range(i + 1, len(base_tickers)):
+            _add(base_tickers[i], base_tickers[j])
+            if max_default_pairs and len(pairs) >= max_default_pairs:
+                return pairs
+    return pairs
+
+
+def _active_etf_pair_snapshot_is_fresh_for_today(snapshot: dict | None) -> bool:
+    if not _active_etf_lab_snapshot_ready(snapshot):
+        return False
+    fetched_ts = _normalize_tw_timestamp((snapshot or {}).get("fetched_at"))
+    if fetched_ts is None:
+        return False
+    return fetched_ts.date() == datetime.now(TW_TZ).date()
+
+
+def prefetch_active_etf_pair_compare_snapshots_job(
+    pairs: list[tuple[str, str]] | None = None,
+    *,
+    shard_index: int | None = None,
+    shard_count: int | None = None,
+) -> dict:
+    """Prefetch pair compare snapshots for a configurable list of ETF pairs.
+
+    Run this AFTER ``prefetch_active_etf_snapshots_job`` has populated the
+    individual workspace snapshots. For each requested pair, this job:
+
+      1. Looks up the latest workspace snapshot for each side.
+      2. If both sides are ready, synthesizes the pair compare in-memory via
+         ``_build_active_etf_pair_compare_snapshot_from_workspace_snapshots``.
+      3. Persists the result to the local JSON store **and** Supabase using
+         ``_persist_active_etf_pair_snapshot`` (so any runtime can read it
+         back via ``peek_active_etf_pair_snapshot`` Path C).
+
+    Pairs whose compare snapshot is already fresh today are skipped, so the
+    job is idempotent and cheap to re-run.
+
+    Returns a dict with per-pair status rows, suitable for logging in a
+    GitHub Actions step summary.
+    """
+    requested_pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    raw_pairs = pairs if pairs is not None else parse_active_etf_pair_snapshot_pairs()
+    for left, right in raw_pairs or []:
+        left_norm = normalize_dashboard_ticker(left)
+        right_norm = normalize_dashboard_ticker(right)
+        if not left_norm or not right_norm or left_norm == right_norm:
+            continue
+        key = tuple(sorted([left_norm, right_norm]))
+        if key in seen:
+            continue
+        seen.add(key)
+        requested_pairs.append((left_norm, right_norm))
+
+    if not requested_pairs:
+        return {"status": "skipped", "reason": "No active ETF pairs configured.", "pairs": []}
+
+    # Shard support, mirroring prefetch_active_etf_snapshots_job
+    resolved_shard_count = _normalize_prefetch_shard_value(
+        shard_count if shard_count is not None else os.environ.get("PREFETCH_SHARD_COUNT", ""),
+        1,
+    )
+    resolved_shard_index = _normalize_prefetch_shard_value(
+        shard_index if shard_index is not None else os.environ.get("PREFETCH_SHARD_INDEX", ""),
+        0,
+    )
+    if resolved_shard_count > 1 and 0 <= resolved_shard_index < resolved_shard_count:
+        sharded_pairs = [
+            pair for idx, pair in enumerate(requested_pairs)
+            if idx % resolved_shard_count == resolved_shard_index
+        ]
+    else:
+        sharded_pairs = list(requested_pairs)
+
+    if not sharded_pairs:
+        return {
+            "status": "skipped",
+            "reason": "No active ETF pairs assigned to this shard.",
+            "pairs": [],
+            "requested_pairs": [list(pair) for pair in requested_pairs],
+            "shard_index": resolved_shard_index,
+            "shard_count": resolved_shard_count,
+        }
+
+    fresh_skipped_rows: list[dict] = []
+    build_pairs: list[tuple[str, str]] = []
+    for left, right in sharded_pairs:
+        # Only check the local store directly (NOT peek_active_etf_pair_snapshot,
+        # which would re-synthesize even when fresh). This keeps the fresh-skip
+        # check cheap and idempotent.
+        store_items = (_active_etf_lab_snapshot_store().get("items", {}) or {})
+        existing_local = store_items.get(_active_etf_pair_snapshot_key(left, right))
+        existing = existing_local if _active_etf_lab_snapshot_ready(existing_local) else None
+        if existing is None:
+            try:
+                existing = _load_supabase_active_etf_pair_snapshot(left, right)
+            except Exception:
+                existing = None
+        if _active_etf_pair_snapshot_is_fresh_for_today(existing):
+            fresh_skipped_rows.append(
+                {
+                    "left": left,
+                    "right": right,
+                    "status": "fresh_skip",
+                    "fetched_at": str((existing or {}).get("fetched_at", "") or ""),
+                }
+            )
+            continue
+        build_pairs.append((left, right))
+
+    built_rows: list[dict] = list(fresh_skipped_rows)
+    if not build_pairs:
+        return {
+            "status": "ok",
+            "pairs": [list(pair) for pair in sharded_pairs],
+            "requested_pairs": [list(pair) for pair in requested_pairs],
+            "rows": built_rows,
+            "built_pairs": [],
+            "fresh_skipped_pairs": [[row["left"], row["right"]] for row in fresh_skipped_rows],
+            "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+            "shard_index": resolved_shard_index,
+            "shard_count": resolved_shard_count,
+        }
+
+    for left, right in build_pairs:
+        left_workspace = peek_active_etf_workspace_snapshot(left, lens_meta=None)
+        right_workspace = peek_active_etf_workspace_snapshot(right, lens_meta=None)
+        if not _active_etf_lab_snapshot_ready(left_workspace) or not _active_etf_lab_snapshot_ready(right_workspace):
+            built_rows.append(
+                {
+                    "left": left,
+                    "right": right,
+                    "status": "missing_workspace",
+                    "fetched_at": "",
+                    "error": "Workspace snapshot missing for one or both ETFs. Run prefetch_active_etf_snapshots_job first.",
+                }
+            )
+            continue
+        try:
+            synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(
+                left_workspace, right_workspace
+            )
+        except Exception as exc:
+            built_rows.append(
+                {
+                    "left": left,
+                    "right": right,
+                    "status": "error",
+                    "fetched_at": "",
+                    "error": f"Synthesis failed: {exc}",
+                }
+            )
+            continue
+        if not _active_etf_lab_snapshot_ready(synthesized):
+            built_rows.append(
+                {
+                    "left": left,
+                    "right": right,
+                    "status": str((synthesized or {}).get("status", "missing") or "missing"),
+                    "fetched_at": str((synthesized or {}).get("fetched_at", "") or ""),
+                }
+            )
+            continue
+        persisted = _persist_active_etf_pair_snapshot(synthesized)
+        built_rows.append(
+            {
+                "left": left,
+                "right": right,
+                "status": str((persisted or {}).get("status", "ready") or "ready"),
+                "fetched_at": str((persisted or {}).get("fetched_at", "") or ""),
+            }
+        )
+
+    return {
+        "status": "ok",
+        "pairs": [list(pair) for pair in sharded_pairs],
+        "requested_pairs": [list(pair) for pair in requested_pairs],
+        "rows": built_rows,
+        "built_pairs": [[left, right] for left, right in build_pairs],
+        "fresh_skipped_pairs": [[row["left"], row["right"]] for row in fresh_skipped_rows],
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
         "shard_index": resolved_shard_index,
         "shard_count": resolved_shard_count,
     }
@@ -20846,350 +21397,22 @@ def _parse_twse_etf_flow_payload(payload: dict) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
-    """Fetch TWSE T86 institutional flow for a listed ETF.
-
-    The TWSE T86 report is published after market close and the ETF filter can
-    vary across TWSE response paths. Try the ETF filter first, then fall back to
-    the all-securities T86 report so active ETFs are not missed.
-    """
-    code = ticker_base_code(ticker).upper().strip()
-    today = datetime.now(TW_TZ).date()
-    errors: list[str] = []
-    tried_urls: list[str] = []
-    deadline = time.monotonic() + 18.0
-    max_attempts = 8
-
-    def _candidate_urls(date_str: str) -> list[tuple[str, str]]:
-        variants = [
-            ("ETF", "https://www.twse.com.tw/rwd/zh/fund/T86", "selectType=ETF"),
-            ("ALL", "https://www.twse.com.tw/rwd/zh/fund/T86", "selectType=ALL"),
-            ("ALLBUT0999", "https://www.twse.com.tw/rwd/zh/fund/T86", "selectType=ALLBUT0999"),
-            ("ALL-legacy", "https://www.twse.com.tw/fund/T86", "selectType=ALL"),
-        ]
-        urls: list[tuple[str, str]] = []
-        for label, base, select_part in variants:
-            query = f"response=json&date={date_str}"
-            if select_part:
-                query = f"{query}&{select_part}"
-            urls.append((label, f"{base}?{query}"))
-        return urls
-
-    attempt_count = 0
-    for offset in range(0, 6):
-        trade_date = today - pd.Timedelta(days=offset)
-        date_str = trade_date.strftime("%Y%m%d")
-
-        for source_label, url in _candidate_urls(date_str):
-            if time.monotonic() >= deadline or attempt_count >= max_attempts:
-                break
-            attempt_count += 1
-            tried_urls.append(url)
-            try:
-                payload = _fetch_json_url(url, timeout=4)
-                stat = str(payload.get("stat", "") or "")
-                if stat.startswith("很抱歉") or "查無" in stat or "無資料" in stat:
-                    continue
-
-                frame = _parse_twse_etf_flow_payload(payload)
-                if frame.empty or "code" not in frame.columns:
-                    continue
-
-                normalized_codes = frame["code"].astype(str).str.upper().str.strip()
-                match = frame[normalized_codes == code]
-                if match.empty:
-                    compact_codes = normalized_codes.str.replace(r"[^0-9A-Z]", "", regex=True)
-                    match = frame[compact_codes == re.sub(r"[^0-9A-Z]", "", code)]
-
-                if match.empty:
-                    continue
-
-                row = match.iloc[0].to_dict()
-                return {
-                    "date": trade_date.isoformat(),
-                    "record": row,
-                    "source": f"TWSE T86 {source_label}",
-                    "error": "",
-                    "status": "ok",
-                    "tried": tried_urls[-4:],
-                }
-            except Exception as exc:
-                message = str(exc)
-                if message not in errors:
-                    errors.append(message)
-                continue
-        if time.monotonic() >= deadline or attempt_count >= max_attempts:
-            break
-
-    if time.monotonic() >= deadline:
-        errors.append(f"T86 ETF lookup timed out after {attempt_count} attempts.")
-    last_error = errors[-1] if errors else f"No T86 row matched ETF code {code} in the last 6 calendar days."
-    return {
-        "date": None,
-        "record": {},
-        "source": "TWSE T86",
-        "error": last_error,
-        "status": "missing",
-        "tried": tried_urls[-6:],
-    }
+# v1.3.7: A legacy duplicate of fetch_twse_etf_institutional_flow used to live
+# here. It was always shadowed by the canonical definition further down in the
+# file, so it has been removed to avoid confusion when grepping the source.
 
 
-def _tracker_status_chip(label: str, tone: str) -> str:
-    cls_map = {
-        "up": "chip-buy",
-        "down": "chip-sell",
-        "neutral": "chip-hold",
-        "info": "chip-info",
-    }
-    return f'<span class="chip {cls_map.get(tone, "chip-info")}">{escape(label)}</span>'
+# v1.3.7: A duplicate _tracker_status_chip definition used to live here. The
+# canonical version appears later in the file and is functionally identical,
+# so this orphaned copy was removed for clarity.
 
 
-def render_active_etf_tracker_section(ticker: str, selected_count: int = 1) -> None:
-    if not is_taiwan_active_etf(ticker):
-        return
+# v1.3.7: Two legacy duplicates were removed from this region:
+#   - render_active_etf_tracker_section(...)  -> kept the canonical version below
+#   - _active_etf_holdings_map(...)           -> kept the canonical version below
+# Both were previously shadowed by definitions appearing later in this file,
+# so they were never actually executed. They have been removed for clarity.
 
-    lang_zh = get_language() == "zh_TW"
-    base_code = ticker_base_code(ticker)
-    tracker_label = (
-        f"{display_ticker_label(ticker)} 主動式 ETF 收盤後追蹤"
-        if lang_zh
-        else f"{display_ticker_label(ticker)} active ETF post-close tracker"
-    )
-    helper_text = (
-        "比較最新持股快照與先前快照，並搭配 ETF 本身三大法人資金流。"
-        if lang_zh
-        else "Compare the latest holdings snapshot against the previous snapshot and pair it with official institutional ETF flows."
-    )
-
-    tracker_panel_open = render_dashboard_section_panel(
-        tracker_label,
-        "target",
-        item_count=selected_count,
-        helper_base=helper_text,
-        expanded=planner_auto_expand("target", selected_count),
-        panel_key=f"active-etf-tracker::{ticker}",
-    )
-    if tracker_panel_open:
-        inject_active_etf_tracker_css()
-
-        holdings_payload = fetch_active_etf_holdings_snapshot(ticker)
-        holdings_items = holdings_payload.get("items", [])
-        holdings_model = build_active_etf_holdings_changes(
-            ticker,
-            holdings_items,
-            snapshot_source=str(holdings_payload.get("source", "") or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL),
-            allow_snapshot_write=str(holdings_payload.get("status", "missing")) == "live",
-        )
-        flow_payload = fetch_twse_etf_institutional_flow(ticker)
-        flow = flow_payload.get("record", {}) or {}
-
-        now_tw = datetime.now(TW_TZ)
-        timestamp_text = now_tw.strftime("%Y-%m-%d %H:%M %Z")
-        update_note = ACTIVE_ETF_UPDATE_NOTE_ZH if lang_zh else ACTIVE_ETF_UPDATE_NOTE_EN
-
-        header_chips = [
-            _tracker_status_chip(
-                ("主動式 ETF 持股異動追蹤" if lang_zh else "Active ETF holdings tracker"),
-                "info",
-            ),
-            _tracker_status_chip(
-                (f"更新時間 {timestamp_text}" if lang_zh else f"Timestamp {timestamp_text}"),
-                "neutral",
-            ),
-            _tracker_status_chip(
-                ("收盤後 16:00+" if lang_zh else "After close 16:00+"),
-                "up",
-            ),
-        ]
-        st.markdown(
-            f"""
-            <div class="guide-shell etf-tracker-shell active-etf-hero hero-neon-bar">
-                <div class="section-header">{'台股主動式 ETF 追蹤' if lang_zh else 'Taiwan active ETF tracker'}</div>
-                <div class="guide-title">{escape(display_ticker_label(ticker))} · {'收盤後雙面板' if lang_zh else 'post-close dual panel'}</div>
-                <div class="guide-copy">{escape(update_note)}</div>
-                <div class="chip-row">{''.join(header_chips)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        left, right = st.columns([1.2, 1.0], gap="large")
-
-        with left:
-            st.markdown(
-                f"""
-                <div class="guide-shell etf-tracker-panel-shell">
-                    <div class="section-header">{'持股異動追蹤' if lang_zh else 'Holdings change tracker'}</div>
-                    <div class="guide-copy">{escape((f"比對代號 {base_code} 最新持股快照與前次可用快照。" if lang_zh else f"Compares the latest holdings snapshot for {base_code} against the prior available snapshot."))}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            previous_date = holdings_model.get("previous_date")
-            if holdings_payload.get("error") and not holdings_items:
-                st.info(
-                    "目前抓不到最新持股快照，稍後再試或確認 Yahoo Finance 是否已有基金持股資料。"
-                    if lang_zh
-                    else "The latest holdings snapshot is not currently available. Please try again later or verify that Yahoo Finance has fund holdings data for this ETF."
-                )
-            elif not previous_date:
-                top_frame = pd.DataFrame(holdings_model.get("current_top", []))
-                if top_frame.empty:
-                    st.info("目前尚無可顯示的持股快照。" if lang_zh else "No holdings snapshot is available yet.")
-                else:
-                    rows = [
-                        [
-                            build_holding_name_cell(row.get("name", "")),
-                            f'<div class="etf-tracker-value">{float(row.get("weight", 0.0)):.2f}%</div>',
-                        ]
-                        for row in holdings_model.get("current_top", [])
-                    ]
-                    st.caption(
-                        "這是首次可用快照；從下一個交易日開始，系統會顯示新增、加碼、減碼與移除。"
-                        if lang_zh
-                        else "This is the first available snapshot. Starting with the next trading day, the dashboard will show adds, increases, decreases, and removals."
-                    )
-                    render_active_etf_tracker_table(
-                        ["持股 / 公司" if lang_zh else "Holding / company", "權重 %" if lang_zh else "Weight %"],
-                        rows,
-                        "目前尚無可顯示的持股快照。" if lang_zh else "No holdings snapshot is available yet.",
-                    )
-            else:
-                add_rows = holdings_model.get("adds", [])
-                cut_rows = holdings_model.get("cuts", [])
-                add_df = pd.DataFrame(add_rows)
-                cut_df = pd.DataFrame(cut_rows)
-
-                cols = st.columns(2, gap="medium")
-                with cols[0]:
-                    st.markdown(f"**{'新增 / 加碼' if lang_zh else 'Adds / increases'}**")
-                    if add_df.empty:
-                        st.caption("沒有明顯新增或加碼。" if lang_zh else "No notable additions or increases.")
-                    else:
-                        rows = []
-                        for _, row in add_df.iterrows():
-                            name_cell = build_holding_name_cell(row.get("name", ""))
-                            status_label = "新增" if lang_zh and row.get("status") == "new" else "加碼" if lang_zh else "New" if row.get("status") == "new" else "Increase"
-                            rows.append([
-                                name_cell,
-                                f'<span class="etf-tracker-status-pill etf-tracker-status-up">{status_label}</span>',
-                                f'<div class="etf-tracker-value">{float(row.get("current", 0.0)):.2f}%</div>',
-                                f'<div class="etf-tracker-value">{float(row.get("previous", 0.0)):.2f}%</div>',
-                                f'<div class="etf-tracker-delta-up">+{abs(float(row.get("delta", 0.0))):.2f}%</div>',
-                            ])
-                        render_active_etf_tracker_table(
-                            [
-                                "持股 / 公司" if lang_zh else "Holding / company",
-                                "狀態" if lang_zh else "Status",
-                                "目前 %" if lang_zh else "Current %",
-                                "前次 %" if lang_zh else "Previous %",
-                                "變化 %" if lang_zh else "Delta %",
-                            ],
-                            rows,
-                            "沒有明顯新增或加碼。" if lang_zh else "No notable additions or increases.",
-                        )
-                with cols[1]:
-                    st.markdown(f"**{'減碼 / 移除' if lang_zh else 'Cuts / removals'}**")
-                    if cut_df.empty:
-                        st.caption("沒有明顯減碼或移除。" if lang_zh else "No notable cuts or removals.")
-                    else:
-                        rows = []
-                        for _, row in cut_df.iterrows():
-                            name_cell = build_holding_name_cell(row.get("name", ""))
-                            status_label = "移除" if lang_zh and row.get("status") == "removed" else "減碼" if lang_zh else "Removed" if row.get("status") == "removed" else "Decrease"
-                            rows.append([
-                                name_cell,
-                                f'<span class="etf-tracker-status-pill etf-tracker-status-down">{status_label}</span>',
-                                f'<div class="etf-tracker-value">{float(row.get("current", 0.0)):.2f}%</div>',
-                                f'<div class="etf-tracker-value">{float(row.get("previous", 0.0)):.2f}%</div>',
-                                f'<div class="etf-tracker-delta-down">-{abs(float(row.get("delta", 0.0))):.2f}%</div>',
-                            ])
-                        render_active_etf_tracker_table(
-                            [
-                                "持股 / 公司" if lang_zh else "Holding / company",
-                                "狀態" if lang_zh else "Status",
-                                "目前 %" if lang_zh else "Current %",
-                                "前次 %" if lang_zh else "Previous %",
-                                "變化 %" if lang_zh else "Delta %",
-                            ],
-                            rows,
-                            "沒有明顯減碼或移除。" if lang_zh else "No notable cuts or removals.",
-                        )
-
-                st.caption(
-                    (f"比較基準：{previous_date} 的前次快照。資料來源：{holdings_payload.get('source') or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL}。"
-                     if lang_zh else
-                     f"Comparison baseline: previous snapshot from {previous_date}. Source: {holdings_payload.get('source') or ACTIVE_ETF_HOLDINGS_SOURCE_LABEL}.")
-                )
-
-        with right:
-            st.markdown(
-                f"""
-                <div class="guide-shell etf-tracker-panel-shell">
-                    <div class="section-header">{'ETF 法人資金流' if lang_zh else 'ETF institutional flow'}</div>
-                    <div class="guide-copy">{escape(('使用 TWSE 官方 ETF 三大法人日資料，觀察資金流進流出 ETF 本身。' if lang_zh else 'Uses official TWSE ETF daily institutional data to track money flowing into and out of the ETF itself.'))}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if flow_payload.get("error") and not flow:
-                st.info(
-                    "目前抓不到這檔 ETF 的官方法人買賣資料，可能尚未更新或今日非交易日。"
-                    if lang_zh
-                    else "Official institutional ETF flow is not available right now. The report may not be updated yet or today may be a non-trading day."
-                )
-            else:
-                three_net = _safe_float(flow.get("three_net"))
-                foreign_net = _safe_float(flow.get("foreign_net"))
-                trust_net = _safe_float(flow.get("trust_net"))
-                dealer_net = _safe_float(flow.get("dealer_net"))
-                metric_cols = st.columns(2)
-                metric_cols[0].metric(
-                    "三大法人買賣超" if lang_zh else "3-inst. net",
-                    _format_signed_integer(three_net),
-                    _format_signed_integer(three_net, unit=(" 張" if lang_zh else " sh")),
-                )
-                metric_cols[1].metric(
-                    "資料日期" if lang_zh else "Flow date",
-                    flow_payload.get("date") or "—",
-                    flow_payload.get("source", ""),
-                )
-                flow_rows = [
-                    [
-                        _active_etf_plain_cell("外資" if lang_zh else "Foreign", class_name="etf-tracker-text"),
-                        _active_etf_plain_cell(_format_signed_integer(foreign_net), class_name="etf-tracker-delta-up" if foreign_net > 0 else "etf-tracker-delta-down" if foreign_net < 0 else "etf-tracker-delta-flat"),
-                    ],
-                    [
-                        _active_etf_plain_cell("投信" if lang_zh else "Investment trust", class_name="etf-tracker-text"),
-                        _active_etf_plain_cell(_format_signed_integer(trust_net), class_name="etf-tracker-delta-up" if trust_net > 0 else "etf-tracker-delta-down" if trust_net < 0 else "etf-tracker-delta-flat"),
-                    ],
-                    [
-                        _active_etf_plain_cell("自營商" if lang_zh else "Dealer", class_name="etf-tracker-text"),
-                        _active_etf_plain_cell(_format_signed_integer(dealer_net), class_name="etf-tracker-delta-up" if dealer_net > 0 else "etf-tracker-delta-down" if dealer_net < 0 else "etf-tracker-delta-flat"),
-                    ],
-                ]
-                render_active_etf_tracker_table(
-                    ["法人別" if lang_zh else "Institution", "買賣超" if lang_zh else "Net shares"],
-                    flow_rows,
-                    "目前無法人買賣資料。" if lang_zh else "Institutional flow is unavailable right now.",
-                )
-                st.caption(
-                    "這裡追蹤的是 ETF 受益權本身的法人買賣，不是基金經理人當日成分股交易明細。"
-                    if lang_zh
-                    else "This panel tracks institutional trading in the ETF units themselves, not the portfolio manager's exact stock trades for the day."
-                )
-
-
-def _active_etf_holdings_map(items: list[dict], max_items: int = 20) -> dict[str, float]:
-    mapped: dict[str, float] = {}
-    for item in _normalize_holdings_records(items or [], max_items=max_items):
-        name = str(item.get("name", "")).strip()
-        weight = _safe_float(item.get("weight"))
-        if not name or pd.isna(weight):
-            continue
-        mapped[name] = float(weight)
-    return mapped
 
 
 def render_active_etf_pair_comparison_legacy(left_ticker: str, right_ticker: str) -> None:
@@ -21350,18 +21573,9 @@ def render_active_etf_lab_dashboard(
     inject_active_etf_tracker_css()
     render_active_etf_overall_briefing(active_etf_tickers, daily_data, lens_meta=lens_meta)
 
-    bundles_cache: list[dict] | None = None
-
-    def _ensure_bundles() -> list[dict]:
-        nonlocal bundles_cache
-        if bundles_cache is None:
-            with st.spinner("正在建立主動式 ETF 研究上下文..." if lang_zh else "Building active ETF research context..."):
-                bundles_cache = [
-                    collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8, lens_meta=lens_meta)
-                    for ticker in active_etf_tickers
-                ]
-                bundles_cache = [bundle for bundle in bundles_cache if bundle is not None]
-        return bundles_cache
+    # v1.3.7: Removed unused _ensure_bundles closure that would have bypassed the
+    # prefetch snapshot path and hit yfinance N times directly. The Active ETF
+    # workspace now reads from snapshots via _render_active_etf_workspace_station_body.
 
     timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M %Z")
     chips = [
@@ -26953,6 +27167,254 @@ def fetch_active_etf_holdings_snapshot(ticker: str, max_items: int = 15) -> dict
         return result
 
 
+# ---------------------------------------------------------------------------
+# v1.3.7: Active ETF official-data fetcher
+# Pulls NAV / premium / fund size / 30D net creation / 30D average turnover
+# from public TWSE endpoints. Designed to be robust to schema drift: every
+# field is parsed defensively and returned as float, never raises.
+# ---------------------------------------------------------------------------
+ACTIVE_ETF_OFFICIAL_SOURCE_LABEL = "TWSE etfReport / etfPCFList"
+
+
+def _safe_etf_float(value: object) -> float:
+    """Defensive float parse for TWSE responses that may include commas or % signs."""
+    if value is None:
+        return float("nan")
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if not text or text in {"-", "--", "N/A", "NA"}:
+        return float("nan")
+    try:
+        return float(text)
+    except Exception:
+        return float("nan")
+
+
+def _fetch_twse_etf_daily_report(ticker_code: str) -> dict:
+    """Fetch the latest TWSE ETF daily trade report for a single ETF.
+
+    Returns dict with: close, nav, premium_pct, source, date, error.
+    """
+    today = datetime.now(TW_TZ).date()
+    errors: list[str] = []
+    try:
+        deadline_seconds = float(os.environ.get("ETF_OFFICIAL_FETCH_DEADLINE_SECONDS", "10") or 10.0)
+    except Exception:
+        deadline_seconds = 10.0
+    deadline = time.monotonic() + max(deadline_seconds, 1.0)
+
+    candidate_endpoints = [
+        "https://www.twse.com.tw/rwd/zh/ETFortune/etfDailyTrade",
+        "https://www.twse.com.tw/ETFortune/etfDailyTrade",
+    ]
+
+    for offset in range(0, 6):
+        if time.monotonic() >= deadline:
+            break
+        trade_date = today - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        for endpoint in candidate_endpoints:
+            if time.monotonic() >= deadline:
+                break
+            url = f"{endpoint}?response=json&date={date_str}"
+            try:
+                payload = _fetch_json_url(url, timeout=4)
+            except Exception as exc:
+                msg = str(exc)
+                if msg not in errors:
+                    errors.append(msg)
+                continue
+            stat = str(payload.get("stat", "") or "")
+            if stat.startswith("很抱歉") or "查無" in stat or "無資料" in stat:
+                continue
+            rows = _tw_rows_from_payload(payload)
+            row = _match_row_by_security_code(rows, ticker_code)
+            if not row:
+                continue
+            close_value = _safe_etf_float(_find_value_by_keywords(row, ("收盤價", "收盤", "Close")))
+            nav_value = _safe_etf_float(_find_value_by_keywords(row, ("淨值", "單位淨值", "NAV")))
+            premium_value = _safe_etf_float(_find_value_by_keywords(row, ("折溢價", "折溢價幅度", "Premium")))
+            if pd.isna(premium_value) and not pd.isna(close_value) and not pd.isna(nav_value) and nav_value:
+                premium_value = (close_value / nav_value - 1.0) * 100.0
+            return {
+                "close": close_value,
+                "nav": nav_value,
+                "premium_pct": premium_value,
+                "date": trade_date.isoformat(),
+                "source": "TWSE etfDailyTrade",
+                "error": "",
+            }
+
+    last_error = errors[-1] if errors else "No TWSE ETF daily-trade row matched in the last 6 days."
+    return {
+        "close": float("nan"),
+        "nav": float("nan"),
+        "premium_pct": float("nan"),
+        "date": None,
+        "source": "TWSE etfDailyTrade",
+        "error": last_error,
+    }
+
+
+def _fetch_twse_etf_pcf_snapshot(ticker_code: str) -> dict:
+    """Fetch ETF creation / redemption (PCF) snapshot.
+
+    Returns dict with: outstanding_units, source, date, error.
+    Returns NaN-filled record if endpoint shape changes.
+    """
+    today = datetime.now(TW_TZ).date()
+    errors: list[str] = []
+    try:
+        deadline_seconds = float(os.environ.get("ETF_OFFICIAL_FETCH_DEADLINE_SECONDS", "10") or 10.0)
+    except Exception:
+        deadline_seconds = 10.0
+    deadline = time.monotonic() + max(deadline_seconds, 1.0)
+
+    for offset in range(0, 6):
+        if time.monotonic() >= deadline:
+            break
+        trade_date = today - pd.Timedelta(days=offset)
+        date_str = trade_date.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/ETFortune/etfPCFList?response=json&date={date_str}"
+        try:
+            payload = _fetch_json_url(url, timeout=4)
+        except Exception as exc:
+            msg = str(exc)
+            if msg not in errors:
+                errors.append(msg)
+            continue
+        stat = str(payload.get("stat", "") or "")
+        if stat.startswith("很抱歉") or "查無" in stat or "無資料" in stat:
+            continue
+        rows = _tw_rows_from_payload(payload)
+        row = _match_row_by_security_code(rows, ticker_code)
+        if not row:
+            continue
+        outstanding = _safe_etf_float(_find_value_by_keywords(
+            row,
+            ("已發行受益權單位數", "受益權單位數", "受益單位數", "Outstanding"),
+        ))
+        return {
+            "outstanding_units": outstanding,
+            "date": trade_date.isoformat(),
+            "source": "TWSE etfPCFList",
+            "error": "",
+        }
+
+    last_error = errors[-1] if errors else "No TWSE etfPCFList row matched in the last 6 days."
+    return {
+        "outstanding_units": float("nan"),
+        "date": None,
+        "source": "TWSE etfPCFList",
+        "error": last_error,
+    }
+
+
+def _compute_active_etf_turnover_summary(daily_data: pd.DataFrame | None, ticker: str) -> dict:
+    """Compute 30D average turnover (in NTD) and 30D net price change.
+
+    Pure derivation off prefetched daily_data, so it costs nothing extra.
+    """
+    result = {
+        "avg_turnover_ntd_30d": float("nan"),
+        "latest_turnover_ntd": float("nan"),
+        "turnover_ratio": float("nan"),
+        "period_volume_total": float("nan"),
+    }
+    try:
+        prices = pd.Series(dtype="float64")
+        volumes = pd.Series(dtype="float64")
+        for candidate in dedupe_keep_order([
+            str(ticker or "").upper().strip(),
+            normalize_dashboard_ticker(ticker),
+            _active_etf_snapshot_ticker_key(ticker),
+        ]):
+            if not candidate:
+                continue
+            ps, _ = get_price_series(daily_data, candidate)
+            vs = get_series(daily_data, "Volume", candidate)
+            if ps is not None and not ps.empty:
+                prices = to_numeric_series(ps).dropna()
+            if vs is not None and not vs.empty:
+                volumes = to_numeric_series(vs).dropna()
+            if not prices.empty and not volumes.empty:
+                break
+        if prices.empty or volumes.empty:
+            return result
+        # align
+        joined = pd.concat([prices, volumes], axis=1, keys=["price", "volume"]).dropna()
+        if joined.empty:
+            return result
+        # TW market: Volume from yfinance is in shares; turnover_ntd = price * volume
+        joined["turnover"] = joined["price"] * joined["volume"]
+        last_30 = joined.tail(30)
+        result["avg_turnover_ntd_30d"] = float(last_30["turnover"].mean())
+        result["latest_turnover_ntd"] = float(joined["turnover"].iloc[-1])
+        avg_turnover = result["avg_turnover_ntd_30d"]
+        if avg_turnover and not pd.isna(avg_turnover):
+            result["turnover_ratio"] = float(result["latest_turnover_ntd"] / avg_turnover)
+        result["period_volume_total"] = float(joined["volume"].tail(30).sum())
+    except Exception:
+        pass
+    return result
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_active_etf_official_payload(ticker: str) -> dict:
+    """Aggregate official-data fetcher for active ETFs.
+
+    Returns dict with NAV / premium / outstanding units / source list /
+    fetched_at. Always returns a dict; never raises. Honours an env-level
+    deadline so it is safe to call from prefetch jobs.
+
+    The result is intentionally JSON-friendly so it can be embedded directly
+    into ``etf_official_payload`` inside the workspace snapshot without any
+    schema migration on Supabase (the column is JSONB).
+    """
+    fast_mode = str(os.environ.get("ACTIVE_ETF_PREFETCH_FAST_MODE", "") or "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+    base = {
+        "ticker": str(ticker or "").upper().strip(),
+        "nav": float("nan"),
+        "close": float("nan"),
+        "premium_pct": float("nan"),
+        "outstanding_units": float("nan"),
+        "source": ACTIVE_ETF_OFFICIAL_SOURCE_LABEL,
+        "errors": {},
+        "fetched_at": pd.Timestamp.now(tz=TW_TZ).isoformat(),
+        "status": "skipped" if fast_mode else "ready",
+    }
+    if fast_mode:
+        base["errors"]["mode"] = "Skipped during fast Prefetch; manual refresh fetches the latest official ETF data."
+        return base
+
+    code = ticker_base_code(ticker).upper().strip()
+    if not code:
+        base["status"] = "missing"
+        base["errors"]["ticker"] = "Cannot derive numeric code from ticker."
+        return base
+
+    daily_report = _fetch_twse_etf_daily_report(code)
+    pcf_report = _fetch_twse_etf_pcf_snapshot(code)
+
+    base["nav"] = float(daily_report.get("nav", float("nan")) or float("nan"))
+    base["close"] = float(daily_report.get("close", float("nan")) or float("nan"))
+    base["premium_pct"] = float(daily_report.get("premium_pct", float("nan")) or float("nan"))
+    base["outstanding_units"] = float(pcf_report.get("outstanding_units", float("nan")) or float("nan"))
+    base["nav_date"] = str(daily_report.get("date") or "")
+    base["pcf_date"] = str(pcf_report.get("date") or "")
+
+    if daily_report.get("error"):
+        base["errors"]["daily"] = str(daily_report.get("error"))
+    if pcf_report.get("error"):
+        base["errors"]["pcf"] = str(pcf_report.get("error"))
+
+    nav_ok = not pd.isna(base["nav"]) and not pd.isna(base["close"])
+    units_ok = not pd.isna(base["outstanding_units"])
+    if not nav_ok and not units_ok:
+        base["status"] = "missing"
+
+    return base
+
+
 def build_active_etf_holdings_changes(
     ticker: str,
     current_items: list[dict],
@@ -27071,11 +27533,27 @@ def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
     The TWSE T86 report is published after market close and the ETF filter can
     vary across TWSE response paths. Try the ETF filter first, then fall back to
     the all-securities T86 report so active ETFs are not missed.
+
+    v1.3.7: Added a hard deadline (``ETF_FLOW_FETCH_DEADLINE_SECONDS``) and
+    ``ETF_FLOW_FETCH_MAX_ATTEMPTS`` cap so prefetch jobs cannot hang on TWSE
+    rate limits. Defaults: 18 seconds and 24 attempts.
     """
     code = ticker_base_code(ticker).upper().strip()
     today = datetime.now(TW_TZ).date()
     errors: list[str] = []
     tried_urls: list[str] = []
+
+    # v1.3.7 budget controls
+    try:
+        deadline_seconds = float(os.environ.get("ETF_FLOW_FETCH_DEADLINE_SECONDS", "18") or 18.0)
+    except Exception:
+        deadline_seconds = 18.0
+    try:
+        max_attempts = int(os.environ.get("ETF_FLOW_FETCH_MAX_ATTEMPTS", "24") or 24)
+    except Exception:
+        max_attempts = 24
+    deadline = time.monotonic() + max(deadline_seconds, 1.0)
+    attempt_count = 0
 
     def _candidate_urls(date_str: str) -> list[tuple[str, str]]:
         base_paths = [
@@ -27099,10 +27577,15 @@ def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
         return urls
 
     for offset in range(0, 22):
+        if time.monotonic() >= deadline or attempt_count >= max_attempts:
+            break
         trade_date = today - pd.Timedelta(days=offset)
         date_str = trade_date.strftime("%Y%m%d")
 
         for source_label, url in _candidate_urls(date_str):
+            if time.monotonic() >= deadline or attempt_count >= max_attempts:
+                break
+            attempt_count += 1
             tried_urls.append(url)
             try:
                 payload = _twse_request_json(url)
@@ -27137,6 +27620,15 @@ def fetch_twse_etf_institutional_flow(ticker: str) -> dict:
                 if message not in errors:
                     errors.append(message)
                 continue
+
+    if time.monotonic() >= deadline:
+        timeout_note = f"T86 ETF lookup timed out after {attempt_count} attempts (deadline {deadline_seconds:.0f}s)."
+        if timeout_note not in errors:
+            errors.append(timeout_note)
+    elif attempt_count >= max_attempts:
+        cap_note = f"T86 ETF lookup hit max attempts cap ({max_attempts})."
+        if cap_note not in errors:
+            errors.append(cap_note)
 
     last_error = errors[-1] if errors else f"No T86 row matched ETF code {code} in the last 22 calendar days."
     return {
@@ -30722,9 +31214,25 @@ def generate_dashboard():
             st.warning(t("please_select_ticker"))
         return
 
-    with st.spinner(t("loading_data")):
-        daily_data = fetch_daily_data(dashboard_tickers, period, interval)
-        intraday_data = fetch_intraday_data(dashboard_tickers)
+    # v1.3.7: For Active ETF Lab, try to reconstruct daily / intraday frames
+    # from prefetched workspace snapshots first. This avoids 3-8s of yfinance
+    # latency on first paint when prefetch is healthy. We fall back to the
+    # live fetcher if any ticker is missing a usable snapshot.
+    daily_data = None
+    intraday_data = None
+    used_snapshot_market_data = False
+    if dashboard_mode == "Active ETF Lab":
+        restored = _restore_active_etf_market_data_from_snapshots(
+            dashboard_tickers, lens_meta=lens_meta
+        )
+        if restored is not None:
+            daily_data, intraday_data = restored
+            used_snapshot_market_data = True
+
+    if daily_data is None:
+        with st.spinner(t("loading_data")):
+            daily_data = fetch_daily_data(dashboard_tickers, period, interval)
+            intraday_data = fetch_intraday_data(dashboard_tickers)
 
     if daily_data is None or daily_data.empty:
         st.error(t("no_market_data"))
@@ -31219,6 +31727,153 @@ def _active_etf_compare_summary_cards(
     )
 
 
+# v1.3.7: New "Capital momentum" comparison card row, fed by etf_official_payload.
+def _format_active_etf_premium(value: float) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:+.2f}%"
+
+
+def _format_active_etf_units(value: float) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    abs_value = abs(float(value))
+    if abs_value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if abs_value >= 1_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    if abs_value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:,.0f}"
+
+
+def _format_active_etf_turnover(value: float, lang_zh: bool) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    # Turnover in NTD; show as 億 (zh) / B NTD (en) when large.
+    abs_value = abs(float(value))
+    if abs_value >= 100_000_000:
+        if lang_zh:
+            return f"{value / 100_000_000:.2f} 億"
+        return f"{value / 100_000_000:.2f}億 NTD"
+    if abs_value >= 1_000_000:
+        if lang_zh:
+            return f"{value / 1_000_000:.2f} 百萬"
+        return f"{value / 1_000_000:.2f}M NTD"
+    return f"{value:,.0f} NTD"
+
+
+def _format_active_etf_premium_delta(left: float, right: float, lang_zh: bool) -> str:
+    if left is None or right is None or pd.isna(left) or pd.isna(right):
+        return ""
+    diff = float(left) - float(right)
+    if pd.isna(diff):
+        return ""
+    if abs(diff) < 0.05:
+        return "差距 < 0.05%" if lang_zh else "<0.05% gap"
+    if diff > 0:
+        return f"A 高出 {diff:+.2f}%" if lang_zh else f"A higher by {diff:+.2f}%"
+    return f"B 高出 {-diff:+.2f}%" if lang_zh else f"B higher by {-diff:+.2f}%"
+
+
+def _active_etf_capital_momentum_cards(
+    left_label: str,
+    right_label: str,
+    left_official: dict,
+    right_official: dict,
+    lang_zh: bool,
+) -> None:
+    """v1.3.7: Render a four-card row comparing premium/discount, fund unit
+    base, latest turnover, and 30D average turnover for the two ETFs.
+
+    Designed to gracefully degrade: if any field is NaN, the card shows "—"
+    and a short note instead of breaking the layout.
+    """
+    left_official = dict(left_official or {})
+    right_official = dict(right_official or {})
+    left_premium = _safe_etf_float(left_official.get("premium_pct"))
+    right_premium = _safe_etf_float(right_official.get("premium_pct"))
+    left_units = _safe_etf_float(left_official.get("outstanding_units"))
+    right_units = _safe_etf_float(right_official.get("outstanding_units"))
+
+    left_turnover = dict(left_official.get("turnover", {}) or {})
+    right_turnover = dict(right_official.get("turnover", {}) or {})
+    left_avg_turnover = _safe_etf_float(left_turnover.get("avg_turnover_ntd_30d"))
+    right_avg_turnover = _safe_etf_float(right_turnover.get("avg_turnover_ntd_30d"))
+    left_latest_turnover = _safe_etf_float(left_turnover.get("latest_turnover_ntd"))
+    right_latest_turnover = _safe_etf_float(right_turnover.get("latest_turnover_ntd"))
+
+    has_any_data = any(
+        not pd.isna(v) for v in (
+            left_premium, right_premium,
+            left_units, right_units,
+            left_avg_turnover, right_avg_turnover,
+            left_latest_turnover, right_latest_turnover,
+        )
+    )
+    if not has_any_data:
+        # Don't render an empty grid; keep the layout clean.
+        return
+
+    title_premium = "折溢價對比" if lang_zh else "Premium / discount"
+    title_units = "流通單位數" if lang_zh else "Outstanding units"
+    title_latest_turnover = "今日成交金額" if lang_zh else "Latest turnover"
+    title_avg_turnover = "30日均成交金額" if lang_zh else "30D avg turnover"
+
+    premium_value = f"A {_format_active_etf_premium(left_premium)} · B {_format_active_etf_premium(right_premium)}"
+    premium_note = _format_active_etf_premium_delta(left_premium, right_premium, lang_zh) or (
+        "正值=溢價，負值=折價" if lang_zh else "Positive = premium · negative = discount"
+    )
+
+    units_value = f"A {_format_active_etf_units(left_units)} · B {_format_active_etf_units(right_units)}"
+    units_note = "規模代理：流通在外受益權單位" if lang_zh else "Size proxy: outstanding units"
+
+    latest_value = f"A {_format_active_etf_turnover(left_latest_turnover, lang_zh)} · B {_format_active_etf_turnover(right_latest_turnover, lang_zh)}"
+    latest_note = "由 daily price × volume 推算" if lang_zh else "Derived from price × volume"
+
+    avg_value = f"A {_format_active_etf_turnover(left_avg_turnover, lang_zh)} · B {_format_active_etf_turnover(right_avg_turnover, lang_zh)}"
+    avg_note = "近 30 個交易日平均" if lang_zh else "Last 30 trading sessions"
+
+    section_title = "資金動能對比" if lang_zh else "Capital momentum"
+    section_note = (
+        "用 TWSE 公開資料 + 已 prefetch 的價量序列推算；折溢價、流通單位數、成交金額一次看完。"
+        if lang_zh
+        else "Built from TWSE public data and prefetched price/volume series. Read premium, size, and turnover side-by-side."
+    )
+
+    st.markdown(
+        f"""
+        <div style="margin: 0.6rem 0 0.4rem 0;">
+            <div class="futures-metric-label" style="font-weight:600;">{escape(section_title)}</div>
+            <div class="futures-metric-note" style="font-size:0.85rem; opacity:0.78;">{escape(section_note)}</div>
+        </div>
+        <div class="futures-metric-grid etf-compare-summary-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 0.8rem;">
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_premium)}</div>
+                <div class="futures-metric-value" style="font-size: clamp(1.05rem, 1.6vw, 1.4rem);">{escape(premium_value)}</div>
+                <div class="futures-metric-note">{escape(premium_note)}</div>
+            </div>
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_units)}</div>
+                <div class="futures-metric-value" style="font-size: clamp(1.05rem, 1.6vw, 1.4rem);">{escape(units_value)}</div>
+                <div class="futures-metric-note">{escape(units_note)}</div>
+            </div>
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_latest_turnover)}</div>
+                <div class="futures-metric-value" style="font-size: clamp(1.05rem, 1.6vw, 1.4rem);">{escape(latest_value)}</div>
+                <div class="futures-metric-note">{escape(latest_note)}</div>
+            </div>
+            <div class="futures-metric-card">
+                <div class="futures-metric-label">{escape(title_avg_turnover)}</div>
+                <div class="futures-metric-value" style="font-size: clamp(1.05rem, 1.6vw, 1.4rem);">{escape(avg_value)}</div>
+                <div class="futures-metric-note">{escape(avg_note)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _active_etf_clean_lookthrough_snapshot(payload: dict) -> dict:
     return {
         str(key): _active_etf_lab_snapshot_safe(value)
@@ -31300,6 +31955,10 @@ def _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapsh
     right_flow_payload = dict((right_snapshot or {}).get("etf_flow_payload", {}) or {})
     left_flow = dict(left_flow_payload.get("record", {}) or {})
     right_flow = dict(right_flow_payload.get("record", {}) or {})
+    # v1.3.7: pull through the new official-data payload from each workspace
+    # snapshot so the pair-compare card row can read it without re-fetching.
+    left_official = dict((left_snapshot or {}).get("etf_official_payload", {}) or {})
+    right_official = dict((right_snapshot or {}).get("etf_official_payload", {}) or {})
     left_items = list(left_payload.get("items", []) or [])
     right_items = list(right_payload.get("items", []) or [])
     if not left_items and not right_items:
@@ -31412,6 +32071,8 @@ def _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapsh
         "right_payload": _active_etf_lab_snapshot_safe(right_payload),
         "left_flow": _active_etf_lab_snapshot_safe(left_flow),
         "right_flow": _active_etf_lab_snapshot_safe(right_flow),
+        "left_official": _active_etf_lab_snapshot_safe(left_official),
+        "right_official": _active_etf_lab_snapshot_safe(right_official),
         "common_count": len(common_keys),
         "left_unique_count": len(left_unique_keys),
         "right_unique_count": len(right_unique_keys),
@@ -32004,6 +32665,12 @@ def _persist_active_etf_pair_snapshot(snapshot: dict) -> dict:
     items[_active_etf_pair_snapshot_key(left_ticker, right_ticker)] = safe_snapshot
     store["items"] = items
     _write_active_etf_lab_snapshot_store(store)
+    # v1.3.7: also persist to Supabase using the synthetic-ticker encoding so
+    # prefetched pair compares warm up the Streamlit Cloud runtime.
+    try:
+        _upsert_supabase_active_etf_pair_snapshot(safe_snapshot)
+    except Exception:
+        pass
     return safe_snapshot
 
 
@@ -32023,14 +32690,17 @@ def _build_active_etf_pair_compare_snapshot(
     left_snapshot = existing_left
     right_snapshot = existing_right
 
-    needs_refresh = (
-        force_refresh
-        or not _active_etf_lab_snapshot_ready(existing_left)
-        or not _active_etf_lab_snapshot_ready(existing_right)
-    )
+    left_ready = _active_etf_lab_snapshot_ready(existing_left)
+    right_ready = _active_etf_lab_snapshot_ready(existing_right)
+    needs_refresh = force_refresh or not left_ready or not right_ready
+
     if needs_refresh:
         if not force_refresh:
             return _empty_active_etf_pair_snapshot(left_ticker, right_ticker)
+        # v1.3.7: Only rebuild the side(s) that actually need work, and only
+        # download daily/intraday for those tickers. When force_refresh is set
+        # by the user we still rebuild both, since they explicitly asked for
+        # fresh data on this pair.
         if force_refresh:
             _clear_active_etf_lab_refresh_caches()
         lens_meta = {
@@ -32038,31 +32708,44 @@ def _build_active_etf_pair_compare_snapshot(
             "interval": DEFAULT_INTERVAL,
             "title": DEFAULT_TREND_LENS,
         }
-        selected_tickers = dedupe_keep_order([left_ticker, right_ticker])
-        daily_data = fetch_daily_data(
-            selected_tickers,
-            str(lens_meta["period"]),
-            str(lens_meta["interval"]),
-        )
-        intraday_data = fetch_intraday_data(selected_tickers)
-        built_left = _build_active_etf_workspace_snapshot(
-            daily_data,
-            intraday_data,
-            left_ticker,
-            lens_meta=lens_meta,
-            force_market_refresh=False,
-        )
-        if _active_etf_lab_snapshot_ready(built_left):
-            left_snapshot = _persist_active_etf_workspace_snapshot(built_left)
-        built_right = _build_active_etf_workspace_snapshot(
-            daily_data,
-            intraday_data,
-            right_ticker,
-            lens_meta=lens_meta,
-            force_market_refresh=False,
-        )
-        if _active_etf_lab_snapshot_ready(built_right):
-            right_snapshot = _persist_active_etf_workspace_snapshot(built_right)
+        if force_refresh:
+            tickers_to_build = dedupe_keep_order([left_ticker, right_ticker])
+        else:
+            tickers_to_build = []
+            if not left_ready:
+                tickers_to_build.append(left_ticker)
+            if not right_ready:
+                tickers_to_build.append(right_ticker)
+            tickers_to_build = dedupe_keep_order(tickers_to_build)
+
+        if tickers_to_build:
+            daily_data = fetch_daily_data(
+                tickers_to_build,
+                str(lens_meta["period"]),
+                str(lens_meta["interval"]),
+            )
+            intraday_data = fetch_intraday_data(tickers_to_build)
+
+            if left_ticker in tickers_to_build:
+                built_left = _build_active_etf_workspace_snapshot(
+                    daily_data,
+                    intraday_data,
+                    left_ticker,
+                    lens_meta=lens_meta,
+                    force_market_refresh=False,
+                )
+                if _active_etf_lab_snapshot_ready(built_left):
+                    left_snapshot = _persist_active_etf_workspace_snapshot(built_left)
+            if right_ticker in tickers_to_build:
+                built_right = _build_active_etf_workspace_snapshot(
+                    daily_data,
+                    intraday_data,
+                    right_ticker,
+                    lens_meta=lens_meta,
+                    force_market_refresh=False,
+                )
+                if _active_etf_lab_snapshot_ready(built_right):
+                    right_snapshot = _persist_active_etf_workspace_snapshot(built_right)
 
     if not _active_etf_lab_snapshot_ready(left_snapshot) or not _active_etf_lab_snapshot_ready(right_snapshot):
         return _empty_active_etf_pair_snapshot(left_ticker, right_ticker)
@@ -32204,6 +32887,16 @@ def render_active_etf_pair_comparison(
         int(snapshot.get("right_unique_count", len(right_unique_keys)) or len(right_unique_keys)),
         overlap_weight_left,
         overlap_weight_right,
+        lang_zh,
+    )
+
+    # v1.3.7: New "Capital momentum" card row. Renders silently if both ETFs
+    # have no official data yet (e.g., during the very first cold start).
+    _active_etf_capital_momentum_cards(
+        left_label,
+        right_label,
+        dict(snapshot.get("left_official", {}) or {}),
+        dict(snapshot.get("right_official", {}) or {}),
         lang_zh,
     )
 
