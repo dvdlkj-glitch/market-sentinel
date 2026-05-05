@@ -3796,11 +3796,34 @@ ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00981A", "00982A", "00988A", "00990A", "00991A
 TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY = "__MARKET__"
 
 
+# v1.3.8.3: In-memory cache for the local snapshot JSON store. Without this,
+# every peek/load call re-reads and re-parses the entire JSON file, which can
+# accumulate to tens of MB once many ETFs are tracked. Keyed on file mtime so
+# external writes (other reruns / sessions) invalidate the cache automatically.
+_ACTIVE_ETF_LAB_STORE_CACHE: dict = {"mtime": 0.0, "items": None, "version": 0}
+
+
 def _active_etf_lab_snapshot_store() -> dict:
     empty_store = {"version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION, "items": {}}
     try:
         if not ACTIVE_ETF_LAB_SNAPSHOT_PATH.exists():
             return empty_store
+        mtime = ACTIVE_ETF_LAB_SNAPSHOT_PATH.stat().st_mtime
+    except Exception:
+        return empty_store
+
+    cache = _ACTIVE_ETF_LAB_STORE_CACHE
+    cached_items = cache.get("items")
+    if cache.get("mtime") == mtime and isinstance(cached_items, dict):
+        # Fast path: file unchanged, reuse parsed items dict. We return a
+        # fresh top-level wrapper so callers that do `store["items"] = ...`
+        # don't accidentally rebind our cache entry, but we share the items
+        # dict reference (callers always copy via `dict(store.get("items"))`
+        # before mutating, so this is safe and avoids deep-copy overhead on
+        # multi-MB stores).
+        return {"version": cache.get("version") or ACTIVE_ETF_LAB_SNAPSHOT_VERSION, "items": cached_items}
+
+    try:
         payload = json.loads(ACTIVE_ETF_LAB_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     except Exception:
         return empty_store
@@ -3809,17 +3832,19 @@ def _active_etf_lab_snapshot_store() -> dict:
     items = payload.get("items")
     if not isinstance(items, dict):
         items = {}
-    return {
-        "version": int(payload.get("version", ACTIVE_ETF_LAB_SNAPSHOT_VERSION) or ACTIVE_ETF_LAB_SNAPSHOT_VERSION),
-        "items": items,
-    }
+    version = int(payload.get("version", ACTIVE_ETF_LAB_SNAPSHOT_VERSION) or ACTIVE_ETF_LAB_SNAPSHOT_VERSION)
+    cache["mtime"] = mtime
+    cache["items"] = items
+    cache["version"] = version
+    return {"version": version, "items": items}
 
 
 def _write_active_etf_lab_snapshot_store(store: dict) -> None:
     ACTIVE_ETF_LAB_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    items_payload = dict((store or {}).get("items", {}) or {})
     payload = {
         "version": ACTIVE_ETF_LAB_SNAPSHOT_VERSION,
-        "items": dict((store or {}).get("items", {}) or {}),
+        "items": items_payload,
     }
     try:
         ACTIVE_ETF_LAB_SNAPSHOT_PATH.write_text(
@@ -3827,7 +3852,17 @@ def _write_active_etf_lab_snapshot_store(store: dict) -> None:
             encoding="utf-8",
         )
     except Exception:
-        pass
+        return
+    # v1.3.8.3: Update the in-memory cache directly so the very next read
+    # does not have to re-parse the file we just wrote.
+    try:
+        new_mtime = ACTIVE_ETF_LAB_SNAPSHOT_PATH.stat().st_mtime
+    except Exception:
+        new_mtime = 0.0
+    cache = _ACTIVE_ETF_LAB_STORE_CACHE
+    cache["mtime"] = new_mtime
+    cache["items"] = items_payload
+    cache["version"] = ACTIVE_ETF_LAB_SNAPSHOT_VERSION
 
 
 def _active_etf_snapshot_as_of_date(snapshot: dict | None) -> str:
@@ -4250,18 +4285,27 @@ def _load_local_active_etf_snapshot(
 
 
 def inspect_active_etf_workspace_snapshot(ticker: str, lens_meta: dict | None = None) -> tuple[dict | None, str]:
+    # v1.3.8.3: When lens_meta is None (the most common path -- peek and pair
+    # compare both pass None), the "exact" and "any-lens" branches issue
+    # IDENTICAL queries (no period/interval/lens_title filter to begin with),
+    # so the second call is pure waste. The Supabase reader is wrapped with
+    # @st.cache_data which keys on argument tuples, so even repeating the
+    # nominally-identical pair returns triggers a second cache slot lookup,
+    # paying the round trip again on cache miss. Skip the duplicate work.
     remote_snapshot = _load_supabase_active_etf_snapshot(ticker, lens_meta=lens_meta)
     if _active_etf_lab_snapshot_ready(remote_snapshot):
         return remote_snapshot, "remote_exact"
-    fallback_remote_snapshot = _load_supabase_active_etf_snapshot(ticker, allow_any_lens=True)
-    if _active_etf_lab_snapshot_ready(fallback_remote_snapshot):
-        return fallback_remote_snapshot, "remote_fallback"
+    if lens_meta is not None:
+        fallback_remote_snapshot = _load_supabase_active_etf_snapshot(ticker, allow_any_lens=True)
+        if _active_etf_lab_snapshot_ready(fallback_remote_snapshot):
+            return fallback_remote_snapshot, "remote_fallback"
     local_snapshot = _load_local_active_etf_snapshot(ticker, lens_meta=lens_meta)
     if _active_etf_lab_snapshot_ready(local_snapshot):
         return local_snapshot, "local_exact"
-    fallback_local_snapshot = _load_local_active_etf_snapshot(ticker, allow_any_lens=True)
-    if _active_etf_lab_snapshot_ready(fallback_local_snapshot):
-        return fallback_local_snapshot, "local_fallback"
+    if lens_meta is not None:
+        fallback_local_snapshot = _load_local_active_etf_snapshot(ticker, allow_any_lens=True)
+        if _active_etf_lab_snapshot_ready(fallback_local_snapshot):
+            return fallback_local_snapshot, "local_fallback"
     return None, "missing"
 
 
@@ -4278,37 +4322,42 @@ def _peek_active_etf_workspace_snapshot_exact(ticker: str, lens_meta: dict | Non
 
 
 def peek_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
-    left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
-    right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
-    # Path A (cheapest): both workspace snapshots are ready, so we synthesize
-    # the pair compare in-memory. v1.3.8.2: pass mirror_supabase=False so
-    # the user does not pay the ~500ms Supabase write on a read path. The
-    # Supabase row is populated by the prefetch job, not here.
-    if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
-        synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
-        if _active_etf_lab_snapshot_ready(synthesized):
-            return _persist_active_etf_pair_snapshot(synthesized, mirror_supabase=False)
+    # v1.3.8.3: Path order changed to C -> B -> A so prefetch warm-ups land
+    # the user on a single ~50-300ms cached Supabase read instead of paying
+    # 2 workspace lookups + in-memory synthesis (typically 600-2000ms).
+    #
+    # Path C (FAST when prefetch ran): direct Supabase pair-compare lookup.
+    # _load_supabase_active_etf_pair_snapshot is wrapped with @st.cache_data
+    # (ttl=300s), so the second visit within 5 minutes is essentially free.
+    try:
+        remote = _load_supabase_active_etf_pair_snapshot(left_ticker, right_ticker)
+    except Exception:
+        remote = None
+    if _active_etf_lab_snapshot_ready(remote):
+        # Mirror to local for next-time speed; do NOT mirror back to Supabase
+        # (we just READ from there, writing the same payload back is a wasted
+        # round trip).
+        try:
+            return _persist_active_etf_pair_snapshot(remote, mirror_supabase=False)
+        except Exception:
+            return remote
+
     # Path B: a previous run already wrote a pair snapshot to the local JSON
     # store on this machine.
     store = _active_etf_lab_snapshot_store()
     snapshot = (store.get("items", {}) or {}).get(_active_etf_pair_snapshot_key(left_ticker, right_ticker))
     if _active_etf_lab_snapshot_ready(snapshot):
         return snapshot
-    # Path C (v1.3.7): the GitHub Actions prefetch job may have warmed up this
-    # pair on a different machine. Pull it back from Supabase. v1.3.8.2:
-    # mirror_supabase=False here too -- we just READ from Supabase, writing
-    # the same payload right back is a wasted round trip.
-    try:
-        remote = _load_supabase_active_etf_pair_snapshot(left_ticker, right_ticker)
-    except Exception:
-        remote = None
-    if _active_etf_lab_snapshot_ready(remote):
-        # Mirror the remote pair snapshot into the local store so subsequent
-        # reads on this machine are even faster.
-        try:
-            return _persist_active_etf_pair_snapshot(remote, mirror_supabase=False)
-        except Exception:
-            return remote
+
+    # Path A (most expensive): synthesize from the two workspace snapshots.
+    # This is only reached when both Path C and Path B miss, e.g. a pair the
+    # prefetch job has not been configured to warm up yet.
+    left_snapshot = peek_active_etf_workspace_snapshot(left_ticker, lens_meta=None)
+    right_snapshot = peek_active_etf_workspace_snapshot(right_ticker, lens_meta=None)
+    if _active_etf_lab_snapshot_ready(left_snapshot) and _active_etf_lab_snapshot_ready(right_snapshot):
+        synthesized = _build_active_etf_pair_compare_snapshot_from_workspace_snapshots(left_snapshot, right_snapshot)
+        if _active_etf_lab_snapshot_ready(synthesized):
+            return _persist_active_etf_pair_snapshot(synthesized, mirror_supabase=False)
     return None
 
 
@@ -4346,6 +4395,17 @@ def _clear_active_etf_lab_refresh_caches() -> None:
             cached_func.clear()
         except Exception:
             pass
+    # v1.3.8.3: also reset the local store mtime cache so the next read is
+    # forced to re-parse from disk. Important for force_refresh paths where
+    # the user explicitly asked for fresh data.
+    try:
+        cache = globals().get("_ACTIVE_ETF_LAB_STORE_CACHE")
+        if isinstance(cache, dict):
+            cache["mtime"] = 0.0
+            cache["items"] = None
+            cache["version"] = 0
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
