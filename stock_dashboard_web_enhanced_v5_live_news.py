@@ -1,28 +1,37 @@
 #!/usr/bin/env python
 """
-Version: HORIZON Release LEO Supply Chain v1.3.7
+Version: HORIZON Release LEO Supply Chain v1.3.8
 Updated: 2026-05-05
-Highlights (v1.3.7 patch over v1.3.6):
+Highlights (v1.3.8 patch over v1.3.7):
+- NEW: Redesigned Active ETF compare board (render_active_etf_compare_v2_dashboard)
+  matching the user-provided design spec. Single coherent layout: header with
+  decorative chart art + chips, 4 top metric cards (common / A unique / B unique
+  / overlap weight), 3 middle cards (premium-discount VS, outstanding units,
+  capital momentum with today + 30D), 2 bottom cards (venn + 4 insight tiles),
+  and footer with disclaimer + data source + update time.
+- NEW: Auto-generated 4-tile insight cards. Reads overlap weight, bucket focus,
+  and 30D turnover off the existing snapshot to surface "重疊低·分散佳",
+  "A 聚焦{theme}", "B 聚焦{theme}", "A/B 流動性領先" style narratives.
+- Replaces the v1.3.7 stack of (summary cards + capital momentum + strategy
+  summary + bucket compare) inside render_active_etf_pair_comparison.
+  The detail tables (focus rows, common holdings, unique holdings) below are
+  unchanged.
+- All v1.3.7 capabilities carry over (pair-compare prefetch via Supabase,
+  ETF official-data fetcher, snapshot-based daily/intraday restore, etc.).
+Highlights from v1.3.7:
 - Removed duplicate function definitions for fetch_twse_etf_institutional_flow,
   render_active_etf_tracker_section, _active_etf_holdings_map. The kept versions
   enforce a hard deadline so prefetch jobs no longer hang on TWSE rate limits.
-- Active ETF Lab now restores prefetched daily/intraday frames from snapshots
-  before falling back to live yfinance, removing 3-8s of first-paint waiting.
+- Active ETF Lab restores prefetched daily/intraday frames from snapshots
+  before falling back to live yfinance.
 - Pair compare no longer rebuilds the side that already has a ready snapshot.
-- New ETF official-data fetcher (NAV, premium/discount, fund size, creation/
-  redemption units, average daily turnover) wired into the workspace snapshot
-  via a new etf_official_payload field. JSONB additive only - no Supabase
-  schema migration required.
-- New Active ETF compare "Capital momentum" card showing premium/discount,
-  fund size, 30D net creation, expense ratio, 30D turnover side-by-side.
-- NEW: Pair compare prefetch job (prefetch_active_etf_pair_compare_snapshots_job)
-  warms up dual-ETF compare snapshots in Supabase using a synthetic ticker key
-  ("PAIR::A::B"). The first time a user opens a configured pair, the compare
-  is served straight from Supabase with no synthesis or fetch -- effectively
-  zero wait. Configurable via ACTIVE_ETF_SNAPSHOT_PAIRS env var; defaults to
-  all unordered combinations of configured tickers (capped at 24 pairs).
-- peek_active_etf_pair_snapshot now has a Path C fallback that reads from
-  Supabase when neither workspace synthesis nor the local store is available.
+- ETF official-data fetcher (NAV, premium/discount, fund size, units,
+  turnover) wired into the workspace snapshot via etf_official_payload (JSONB
+  additive only - no Supabase schema migration).
+- Pair compare prefetch job warms up Supabase via synthetic ticker key
+  ("PAIR::A::B"). First-time pair selection now reads straight from Supabase
+  with no synthesis or fetch.
+- peek_active_etf_pair_snapshot has a Path C Supabase fallback.
 - Cleaned up dead code (_ensure_bundles).
 Carry-overs from v1.3.6:
 - Taiwan Futures Lab with direction-aware break-even planning.
@@ -31874,6 +31883,1271 @@ def _active_etf_capital_momentum_cards(
     )
 
 
+# ===========================================================================
+# v1.3.8: Redesigned Active ETF compare dashboard (from user-provided design)
+# ---------------------------------------------------------------------------
+# This module renders a single, cohesive "compare board" matching the new
+# design spec. It REPLACES the per-section calls (summary cards + capital
+# momentum + strategy summary + bucket compare) used in v1.3.7. The detail
+# tables (focus rows, common holdings, unique holdings) are kept untouched.
+#
+# Data flow: reads everything from the existing pair-compare snapshot dict
+# (and falls back gracefully for missing fields), so no schema migration.
+# ===========================================================================
+def _inject_active_etf_compare_v2_css() -> None:
+    """Inject scoped styles for the v1.3.8 compare board. Idempotent per session."""
+    if st.session_state.get("_etf_cv2_css_injected", False):
+        return
+    st.session_state["_etf_cv2_css_injected"] = True
+    st.markdown(
+        """
+        <style>
+        .etf-cv2-shell {
+            background: linear-gradient(180deg, rgba(11,18,32,0.92) 0%, rgba(8,14,28,0.85) 100%);
+            border: 1px solid rgba(70,140,200,0.18);
+            border-radius: 18px;
+            padding: 1.25rem 1.45rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .etf-cv2-shell::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 92% 8%, rgba(45,212,191,0.08), transparent 35%),
+                        radial-gradient(circle at 5% 90%, rgba(96,165,250,0.06), transparent 40%);
+            pointer-events: none;
+        }
+        .etf-cv2-shell > * { position: relative; z-index: 1; }
+        .etf-cv2-header {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 1rem;
+            align-items: start;
+            margin-bottom: 1.1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .etf-cv2-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            color: #5eead4;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.5rem;
+        }
+        .etf-cv2-kicker-dot {
+            width: 7px; height: 7px;
+            background: #5eead4;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #5eead4;
+        }
+        .etf-cv2-title {
+            font-size: 1.55rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.3;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.005em;
+        }
+        .etf-cv2-copy {
+            font-size: 0.86rem;
+            color: rgba(255,255,255,0.62);
+            line-height: 1.55;
+            margin-bottom: 0.85rem;
+        }
+        .etf-cv2-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .etf-cv2-chip {
+            background: rgba(40,80,120,0.25);
+            border: 1px solid rgba(80,160,220,0.22);
+            border-radius: 999px;
+            padding: 0.35rem 0.85rem;
+            font-size: 0.74rem;
+            color: rgba(255,255,255,0.78);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .etf-cv2-chip.primary {
+            background: rgba(45,212,191,0.14);
+            border-color: rgba(45,212,191,0.42);
+            color: #5eead4;
+        }
+        .etf-cv2-chip-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+        }
+        .etf-cv2-chip-dot.green { background: #2dd4bf; box-shadow: 0 0 6px #2dd4bf; }
+        .etf-cv2-chip-dot.blue  { background: #60a5fa; box-shadow: 0 0 6px #60a5fa; }
+        .etf-cv2-header-art {
+            opacity: 0.85;
+            margin-top: 0.25rem;
+        }
+
+        /* Top metric grid (4 cards) */
+        .etf-cv2-top-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.85rem;
+            margin-bottom: 0.95rem;
+        }
+        .etf-cv2-mc {
+            background: linear-gradient(180deg, rgba(20,30,50,0.55) 0%, rgba(12,20,35,0.55) 100%);
+            border: 1px solid rgba(60,120,180,0.18);
+            border-radius: 14px;
+            padding: 1rem 1.15rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            min-height: 116px;
+            position: relative;
+            transition: transform 0.18s ease, border-color 0.18s ease;
+        }
+        .etf-cv2-mc:hover { transform: translateY(-2px); border-color: rgba(80,160,220,0.40); }
+        .etf-cv2-mc-icon {
+            flex: 0 0 56px;
+            width: 56px; height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(45,212,191,0.10);
+            border: 1.5px solid rgba(45,212,191,0.42);
+        }
+        .etf-cv2-mc-icon.green { background: rgba(45,212,191,0.10); border-color: rgba(45,212,191,0.42); }
+        .etf-cv2-mc-icon.blue  { background: rgba(96,165,250,0.10); border-color: rgba(96,165,250,0.42); }
+        .etf-cv2-mc-icon.purple{ background: rgba(168,85,247,0.10); border-color: rgba(168,85,247,0.42); }
+        .etf-cv2-mc-icon-letter {
+            font-size: 1.45rem;
+            font-weight: 700;
+            color: #5eead4;
+        }
+        .etf-cv2-mc-icon-letter.blue { color: #93c5fd; }
+        .etf-cv2-mc-body { flex: 1 1 auto; min-width: 0; }
+        .etf-cv2-mc-label {
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.66);
+            margin-bottom: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+        .etf-cv2-mc-info {
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.32);
+            cursor: help;
+        }
+        .etf-cv2-mc-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #5eead4;
+            line-height: 1.05;
+            letter-spacing: -0.02em;
+        }
+        .etf-cv2-mc-value.blue   { color: #93c5fd; }
+        .etf-cv2-mc-value.purple { color: #c4b5fd; }
+        .etf-cv2-mc-value.gradient {
+            background: linear-gradient(90deg, #5eead4 0%, #93c5fd 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 1.55rem;
+        }
+        .etf-cv2-mc-note {
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.5);
+            margin-top: 0.25rem;
+            line-height: 1.4;
+        }
+
+        /* Middle 3 cards */
+        .etf-cv2-mid-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.85rem;
+            margin-bottom: 0.95rem;
+        }
+        .etf-cv2-card {
+            background: linear-gradient(180deg, rgba(20,30,50,0.50) 0%, rgba(12,20,35,0.55) 100%);
+            border: 1px solid rgba(60,120,180,0.18);
+            border-radius: 14px;
+            padding: 1.1rem 1.2rem;
+            display: flex;
+            flex-direction: column;
+        }
+        .etf-cv2-card-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .etf-cv2-card-info {
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.32);
+            margin-left: auto;
+            cursor: help;
+        }
+
+        /* Premium VS layout */
+        .etf-cv2-vs-block {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 0.65rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .etf-cv2-vs-side { text-align: center; min-width: 0; }
+        .etf-cv2-vs-side-name {
+            font-size: 0.74rem;
+            font-weight: 600;
+            color: rgba(255,255,255,0.72);
+            margin-bottom: 0.35rem;
+            line-height: 1.3;
+            word-break: keep-all;
+        }
+        .etf-cv2-vs-side-name.green { color: #5eead4; }
+        .etf-cv2-vs-side-name.blue  { color: #93c5fd; }
+        .etf-cv2-vs-side-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+        }
+        .etf-cv2-vs-pill {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: rgba(255,255,255,0.5);
+            padding: 0.3rem 0.6rem;
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 999px;
+            letter-spacing: 0.05em;
+        }
+        .etf-cv2-premium-track {
+            position: relative;
+            height: 12px;
+            background: linear-gradient(90deg, rgba(45,212,191,0.55) 0%, rgba(255,255,255,0.18) 50%, rgba(96,165,250,0.55) 100%);
+            border-radius: 999px;
+            margin: 0.7rem 0 0.55rem 0;
+        }
+        .etf-cv2-premium-marker {
+            position: absolute;
+            top: -3px;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: #fff;
+            border: 2px solid #0a1020;
+            box-shadow: 0 0 10px rgba(255,255,255,0.55);
+            transform: translateX(-50%);
+        }
+        .etf-cv2-premium-marker.green { box-shadow: 0 0 10px rgba(94,234,212,0.85); }
+        .etf-cv2-premium-marker.blue  { box-shadow: 0 0 10px rgba(147,197,253,0.85); }
+        .etf-cv2-premium-legend {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.55);
+            margin-bottom: 0.5rem;
+        }
+
+        /* Bar chart rows */
+        .etf-cv2-bar-row {
+            display: grid;
+            grid-template-columns: 36px auto 1fr auto;
+            align-items: center;
+            gap: 0.7rem;
+            padding: 0.5rem 0;
+        }
+        .etf-cv2-bar-icon {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.85rem;
+            color: #fff;
+            box-shadow: 0 0 8px rgba(0,0,0,0.25);
+        }
+        .etf-cv2-bar-icon.green {
+            background: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 100%);
+        }
+        .etf-cv2-bar-icon.blue {
+            background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+        }
+        .etf-cv2-bar-label {
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.78);
+            line-height: 1.3;
+            max-width: 130px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .etf-cv2-bar-label-row1 {
+            font-weight: 600;
+            color: #fff;
+            font-size: 0.8rem;
+        }
+        .etf-cv2-bar-label-row2 {
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.55);
+        }
+        .etf-cv2-bar-track {
+            height: 10px;
+            background: rgba(60,90,130,0.22);
+            border-radius: 999px;
+            overflow: hidden;
+            position: relative;
+        }
+        .etf-cv2-bar-fill {
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.4s ease;
+        }
+        .etf-cv2-bar-fill.green {
+            background: linear-gradient(90deg, #2dd4bf 0%, #5eead4 100%);
+            box-shadow: 0 0 8px rgba(45,212,191,0.45);
+        }
+        .etf-cv2-bar-fill.blue {
+            background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+            box-shadow: 0 0 8px rgba(96,165,250,0.45);
+        }
+        .etf-cv2-bar-value {
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: #fff;
+            white-space: nowrap;
+            min-width: 70px;
+            text-align: right;
+        }
+
+        /* Turnover groups */
+        .etf-cv2-turnover-group {
+            display: grid;
+            grid-template-columns: 64px 1fr;
+            gap: 0.7rem;
+            align-items: center;
+            padding: 0.6rem 0;
+            border-bottom: 1px dashed rgba(255,255,255,0.06);
+        }
+        .etf-cv2-turnover-group:last-of-type { border-bottom: none; }
+        .etf-cv2-turnover-icon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255,255,255,0.7);
+            font-size: 1.2rem;
+        }
+        .etf-cv2-turnover-icon-label {
+            font-size: 0.66rem;
+            color: rgba(255,255,255,0.55);
+            margin-top: 0.2rem;
+            text-align: center;
+            line-height: 1.2;
+        }
+        .etf-cv2-turnover-rows { display: flex; flex-direction: column; gap: 0.35rem; }
+        .etf-cv2-turnover-row {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 0.6rem;
+            align-items: center;
+        }
+        .etf-cv2-turnover-name {
+            font-size: 0.76rem;
+            color: rgba(255,255,255,0.78);
+            font-weight: 500;
+            white-space: nowrap;
+            max-width: 130px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .etf-cv2-turnover-name.green { color: #5eead4; }
+        .etf-cv2-turnover-name.blue  { color: #93c5fd; }
+        .etf-cv2-turnover-track {
+            height: 8px;
+            background: rgba(60,90,130,0.22);
+            border-radius: 999px;
+            overflow: hidden;
+        }
+        .etf-cv2-turnover-fill { height: 100%; border-radius: 999px; }
+        .etf-cv2-turnover-fill.green {
+            background: linear-gradient(90deg, #2dd4bf 0%, #5eead4 100%);
+        }
+        .etf-cv2-turnover-fill.blue {
+            background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+        }
+        .etf-cv2-turnover-value {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #fff;
+            white-space: nowrap;
+            min-width: 70px;
+            text-align: right;
+        }
+
+        .etf-cv2-tip {
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.45);
+            margin-top: auto;
+            padding-top: 0.7rem;
+            line-height: 1.55;
+            border-top: 1px dashed rgba(255,255,255,0.08);
+        }
+
+        /* Bottom 2 cards */
+        .etf-cv2-bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.85rem;
+        }
+        .etf-cv2-venn-row {
+            display: grid;
+            grid-template-columns: 230px 1fr;
+            gap: 1rem;
+            align-items: center;
+        }
+        .etf-cv2-venn-svg-wrap {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .etf-cv2-venn-insights {
+            display: flex;
+            flex-direction: column;
+            gap: 0.65rem;
+        }
+        .etf-cv2-venn-insight {
+            background: rgba(15,25,40,0.55);
+            border: 1px solid rgba(60,120,180,0.16);
+            border-left: 3px solid #5eead4;
+            border-radius: 10px;
+            padding: 0.75rem 0.95rem;
+        }
+        .etf-cv2-venn-insight.blue { border-left-color: #93c5fd; }
+        .etf-cv2-venn-insight-title {
+            font-size: 0.86rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 0.3rem;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .etf-cv2-venn-insight-icon {
+            color: #5eead4;
+            font-size: 0.95rem;
+        }
+        .etf-cv2-venn-insight.blue .etf-cv2-venn-insight-icon { color: #93c5fd; }
+        .etf-cv2-venn-insight-copy {
+            font-size: 0.74rem;
+            color: rgba(255,255,255,0.62);
+            line-height: 1.55;
+        }
+
+        /* 4-tile insight grid */
+        .etf-cv2-insights-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.7rem;
+        }
+        .etf-cv2-insight-card {
+            background: rgba(15,25,40,0.55);
+            border: 1px solid rgba(60,120,180,0.16);
+            border-radius: 12px;
+            padding: 0.95rem 0.9rem;
+            text-align: center;
+            transition: transform 0.18s ease, border-color 0.18s ease;
+        }
+        .etf-cv2-insight-card:hover { transform: translateY(-2px); border-color: rgba(80,160,220,0.36); }
+        .etf-cv2-insight-icon {
+            width: 42px; height: 42px;
+            margin: 0 auto 0.55rem auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .etf-cv2-insight-title {
+            font-size: 0.86rem;
+            font-weight: 600;
+            color: #5eead4;
+            margin-bottom: 0.4rem;
+        }
+        .etf-cv2-insight-title.blue   { color: #93c5fd; }
+        .etf-cv2-insight-title.purple { color: #c4b5fd; }
+        .etf-cv2-insight-copy {
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.55;
+        }
+
+        /* Footer */
+        .etf-cv2-footer {
+            margin-top: 1rem;
+            padding-top: 0.85rem;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.7rem;
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.42);
+        }
+        .etf-cv2-footer-left { flex: 1 1 auto; min-width: 220px; }
+        .etf-cv2-footer-right { display: flex; gap: 1rem; }
+
+        /* Responsive collapse */
+        @media (max-width: 1180px) {
+            .etf-cv2-top-grid { grid-template-columns: repeat(2, 1fr); }
+            .etf-cv2-mid-grid { grid-template-columns: 1fr; }
+            .etf-cv2-bottom-grid { grid-template-columns: 1fr; }
+            .etf-cv2-venn-row { grid-template-columns: 200px 1fr; }
+        }
+        @media (max-width: 720px) {
+            .etf-cv2-top-grid { grid-template-columns: 1fr; }
+            .etf-cv2-insights-grid { grid-template-columns: 1fr; }
+            .etf-cv2-venn-row { grid-template-columns: 1fr; }
+            .etf-cv2-header { grid-template-columns: 1fr; }
+            .etf-cv2-header-art { display: none; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _etf_cv2_minify_html(html_text: str) -> str:
+    """Strip leading whitespace from every line and drop empty lines.
+
+    Streamlit pipes ``st.markdown(html, unsafe_allow_html=True)`` through a
+    CommonMark parser before rendering. CommonMark treats any line indented
+    by four or more spaces as the start of a code block, which causes nested
+    HTML (with normal Python-style indentation) to break apart and surface
+    raw <div> tags in the rendered output.
+
+    Flattening the HTML to a single line of tokens removes that ambiguity
+    while preserving inner-text whitespace (since each tag's text content
+    sits on the same line as its tags in our builders).
+    """
+    if not html_text:
+        return ""
+    return " ".join(line.strip() for line in html_text.split("\n") if line.strip())
+
+
+def _etf_cv2_decorative_chart_svg() -> str:
+    """The little decorative chart in the top-right header corner."""
+    return """
+    <svg class="etf-cv2-header-art" viewBox="0 0 180 90" width="180" height="90" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <linearGradient id="cv2HdrA" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#2dd4bf"/>
+                <stop offset="100%" stop-color="#60a5fa"/>
+            </linearGradient>
+        </defs>
+        <rect x="14"  y="48" width="14" height="32" rx="3" fill="rgba(45,212,191,0.55)"/>
+        <rect x="38"  y="34" width="14" height="46" rx="3" fill="rgba(94,234,212,0.7)"/>
+        <rect x="62"  y="22" width="14" height="58" rx="3" fill="rgba(96,165,250,0.7)"/>
+        <rect x="86"  y="40" width="14" height="40" rx="3" fill="rgba(147,197,253,0.6)"/>
+        <rect x="110" y="14" width="14" height="66" rx="3" fill="rgba(94,234,212,0.85)"/>
+        <rect x="134" y="28" width="14" height="52" rx="3" fill="rgba(147,197,253,0.85)"/>
+        <polyline points="21,46 45,32 69,20 93,38 117,12 141,26 165,18"
+                  fill="none" stroke="url(#cv2HdrA)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="21"  cy="46" r="2.5" fill="#5eead4"/>
+        <circle cx="45"  cy="32" r="2.5" fill="#5eead4"/>
+        <circle cx="69"  cy="20" r="2.5" fill="#93c5fd"/>
+        <circle cx="93"  cy="38" r="2.5" fill="#93c5fd"/>
+        <circle cx="117" cy="12" r="2.5" fill="#5eead4"/>
+        <circle cx="141" cy="26" r="2.5" fill="#93c5fd"/>
+        <circle cx="165" cy="18" r="2.5" fill="#5eead4"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_intersection_svg(color_a: str = "#5eead4", color_b: str = "#93c5fd") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="14" cy="18" r="10" fill="none" stroke="{color_a}" stroke-width="2"/>
+        <circle cx="22" cy="18" r="10" fill="none" stroke="{color_b}" stroke-width="2"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_globe_svg(color: str = "#93c5fd") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="30" height="30" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="18" cy="18" r="12" fill="none" stroke="{color}" stroke-width="1.8"/>
+        <ellipse cx="18" cy="18" rx="5" ry="12" fill="none" stroke="{color}" stroke-width="1.5"/>
+        <line x1="6"  y1="18" x2="30" y2="18" stroke="{color}" stroke-width="1.5"/>
+        <line x1="18" y1="6"  x2="18" y2="30" stroke="{color}" stroke-width="1.2" opacity="0.6"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_chart_svg(color: str = "#5eead4") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="30" height="30" xmlns="http://www.w3.org/2000/svg">
+        <polyline points="4,28 12,20 18,24 26,12 32,16" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="4" cy="28" r="1.8" fill="{color}"/>
+        <circle cx="12" cy="20" r="1.8" fill="{color}"/>
+        <circle cx="18" cy="24" r="1.8" fill="{color}"/>
+        <circle cx="26" cy="12" r="1.8" fill="{color}"/>
+        <circle cx="32" cy="16" r="1.8" fill="{color}"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_bars_svg(color: str = "#5eead4") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="30" height="30" xmlns="http://www.w3.org/2000/svg">
+        <rect x="6"  y="20" width="5" height="12" rx="1" fill="{color}" opacity="0.55"/>
+        <rect x="14" y="14" width="5" height="18" rx="1" fill="{color}" opacity="0.75"/>
+        <rect x="22" y="8"  width="5" height="24" rx="1" fill="{color}"/>
+        <polyline points="8,18 16,12 24,6 30,10" fill="none" stroke="{color}" stroke-width="1.5" opacity="0.85"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_percent_svg(color: str = "#c4b5fd") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="30" height="30" xmlns="http://www.w3.org/2000/svg">
+        <line x1="9" y1="27" x2="27" y2="9" stroke="{color}" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="11" cy="11" r="3.5" fill="none" stroke="{color}" stroke-width="2"/>
+        <circle cx="25" cy="25" r="3.5" fill="none" stroke="{color}" stroke-width="2"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_coins_svg(color: str = "#5eead4") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="34" height="34" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="18" cy="12" rx="9" ry="3.5" fill="none" stroke="{color}" stroke-width="1.6"/>
+        <path d="M9 12 V18 C9 19.93 13.03 21.5 18 21.5 C22.97 21.5 27 19.93 27 18 V12" fill="none" stroke="{color}" stroke-width="1.6"/>
+        <path d="M9 18 V24 C9 25.93 13.03 27.5 18 27.5 C22.97 27.5 27 25.93 27 24 V18" fill="none" stroke="{color}" stroke-width="1.6" opacity="0.7"/>
+    </svg>
+    """
+
+
+def _etf_cv2_icon_trending_svg(color: str = "#5eead4") -> str:
+    return f"""
+    <svg viewBox="0 0 36 36" width="34" height="34" xmlns="http://www.w3.org/2000/svg">
+        <polyline points="4,26 12,18 18,22 24,12 32,8" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="26,8 32,8 32,14" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    """
+
+
+def _etf_cv2_venn_svg(left_unique: int, common: int, right_unique: int) -> str:
+    """Two-circle venn diagram with numeric labels in each region."""
+    return f"""
+    <svg viewBox="0 0 240 180" width="220" height="170" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <radialGradient id="cv2VennA" cx="35%" cy="50%" r="55%">
+                <stop offset="0%" stop-color="rgba(45,212,191,0.45)"/>
+                <stop offset="100%" stop-color="rgba(45,212,191,0.08)"/>
+            </radialGradient>
+            <radialGradient id="cv2VennB" cx="65%" cy="50%" r="55%">
+                <stop offset="0%" stop-color="rgba(96,165,250,0.45)"/>
+                <stop offset="100%" stop-color="rgba(96,165,250,0.08)"/>
+            </radialGradient>
+        </defs>
+        <circle cx="90"  cy="90" r="68" fill="url(#cv2VennA)" stroke="#2dd4bf" stroke-width="1.5"/>
+        <circle cx="150" cy="90" r="68" fill="url(#cv2VennB)" stroke="#60a5fa" stroke-width="1.5"/>
+
+        <text x="56"  y="92" text-anchor="middle" fill="#5eead4" font-size="26" font-weight="700">{left_unique}</text>
+        <text x="56"  y="115" text-anchor="middle" fill="rgba(255,255,255,0.62)" font-size="10">僅 ETF A</text>
+
+        <text x="120" y="86" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">{common}</text>
+        <text x="120" y="105" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="9">共同</text>
+
+        <text x="184" y="92" text-anchor="middle" fill="#93c5fd" font-size="26" font-weight="700">{right_unique}</text>
+        <text x="184" y="115" text-anchor="middle" fill="rgba(255,255,255,0.62)" font-size="10">僅 ETF B</text>
+    </svg>
+    """
+
+
+def _etf_cv2_split_label(label: str) -> tuple[str, str]:
+    """Split '00981A 主動統一-台股增長' into ('00981A', '主動統一-台股增長') for two-line layout."""
+    text = str(label or "").strip()
+    if not text:
+        return "—", ""
+    parts = text.split(" ", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return text, ""
+
+
+def _etf_cv2_short_code(label: str) -> str:
+    """Pull just the ticker code prefix out of a display label, for compact insight headers."""
+    primary, _ = _etf_cv2_split_label(label)
+    return primary or label or ""
+
+
+def _etf_cv2_premium_marker_pct(value: float, *, range_pct: float = 1.5) -> float:
+    """Convert a premium % into 0..100 left-position for the bar marker.
+
+    range_pct is the saturation point: ±range_pct% maps to the edges. Beyond
+    that the marker is clamped to the edge so an outlier doesn't push the
+    other side off-screen.
+    """
+    if value is None or pd.isna(value):
+        return 50.0
+    clamped = max(min(float(value), range_pct), -range_pct)
+    return 50.0 + (clamped / range_pct) * 50.0
+
+
+def _etf_cv2_format_premium(value: float, lang_zh: bool) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:+.2f}%"
+
+
+def _etf_cv2_format_units_compact(value: float, lang_zh: bool) -> str:
+    """Outstanding units come from TWSE in shares; show as 億 / 萬 for readability."""
+    if value is None or pd.isna(value):
+        return "—"
+    abs_v = abs(float(value))
+    if abs_v >= 100_000_000:
+        return f"{value / 100_000_000:.2f} 億" if lang_zh else f"{value / 100_000_000:.2f}B"
+    if abs_v >= 10_000:
+        return f"{value / 10_000:.2f} 萬" if lang_zh else f"{value / 10_000:.2f} 萬"
+    return f"{value:,.0f}"
+
+
+def _etf_cv2_format_turnover_compact(value: float, lang_zh: bool) -> str:
+    """Turnover (NTD); show 億 / 萬."""
+    if value is None or pd.isna(value):
+        return "—"
+    abs_v = abs(float(value))
+    if abs_v >= 100_000_000:
+        return f"{value / 100_000_000:.2f} 億" if lang_zh else f"{value / 100_000_000:.2f}億 NTD"
+    if abs_v >= 10_000:
+        return f"{value / 10_000:.2f} 萬" if lang_zh else f"{value / 10_000:.2f} 萬"
+    return f"{value:,.0f}"
+
+
+def _etf_cv2_bar_pct(value: float, max_value: float) -> float:
+    if value is None or pd.isna(value) or max_value is None or pd.isna(max_value) or max_value <= 0:
+        return 0.0
+    pct = (float(value) / float(max_value)) * 100.0
+    return max(0.0, min(pct, 100.0))
+
+
+def _etf_cv2_classify_overlap(common_count: int, avg_overlap_weight: float, lang_zh: bool) -> tuple[str, str, str]:
+    """Returns (title, copy, tone) for the overlap insight."""
+    if common_count <= 0 or avg_overlap_weight <= 0:
+        if lang_zh:
+            return ("無共同持股", "兩檔 ETF 目前沒有共同持股，互補性極強，可作為分散配置工具。", "green")
+        return ("No overlap", "These ETFs currently share no holdings; they offer maximum diversification value.", "green")
+    if common_count <= 2 or avg_overlap_weight < 10.0:
+        if lang_zh:
+            return ("重疊低·分散佳", f"共同持股僅 {common_count} 檔，重疊權重偏低，可達到分散配置效果。", "green")
+        return ("Low overlap · diversified", f"Only {common_count} common holdings; low overlap weight allows diversified allocation.", "green")
+    if avg_overlap_weight < 25.0:
+        if lang_zh:
+            return ("重疊適中", f"共同 {common_count} 檔，平均重疊權重約 {avg_overlap_weight:.1f}%，仍保有部分分散效果。", "green")
+        return ("Moderate overlap", f"{common_count} common holdings at ~{avg_overlap_weight:.1f}% average overlap; partial diversification preserved.", "green")
+    if lang_zh:
+        return ("重疊度偏高", f"共同 {common_count} 檔、平均重疊權重 {avg_overlap_weight:.1f}%，配置時注意集中度。", "blue")
+    return ("High overlap", f"{common_count} common holdings, ~{avg_overlap_weight:.1f}% overlap weight; mind concentration risk when combining.", "blue")
+
+
+def _etf_cv2_focus_insight(side_label: str, side_short: str, profile: dict, lookthrough: dict, lang_zh: bool) -> tuple[str, str]:
+    """Returns (title, copy) describing this ETF's focus / theme."""
+    profile = dict(profile or {})
+    lookthrough = dict(lookthrough or {})
+    bucket_breakdown = dict(profile.get("bucket_breakdown", {}) or {})
+    if not bucket_breakdown and isinstance(lookthrough.get("bucket_breakdown"), dict):
+        bucket_breakdown = dict(lookthrough.get("bucket_breakdown") or {})
+    top_bucket = max(bucket_breakdown, key=bucket_breakdown.get) if bucket_breakdown else ""
+    top_share = float(profile.get("top5_share", 0.0) or 0.0)
+
+    bucket_label = ""
+    try:
+        bucket_label = _active_etf_bucket_label(str(top_bucket or "other"), lang_zh) if top_bucket else ""
+    except Exception:
+        bucket_label = ""
+
+    title_zh = f"{side_short} 聚焦{bucket_label}" if bucket_label else f"{side_short} 投組焦點"
+    title_en = f"{side_short} focuses on {bucket_label}" if bucket_label else f"{side_short} portfolio focus"
+    title = title_zh if lang_zh else title_en
+
+    if lang_zh:
+        copy = (
+            f"前五大持股集中度 {top_share:.1f}%，題材偏向{bucket_label or '主動式選股'}，"
+            f"適合搭配主題策略佈局。" if top_share else f"主動式選股策略，題材分布以{bucket_label or '多元'}為主。"
+        )
+    else:
+        copy = (
+            f"Top-5 concentration {top_share:.1f}% with a tilt toward {bucket_label or 'active selection'}; "
+            f"fits a thematic allocation pairing."
+            if top_share else
+            f"Active stock-picking style with {bucket_label or 'mixed'} theme distribution."
+        )
+    return title, copy
+
+
+def _etf_cv2_liquidity_insight(left_short: str, right_short: str, left_official: dict, right_official: dict, lang_zh: bool) -> tuple[str, str, str]:
+    """Returns (title, copy, tone)."""
+    left_official = dict(left_official or {})
+    right_official = dict(right_official or {})
+    a_avg = _safe_etf_float(dict(left_official.get("turnover", {}) or {}).get("avg_turnover_ntd_30d"))
+    b_avg = _safe_etf_float(dict(right_official.get("turnover", {}) or {}).get("avg_turnover_ntd_30d"))
+    if pd.isna(a_avg) and pd.isna(b_avg):
+        if lang_zh:
+            return ("流動性資料尚未就緒", "等待官方價量資料完整時，會自動補上流動性比較。", "green")
+        return ("Liquidity data pending", "Liquidity comparison will populate once official price/volume snapshots arrive.", "green")
+    if pd.isna(a_avg) or pd.isna(b_avg) or (a_avg + b_avg) <= 0:
+        ref_short = left_short if not pd.isna(a_avg) else right_short
+        if lang_zh:
+            return (f"{ref_short} 有流動性資料", "另一邊資料暫缺，等抓取完成後會自動加入比較。", "green")
+        return (f"{ref_short} liquidity available", "Counterparty data is pending; comparison will refresh automatically.", "green")
+    ratio = a_avg / max(b_avg, 1.0)
+    if ratio >= 1.5:
+        if lang_zh:
+            return (f"{left_short} 流動性領先", f"A 的 30 日均量約為 B 的 {ratio:.1f} 倍，進出更具彈性。", "green")
+        return (f"{left_short} leads liquidity", f"A's 30D average turnover is ~{ratio:.1f}x B; better entry/exit flexibility.", "green")
+    if ratio <= 1 / 1.5:
+        inv = 1.0 / ratio
+        if lang_zh:
+            return (f"{right_short} 流動性領先", f"B 的 30 日均量約為 A 的 {inv:.1f} 倍，進出更具彈性。", "blue")
+        return (f"{right_short} leads liquidity", f"B's 30D average turnover is ~{inv:.1f}x A; better entry/exit flexibility.", "blue")
+    if lang_zh:
+        return ("流動性接近", f"兩檔 30 日均量規模相近，配置時不需特別偏向任一邊的進出便利度。", "green")
+    return ("Comparable liquidity", "Both ETFs trade at similar 30D average volumes; entry/exit ease is roughly equal.", "green")
+
+
+def _etf_cv2_overlap_summary_insights(common_count: int, overlap_weight_left: float, overlap_weight_right: float, lang_zh: bool) -> list[dict]:
+    """Two insights for the venn-diagram card on the bottom-left."""
+    avg_overlap = (overlap_weight_left + overlap_weight_right) / 2.0
+    insights = []
+    if common_count <= 0:
+        if lang_zh:
+            insights.append({
+                "title": "無共同持股",
+                "copy": "目前沒有偵測到兩檔 ETF 的共同成分，互補性極強。",
+                "tone": "green",
+                "icon": "◐",
+            })
+        else:
+            insights.append({
+                "title": "Zero overlap",
+                "copy": "No common holdings detected between the two ETFs; maximum complementarity.",
+                "tone": "green",
+                "icon": "◐",
+            })
+    elif avg_overlap < 10.0:
+        if lang_zh:
+            insights.append({
+                "title": "重疊權重偏低",
+                "copy": f"兩檔 ETF 在持股上重疊性低，僅 {common_count} 檔共同持股，分別佔各自投組權重 {overlap_weight_left:.2f}% / {overlap_weight_right:.2f}%。",
+                "tone": "green",
+                "icon": "◐",
+            })
+        else:
+            insights.append({
+                "title": "Low overlap weight",
+                "copy": f"Only {common_count} common holdings; {overlap_weight_left:.2f}% / {overlap_weight_right:.2f}% portfolio weight respectively.",
+                "tone": "green",
+                "icon": "◐",
+            })
+    else:
+        if lang_zh:
+            insights.append({
+                "title": "重疊權重提升",
+                "copy": f"共同 {common_count} 檔，加總權重 {overlap_weight_left:.2f}% / {overlap_weight_right:.2f}%；同時持有時注意倉位集中度。",
+                "tone": "blue",
+                "icon": "◐",
+            })
+        else:
+            insights.append({
+                "title": "Elevated overlap weight",
+                "copy": f"{common_count} common holdings at {overlap_weight_left:.2f}% / {overlap_weight_right:.2f}%; mind concentration if held together.",
+                "tone": "blue",
+                "icon": "◐",
+            })
+
+    if lang_zh:
+        insights.append({
+            "title": "差異化明顯",
+            "copy": "A 與 B 的獨有持股差異反映各自題材主軸，產業與區域分散效果佳。",
+            "tone": "blue",
+            "icon": "✓",
+        })
+    else:
+        insights.append({
+            "title": "Distinct positioning",
+            "copy": "A and B's unique holdings reflect different thematic focuses; sector / region diversification holds up.",
+            "tone": "blue",
+            "icon": "✓",
+        })
+    return insights
+
+
+def _etf_cv2_build_top_metric_html(snapshot: dict, left_label: str, right_label: str, lang_zh: bool) -> str:
+    common_count = int(snapshot.get("common_count", 0) or 0)
+    left_unique = int(snapshot.get("left_unique_count", 0) or 0)
+    right_unique = int(snapshot.get("right_unique_count", 0) or 0)
+    overlap_left = float(snapshot.get("overlap_weight_left", 0.0) or 0.0)
+    overlap_right = float(snapshot.get("overlap_weight_right", 0.0) or 0.0)
+    left_short = _etf_cv2_short_code(left_label)
+    right_short = _etf_cv2_short_code(right_label)
+
+    cards: list[str] = []
+    cards.append(f"""
+    <div class="etf-cv2-mc">
+        <div class="etf-cv2-mc-icon green">{_etf_cv2_icon_intersection_svg()}</div>
+        <div class="etf-cv2-mc-body">
+            <div class="etf-cv2-mc-label">{escape('共同持股' if lang_zh else 'Common holdings')}</div>
+            <div class="etf-cv2-mc-value">{common_count}</div>
+            <div class="etf-cv2-mc-note">{escape('兩檔 ETF 共同持有的成分數' if lang_zh else 'Positions held by both ETFs')}</div>
+        </div>
+    </div>
+    """)
+    cards.append(f"""
+    <div class="etf-cv2-mc">
+        <div class="etf-cv2-mc-icon green"><span class="etf-cv2-mc-icon-letter">A</span></div>
+        <div class="etf-cv2-mc-body">
+            <div class="etf-cv2-mc-label">{escape('A 獨有成分數' if lang_zh else 'A unique')}</div>
+            <div class="etf-cv2-mc-value">{left_unique}</div>
+            <div class="etf-cv2-mc-note">{escape(f'{left_label} 獨有' if lang_zh else f'{left_label} unique holdings')}</div>
+        </div>
+    </div>
+    """)
+    cards.append(f"""
+    <div class="etf-cv2-mc">
+        <div class="etf-cv2-mc-icon blue"><span class="etf-cv2-mc-icon-letter blue">B</span></div>
+        <div class="etf-cv2-mc-body">
+            <div class="etf-cv2-mc-label">{escape('B 獨有成分數' if lang_zh else 'B unique')}</div>
+            <div class="etf-cv2-mc-value blue">{right_unique}</div>
+            <div class="etf-cv2-mc-note">{escape(f'{right_label} 獨有' if lang_zh else f'{right_label} unique holdings')}</div>
+        </div>
+    </div>
+    """)
+    overlap_text = f"{overlap_left:.2f}% / {overlap_right:.2f}%"
+    cards.append(f"""
+    <div class="etf-cv2-mc">
+        <div class="etf-cv2-mc-icon purple">{_etf_cv2_icon_percent_svg()}</div>
+        <div class="etf-cv2-mc-body">
+            <div class="etf-cv2-mc-label">{escape('共同持股權重' if lang_zh else 'Overlap weight')}</div>
+            <div class="etf-cv2-mc-value gradient">{escape(overlap_text)}</div>
+            <div class="etf-cv2-mc-note">{escape(f'左：{left_short}　右：{right_short}' if lang_zh else f'Left: {left_short} · Right: {right_short}')}</div>
+        </div>
+    </div>
+    """)
+    return f'<div class="etf-cv2-top-grid">{"".join(cards)}</div>'
+
+
+def _etf_cv2_build_premium_card_html(left_label: str, right_label: str, left_official: dict, right_official: dict, lang_zh: bool) -> str:
+    a_premium = _safe_etf_float(dict(left_official or {}).get("premium_pct"))
+    b_premium = _safe_etf_float(dict(right_official or {}).get("premium_pct"))
+    left_primary, left_sub = _etf_cv2_split_label(left_label)
+    right_primary, right_sub = _etf_cv2_split_label(right_label)
+    a_value_text = _etf_cv2_format_premium(a_premium, lang_zh)
+    b_value_text = _etf_cv2_format_premium(b_premium, lang_zh)
+    a_left_pct = _etf_cv2_premium_marker_pct(a_premium)
+    b_left_pct = _etf_cv2_premium_marker_pct(b_premium)
+
+    return f"""
+    <div class="etf-cv2-card">
+        <div class="etf-cv2-card-title">{escape('折溢價對比' if lang_zh else 'Premium / discount')}<span class="etf-cv2-card-info" title="正值=溢價，負值=折價">ⓘ</span></div>
+        <div class="etf-cv2-vs-block">
+            <div class="etf-cv2-vs-side">
+                <div class="etf-cv2-vs-side-name"><strong class="green">{escape(left_primary)}</strong>{escape(left_sub)}</div>
+                <div class="etf-cv2-vs-side-value">{escape(a_value_text)}</div>
+            </div>
+            <div class="etf-cv2-vs-pill">VS</div>
+            <div class="etf-cv2-vs-side">
+                <div class="etf-cv2-vs-side-name"><strong class="blue">{escape(right_primary)}</strong>{escape(right_sub)}</div>
+                <div class="etf-cv2-vs-side-value">{escape(b_value_text)}</div>
+            </div>
+        </div>
+        <div class="etf-cv2-premium-track">
+            <div class="etf-cv2-premium-marker green" style="left: {a_left_pct:.1f}%;"></div>
+            <div class="etf-cv2-premium-marker blue"  style="left: {b_left_pct:.1f}%;"></div>
+        </div>
+        <div class="etf-cv2-premium-legend">
+            <span>{escape('正值=溢價' if lang_zh else 'Positive = premium')}</span>
+            <span>{escape('負值=折價' if lang_zh else 'Negative = discount')}</span>
+        </div>
+        <div class="etf-cv2-tip">{escape('溢價越高代表買盤偏多；折價越高代表賣壓偏多。' if lang_zh else 'A higher premium reflects buying pressure; a deeper discount reflects selling pressure.')}</div>
+    </div>
+    """
+
+
+def _etf_cv2_build_units_card_html(left_label: str, right_label: str, left_official: dict, right_official: dict, lang_zh: bool) -> str:
+    a_units = _safe_etf_float(dict(left_official or {}).get("outstanding_units"))
+    b_units = _safe_etf_float(dict(right_official or {}).get("outstanding_units"))
+    a_text = _etf_cv2_format_units_compact(a_units, lang_zh)
+    b_text = _etf_cv2_format_units_compact(b_units, lang_zh)
+    max_units = float(np.nanmax([
+        a_units if not pd.isna(a_units) else 0.0,
+        b_units if not pd.isna(b_units) else 0.0,
+    ]) if (not pd.isna(a_units) or not pd.isna(b_units)) else 0.0)
+    a_pct = _etf_cv2_bar_pct(a_units, max_units)
+    b_pct = _etf_cv2_bar_pct(b_units, max_units)
+    left_primary, left_sub = _etf_cv2_split_label(left_label)
+    right_primary, right_sub = _etf_cv2_split_label(right_label)
+
+    return f"""
+    <div class="etf-cv2-card">
+        <div class="etf-cv2-card-title">{escape('流通單位數' if lang_zh else 'Outstanding units')}<span class="etf-cv2-card-info" title="作為基金規模的代理指標">ⓘ</span></div>
+        <div class="etf-cv2-bar-row">
+            <div class="etf-cv2-bar-icon green">A</div>
+            <div class="etf-cv2-bar-label">
+                <div class="etf-cv2-bar-label-row1">{escape(left_primary)}</div>
+                <div class="etf-cv2-bar-label-row2">{escape(left_sub)}</div>
+            </div>
+            <div class="etf-cv2-bar-track"><div class="etf-cv2-bar-fill green" style="width: {a_pct:.1f}%;"></div></div>
+            <div class="etf-cv2-bar-value">{escape(a_text)}</div>
+        </div>
+        <div class="etf-cv2-bar-row">
+            <div class="etf-cv2-bar-icon blue">B</div>
+            <div class="etf-cv2-bar-label">
+                <div class="etf-cv2-bar-label-row1">{escape(right_primary)}</div>
+                <div class="etf-cv2-bar-label-row2">{escape(right_sub)}</div>
+            </div>
+            <div class="etf-cv2-bar-track"><div class="etf-cv2-bar-fill blue" style="width: {b_pct:.1f}%;"></div></div>
+            <div class="etf-cv2-bar-value">{escape(b_text)}</div>
+        </div>
+        <div class="etf-cv2-tip">{escape('流通單位數越高，代表市場可交易規模越大。' if lang_zh else 'Higher outstanding units mean a larger tradable market float.')}</div>
+    </div>
+    """
+
+
+def _etf_cv2_build_turnover_card_html(left_label: str, right_label: str, left_official: dict, right_official: dict, lang_zh: bool) -> str:
+    left_turnover = dict(dict(left_official or {}).get("turnover", {}) or {})
+    right_turnover = dict(dict(right_official or {}).get("turnover", {}) or {})
+    a_latest = _safe_etf_float(left_turnover.get("latest_turnover_ntd"))
+    b_latest = _safe_etf_float(right_turnover.get("latest_turnover_ntd"))
+    a_avg = _safe_etf_float(left_turnover.get("avg_turnover_ntd_30d"))
+    b_avg = _safe_etf_float(right_turnover.get("avg_turnover_ntd_30d"))
+
+    latest_max = float(np.nanmax([
+        a_latest if not pd.isna(a_latest) else 0.0,
+        b_latest if not pd.isna(b_latest) else 0.0,
+    ]) if (not pd.isna(a_latest) or not pd.isna(b_latest)) else 0.0)
+    avg_max = float(np.nanmax([
+        a_avg if not pd.isna(a_avg) else 0.0,
+        b_avg if not pd.isna(b_avg) else 0.0,
+    ]) if (not pd.isna(a_avg) or not pd.isna(b_avg)) else 0.0)
+    left_primary, _ = _etf_cv2_split_label(left_label)
+    right_primary, _ = _etf_cv2_split_label(right_label)
+
+    def _turnover_group(group_label: str, icon_html: str, a_value: float, b_value: float, max_value: float) -> str:
+        a_pct = _etf_cv2_bar_pct(a_value, max_value)
+        b_pct = _etf_cv2_bar_pct(b_value, max_value)
+        a_text = _etf_cv2_format_turnover_compact(a_value, lang_zh)
+        b_text = _etf_cv2_format_turnover_compact(b_value, lang_zh)
+        return f"""
+        <div class="etf-cv2-turnover-group">
+            <div class="etf-cv2-turnover-icon">
+                {icon_html}
+                <div class="etf-cv2-turnover-icon-label">{escape(group_label)}</div>
+            </div>
+            <div class="etf-cv2-turnover-rows">
+                <div class="etf-cv2-turnover-row">
+                    <span class="etf-cv2-turnover-name green">{escape(left_primary)}</span>
+                    <div class="etf-cv2-turnover-track"><div class="etf-cv2-turnover-fill green" style="width: {a_pct:.1f}%;"></div></div>
+                    <span class="etf-cv2-turnover-value">{escape(a_text)}</span>
+                </div>
+                <div class="etf-cv2-turnover-row">
+                    <span class="etf-cv2-turnover-name blue">{escape(right_primary)}</span>
+                    <div class="etf-cv2-turnover-track"><div class="etf-cv2-turnover-fill blue" style="width: {b_pct:.1f}%;"></div></div>
+                    <span class="etf-cv2-turnover-value">{escape(b_text)}</span>
+                </div>
+            </div>
+        </div>
+        """
+
+    return f"""
+    <div class="etf-cv2-card">
+        <div class="etf-cv2-card-title">{escape('資金動能對比' if lang_zh else 'Capital momentum')}<span class="etf-cv2-card-info" title="今日成交金額 vs 30 日均量">ⓘ</span></div>
+        {_turnover_group('今日成交金額' if lang_zh else 'Today turnover', _etf_cv2_icon_coins_svg(), a_latest, b_latest, latest_max)}
+        {_turnover_group('30 日均量' if lang_zh else '30D average', _etf_cv2_icon_trending_svg(), a_avg, b_avg, avg_max)}
+        <div class="etf-cv2-tip">{escape('金額越高、均量越大，代表資金活躍度與成交動能較強。' if lang_zh else 'Higher turnover and 30D averages signal stronger flow and momentum.')}</div>
+    </div>
+    """
+
+
+def _etf_cv2_build_venn_summary_html(common_count: int, left_unique: int, right_unique: int,
+                                     overlap_weight_left: float, overlap_weight_right: float,
+                                     lang_zh: bool) -> str:
+    insights = _etf_cv2_overlap_summary_insights(common_count, overlap_weight_left, overlap_weight_right, lang_zh)
+    insight_html = ""
+    for ins in insights:
+        tone_class = "blue" if ins.get("tone") == "blue" else ""
+        insight_html += f"""
+        <div class="etf-cv2-venn-insight {tone_class}">
+            <div class="etf-cv2-venn-insight-title">
+                <span class="etf-cv2-venn-insight-icon">{escape(ins.get('icon', '◐'))}</span>
+                {escape(ins.get('title', ''))}
+            </div>
+            <div class="etf-cv2-venn-insight-copy">{escape(ins.get('copy', ''))}</div>
+        </div>
+        """
+    return f"""
+    <div class="etf-cv2-card">
+        <div class="etf-cv2-card-title">{escape('重疊與差異摘要' if lang_zh else 'Overlap & differentiation summary')}<span class="etf-cv2-card-info" title="共同 / 獨有 / 重疊權重">ⓘ</span></div>
+        <div class="etf-cv2-venn-row">
+            <div class="etf-cv2-venn-svg-wrap">{_etf_cv2_venn_svg(left_unique, common_count, right_unique)}</div>
+            <div class="etf-cv2-venn-insights">{insight_html}</div>
+        </div>
+    </div>
+    """
+
+
+def _etf_cv2_build_insights_grid_html(snapshot: dict, left_label: str, right_label: str, lang_zh: bool) -> str:
+    common_count = int(snapshot.get("common_count", 0) or 0)
+    overlap_left = float(snapshot.get("overlap_weight_left", 0.0) or 0.0)
+    overlap_right = float(snapshot.get("overlap_weight_right", 0.0) or 0.0)
+    avg_overlap = (overlap_left + overlap_right) / 2.0
+    left_official = dict(snapshot.get("left_official", {}) or {})
+    right_official = dict(snapshot.get("right_official", {}) or {})
+    left_profile = dict(snapshot.get("left_profile", {}) or {})
+    right_profile = dict(snapshot.get("right_profile", {}) or {})
+    left_lookthrough = dict(snapshot.get("left_lookthrough", {}) or {})
+    right_lookthrough = dict(snapshot.get("right_lookthrough", {}) or {})
+    left_short = _etf_cv2_short_code(left_label)
+    right_short = _etf_cv2_short_code(right_label)
+
+    overlap_title, overlap_copy, overlap_tone = _etf_cv2_classify_overlap(common_count, avg_overlap, lang_zh)
+    a_focus_title, a_focus_copy = _etf_cv2_focus_insight(left_label, left_short, left_profile, left_lookthrough, lang_zh)
+    b_focus_title, b_focus_copy = _etf_cv2_focus_insight(right_label, right_short, right_profile, right_lookthrough, lang_zh)
+    liq_title, liq_copy, liq_tone = _etf_cv2_liquidity_insight(left_short, right_short, left_official, right_official, lang_zh)
+
+    items = [
+        {"title": overlap_title, "copy": overlap_copy, "tone": overlap_tone, "icon": _etf_cv2_icon_intersection_svg()},
+        {"title": a_focus_title, "copy": a_focus_copy, "tone": "green", "icon": _etf_cv2_icon_chart_svg("#5eead4")},
+        {"title": b_focus_title, "copy": b_focus_copy, "tone": "blue", "icon": _etf_cv2_icon_globe_svg("#93c5fd")},
+        {"title": liq_title, "copy": liq_copy, "tone": liq_tone, "icon": _etf_cv2_icon_bars_svg("#5eead4" if liq_tone == "green" else "#93c5fd")},
+    ]
+    cards = ""
+    for item in items:
+        title_class = "blue" if item["tone"] == "blue" else ""
+        cards += f"""
+        <div class="etf-cv2-insight-card">
+            <div class="etf-cv2-insight-icon">{item['icon']}</div>
+            <div class="etf-cv2-insight-title {title_class}">{escape(item['title'])}</div>
+            <div class="etf-cv2-insight-copy">{escape(item['copy'])}</div>
+        </div>
+        """
+    return f"""
+    <div class="etf-cv2-card">
+        <div class="etf-cv2-card-title">{escape('設計建議 / 解讀重點' if lang_zh else 'Insights & reading points')}<span class="etf-cv2-card-info" title="以快照資料自動整理">ⓘ</span></div>
+        <div class="etf-cv2-insights-grid">{cards}</div>
+    </div>
+    """
+
+
+def render_active_etf_compare_v2_dashboard(
+    snapshot: dict,
+    left_label: str,
+    right_label: str,
+    timestamp_text: str,
+    lang_zh: bool,
+) -> None:
+    """Render the v1.3.8 redesigned compare board.
+
+    Reads everything from the existing pair-compare snapshot dict; missing
+    fields fall back to '—'. Designed to slot in where the v1.3.7 calls
+    (summary cards + capital momentum + strategy summary + bucket compare)
+    used to live, without breaking any downstream sections.
+    """
+    _inject_active_etf_compare_v2_css()
+
+    left_official = dict(snapshot.get("left_official", {}) or {})
+    right_official = dict(snapshot.get("right_official", {}) or {})
+    common_count = int(snapshot.get("common_count", 0) or 0)
+    left_unique = int(snapshot.get("left_unique_count", 0) or 0)
+    right_unique = int(snapshot.get("right_unique_count", 0) or 0)
+    overlap_left = float(snapshot.get("overlap_weight_left", 0.0) or 0.0)
+    overlap_right = float(snapshot.get("overlap_weight_right", 0.0) or 0.0)
+    left_short = _etf_cv2_short_code(left_label)
+    right_short = _etf_cv2_short_code(right_label)
+
+    header_kicker = "主動式 ETF 持股比較" if lang_zh else "Active ETF holdings compare"
+    header_title = f"{left_label} vs {right_label}"
+    header_copy = (
+        "比較兩檔主動式 ETF 的持股重疊、獨有成分、權重差異與資金動能，協助判斷差異與配置方向。"
+        if lang_zh else
+        "Compare two active ETFs across overlap, uniques, weight gaps, and capital momentum to inform allocation decisions."
+    )
+
+    chip_dual = "雙 ETF 持股比較" if lang_zh else "Dual ETF holdings compare"
+    chip_snapshot = f"快照 {timestamp_text}" if lang_zh else f"Snapshot {timestamp_text}"
+    chip_axes = "共同 / 獨有 / 權重差" if lang_zh else "Common / unique / weight gap"
+    chip_latest_suffix = "最新版本" if lang_zh else "latest snapshot"
+    chip_left = f"{left_short} {chip_latest_suffix}"
+    chip_right = f"{right_short} {chip_latest_suffix}"
+
+    chips_html = (
+        f'<span class="etf-cv2-chip primary">{escape(chip_dual)}</span>'
+        f'<span class="etf-cv2-chip">{escape(chip_snapshot)}</span>'
+        f'<span class="etf-cv2-chip">{escape(chip_axes)}</span>'
+        f'<span class="etf-cv2-chip"><span class="etf-cv2-chip-dot green"></span>{escape(chip_left)}</span>'
+        f'<span class="etf-cv2-chip"><span class="etf-cv2-chip-dot blue"></span>{escape(chip_right)}</span>'
+    )
+
+    top_metrics_html = _etf_cv2_build_top_metric_html(snapshot, left_label, right_label, lang_zh)
+    premium_card = _etf_cv2_build_premium_card_html(left_label, right_label, left_official, right_official, lang_zh)
+    units_card = _etf_cv2_build_units_card_html(left_label, right_label, left_official, right_official, lang_zh)
+    turnover_card = _etf_cv2_build_turnover_card_html(left_label, right_label, left_official, right_official, lang_zh)
+    venn_summary = _etf_cv2_build_venn_summary_html(common_count, left_unique, right_unique, overlap_left, overlap_right, lang_zh)
+    insights_grid = _etf_cv2_build_insights_grid_html(snapshot, left_label, right_label, lang_zh)
+
+    footer_left = (
+        "以上數據僅供參考，非投資建議。投資有風險，申購前請閱讀公開說明書。"
+        if lang_zh else
+        "Data shown is for reference only and is not investment advice. Investments carry risk; read the prospectus before subscribing."
+    )
+    footer_data_src = "資料來源：TWSE 公開資料 + 內部整理" if lang_zh else "Source: TWSE public data + internal aggregation"
+    footer_updated = f"更新時間：{timestamp_text}" if lang_zh else f"Updated {timestamp_text}"
+
+    full_html = f"""
+    <div class="etf-cv2-shell">
+        <div class="etf-cv2-header">
+            <div>
+                <div class="etf-cv2-kicker"><span class="etf-cv2-kicker-dot"></span>{escape(header_kicker)}</div>
+                <div class="etf-cv2-title">{escape(header_title)}</div>
+                <div class="etf-cv2-copy">{escape(header_copy)}</div>
+                <div class="etf-cv2-chips">{chips_html}</div>
+            </div>
+            <div>{_etf_cv2_decorative_chart_svg()}</div>
+        </div>
+        {top_metrics_html}
+        <div class="etf-cv2-mid-grid">
+            {premium_card}
+            {units_card}
+            {turnover_card}
+        </div>
+        <div class="etf-cv2-bottom-grid">
+            {venn_summary}
+            {insights_grid}
+        </div>
+        <div class="etf-cv2-footer">
+            <div class="etf-cv2-footer-left">⚠ {escape(footer_left)}</div>
+            <div class="etf-cv2-footer-right">
+                <span>{escape(footer_data_src)}</span>
+                <span>{escape(footer_updated)}</span>
+            </div>
+        </div>
+    </div>
+    """
+    # v1.3.8.1 fix: flatten the HTML so Streamlit's CommonMark parser does
+    # not turn 4-space-indented lines into code blocks (which would surface
+    # raw <div> tags in the rendered output).
+    st.markdown(_etf_cv2_minify_html(full_html), unsafe_allow_html=True)
+
+
 def _active_etf_clean_lookthrough_snapshot(payload: dict) -> dict:
     return {
         str(key): _active_etf_lab_snapshot_safe(value)
@@ -32826,29 +34100,16 @@ def render_active_etf_pair_comparison(
     left_snapshot_date = str(left_payload.get("snapshot_date", "") or "")
     right_snapshot_date = str(right_payload.get("snapshot_date", "") or "")
 
-    def _snapshot_chip_text(label: str, payload: dict) -> str:
-        snapshot_date = str(payload.get("snapshot_date", "") or "-")
-        if str(payload.get("status", "")) == "cached":
-            return f"{label} 快照 {snapshot_date}" if lang_zh else f"{label} snapshot {snapshot_date}"
-        return f"{label} 最新版本" if lang_zh else f"{label} latest snapshot"
-
-    chips = [
-        _tracker_status_chip(("雙 ETF 持股比較" if lang_zh else "Dual ETF holdings comparison"), "info"),
-        _tracker_status_chip((f"快照 {timestamp_text}" if lang_zh else f"Snapshot {timestamp_text}"), "neutral"),
-        _tracker_status_chip(("共同 / 獨有 / 權重差" if lang_zh else "Common / unique / weight gap"), "up"),
-        _tracker_status_chip(_snapshot_chip_text(left_label, left_payload), "neutral"),
-        _tracker_status_chip(_snapshot_chip_text(right_label, right_payload), "neutral"),
-    ]
-    st.markdown(
-        f"""
-        <div class="guide-shell etf-tracker-shell">
-            <div class="section-header">{'主動式 ETF 持股比較' if lang_zh else 'Active ETF holdings compare'}</div>
-            <div class="guide-title">{escape(left_label)} vs {escape(right_label)}</div>
-            <div class="guide-copy">{escape(update_note)} {'除了共同與獨有持股，這裡也把底層新聞傾向與官方外資方向一起整理進來，讓策略風格差異更容易讀。' if lang_zh else 'Beyond overlap and unique holdings, this compare reads through the disclosed basket for underlying news tilt and official foreign-flow bias so the strategy style is easier to compare.'}</div>
-            <div class="chip-row">{''.join(chips)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # v1.3.8: The new compare board renders its own header / chips / metric
+    # cards / venn / insights / footer in one coherent block. The legacy
+    # guide-shell + chip-row + 4 helper calls are kept inside the legacy
+    # render path for backwards compatibility but no longer fire here.
+    render_active_etf_compare_v2_dashboard(
+        snapshot,
+        left_label,
+        right_label,
+        timestamp_text,
+        lang_zh,
     )
 
     if left_payload.get("used_cache") or right_payload.get("used_cache"):
@@ -32879,43 +34140,14 @@ def render_active_etf_pair_comparison(
     overlap_weight_left = float(snapshot.get("overlap_weight_left", 0.0) or 0.0)
     overlap_weight_right = float(snapshot.get("overlap_weight_right", 0.0) or 0.0)
 
-    _active_etf_compare_summary_cards(
-        left_label,
-        right_label,
-        int(snapshot.get("common_count", len(common_keys)) or len(common_keys)),
-        int(snapshot.get("left_unique_count", len(left_unique_keys)) or len(left_unique_keys)),
-        int(snapshot.get("right_unique_count", len(right_unique_keys)) or len(right_unique_keys)),
-        overlap_weight_left,
-        overlap_weight_right,
-        lang_zh,
-    )
-
-    # v1.3.7: New "Capital momentum" card row. Renders silently if both ETFs
-    # have no official data yet (e.g., during the very first cold start).
-    _active_etf_capital_momentum_cards(
-        left_label,
-        right_label,
-        dict(snapshot.get("left_official", {}) or {}),
-        dict(snapshot.get("right_official", {}) or {}),
-        lang_zh,
-    )
-
+    # v1.3.8: The four legacy summary helpers below are now consolidated into
+    # render_active_etf_compare_v2_dashboard above. Keeping the local maps so
+    # the focus rows table / common holdings table / unique holdings tables
+    # below continue to work unchanged.
     left_profile = dict(snapshot.get("left_profile", {}) or {})
     right_profile = dict(snapshot.get("right_profile", {}) or {})
     left_lookthrough = dict(snapshot.get("left_lookthrough", {}) or {})
     right_lookthrough = dict(snapshot.get("right_lookthrough", {}) or {})
-    _render_active_etf_strategy_summary(
-        left_label,
-        right_label,
-        left_profile,
-        right_profile,
-        left_lookthrough,
-        right_lookthrough,
-        left_flow,
-        right_flow,
-        lang_zh,
-    )
-    _render_active_etf_bucket_compare(left_label, right_label, left_map, right_map, lang_zh)
 
     takeaway_lines = list(snapshot.get("takeaway_lines", []) or [])
     if not takeaway_lines or any(_active_etf_text_looks_broken(line) for line in takeaway_lines):
