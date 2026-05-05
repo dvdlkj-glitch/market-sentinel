@@ -31934,7 +31934,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             align-items: center;
             gap: 0.45rem;
             color: #5eead4;
-            font-size: 0.78rem;
+            font-size: 0.88rem;
             font-weight: 600;
             letter-spacing: 0.06em;
             margin-bottom: 0.5rem;
@@ -31946,7 +31946,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             box-shadow: 0 0 8px #5eead4;
         }
         .etf-cv2-title {
-            font-size: 1.55rem;
+            font-size: 1.75rem;
             font-weight: 700;
             color: #fff;
             line-height: 1.3;
@@ -31954,7 +31954,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             letter-spacing: -0.005em;
         }
         .etf-cv2-copy {
-            font-size: 0.86rem;
+            font-size: 0.95rem;
             color: rgba(255,255,255,0.62);
             line-height: 1.55;
             margin-bottom: 0.85rem;
@@ -31969,7 +31969,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             border: 1px solid rgba(80,160,220,0.22);
             border-radius: 999px;
             padding: 0.35rem 0.85rem;
-            font-size: 0.74rem;
+            font-size: 0.82rem;
             color: rgba(255,255,255,0.78);
             display: inline-flex;
             align-items: center;
@@ -32025,14 +32025,14 @@ def _inject_active_etf_compare_v2_css() -> None:
         .etf-cv2-mc-icon.blue  { background: rgba(96,165,250,0.10); border-color: rgba(96,165,250,0.42); }
         .etf-cv2-mc-icon.purple{ background: rgba(168,85,247,0.10); border-color: rgba(168,85,247,0.42); }
         .etf-cv2-mc-icon-letter {
-            font-size: 1.45rem;
+            font-size: 1.55rem;
             font-weight: 700;
             color: #5eead4;
         }
         .etf-cv2-mc-icon-letter.blue { color: #93c5fd; }
         .etf-cv2-mc-body { flex: 1 1 auto; min-width: 0; }
         .etf-cv2-mc-label {
-            font-size: 0.78rem;
+            font-size: 0.88rem;
             color: rgba(255,255,255,0.66);
             margin-bottom: 0.25rem;
             display: flex;
@@ -32040,12 +32040,12 @@ def _inject_active_etf_compare_v2_css() -> None:
             gap: 0.35rem;
         }
         .etf-cv2-mc-info {
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             color: rgba(255,255,255,0.32);
             cursor: help;
         }
         .etf-cv2-mc-value {
-            font-size: 2rem;
+            font-size: 2.15rem;
             font-weight: 700;
             color: #5eead4;
             line-height: 1.05;
@@ -32061,7 +32061,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             font-size: 1.55rem;
         }
         .etf-cv2-mc-note {
-            font-size: 0.72rem;
+            font-size: 0.82rem;
             color: rgba(255,255,255,0.5);
             margin-top: 0.25rem;
             line-height: 1.4;
@@ -32083,7 +32083,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             flex-direction: column;
         }
         .etf-cv2-card-title {
-            font-size: 0.95rem;
+            font-size: 1.05rem;
             font-weight: 600;
             color: #fff;
             margin-bottom: 1rem;
@@ -32092,7 +32092,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             gap: 0.4rem;
         }
         .etf-cv2-card-info {
-            font-size: 0.72rem;
+            font-size: 0.82rem;
             color: rgba(255,255,255,0.32);
             margin-left: auto;
             cursor: help;
@@ -32108,7 +32108,7 @@ def _inject_active_etf_compare_v2_css() -> None:
         }
         .etf-cv2-vs-side { text-align: center; min-width: 0; }
         .etf-cv2-vs-side-name {
-            font-size: 0.74rem;
+            font-size: 0.85rem;
             font-weight: 600;
             color: rgba(255,255,255,0.72);
             margin-bottom: 0.35rem;
@@ -32118,12 +32118,12 @@ def _inject_active_etf_compare_v2_css() -> None:
         .etf-cv2-vs-side-name.green { color: #5eead4; }
         .etf-cv2-vs-side-name.blue  { color: #93c5fd; }
         .etf-cv2-vs-side-value {
-            font-size: 1.15rem;
+            font-size: 1.3rem;
             font-weight: 700;
             color: #fff;
         }
         .etf-cv2-vs-pill {
-            font-size: 0.78rem;
+            font-size: 0.88rem;
             font-weight: 700;
             color: rgba(255,255,255,0.5);
             padding: 0.3rem 0.6rem;
@@ -32153,7 +32153,7 @@ def _inject_active_etf_compare_v2_css() -> None:
         .etf-cv2-premium-legend {
             display: flex;
             justify-content: space-between;
-            font-size: 0.72rem;
+            font-size: 0.82rem;
             color: rgba(255,255,255,0.55);
             margin-bottom: 0.5rem;
         }
@@ -32173,7 +32173,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             align-items: center;
             justify-content: center;
             font-weight: 700;
-            font-size: 0.85rem;
+            font-size: 0.95rem;
             color: #fff;
             box-shadow: 0 0 8px rgba(0,0,0,0.25);
         }
@@ -32184,7 +32184,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
         }
         .etf-cv2-bar-label {
-            font-size: 0.78rem;
+            font-size: 0.88rem;
             color: rgba(255,255,255,0.78);
             line-height: 1.3;
             max-width: 130px;
@@ -32195,10 +32195,10 @@ def _inject_active_etf_compare_v2_css() -> None:
         .etf-cv2-bar-label-row1 {
             font-weight: 600;
             color: #fff;
-            font-size: 0.8rem;
+            font-size: 0.92rem;
         }
         .etf-cv2-bar-label-row2 {
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             color: rgba(255,255,255,0.55);
         }
         .etf-cv2-bar-track {
@@ -32222,7 +32222,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             box-shadow: 0 0 8px rgba(96,165,250,0.45);
         }
         .etf-cv2-bar-value {
-            font-size: 0.92rem;
+            font-size: 1.05rem;
             font-weight: 700;
             color: #fff;
             white-space: nowrap;
@@ -32246,10 +32246,10 @@ def _inject_active_etf_compare_v2_css() -> None:
             align-items: center;
             justify-content: center;
             color: rgba(255,255,255,0.7);
-            font-size: 1.2rem;
+            font-size: 1.35rem;
         }
         .etf-cv2-turnover-icon-label {
-            font-size: 0.66rem;
+            font-size: 0.78rem;
             color: rgba(255,255,255,0.55);
             margin-top: 0.2rem;
             text-align: center;
@@ -32263,7 +32263,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             align-items: center;
         }
         .etf-cv2-turnover-name {
-            font-size: 0.76rem;
+            font-size: 0.88rem;
             color: rgba(255,255,255,0.78);
             font-weight: 500;
             white-space: nowrap;
@@ -32287,7 +32287,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
         }
         .etf-cv2-turnover-value {
-            font-size: 0.85rem;
+            font-size: 0.95rem;
             font-weight: 700;
             color: #fff;
             white-space: nowrap;
@@ -32296,7 +32296,7 @@ def _inject_active_etf_compare_v2_css() -> None:
         }
 
         .etf-cv2-tip {
-            font-size: 0.72rem;
+            font-size: 0.82rem;
             color: rgba(255,255,255,0.45);
             margin-top: auto;
             padding-top: 0.7rem;
@@ -32335,7 +32335,7 @@ def _inject_active_etf_compare_v2_css() -> None:
         }
         .etf-cv2-venn-insight.blue { border-left-color: #93c5fd; }
         .etf-cv2-venn-insight-title {
-            font-size: 0.86rem;
+            font-size: 0.98rem;
             font-weight: 600;
             color: #fff;
             margin-bottom: 0.3rem;
@@ -32345,11 +32345,11 @@ def _inject_active_etf_compare_v2_css() -> None:
         }
         .etf-cv2-venn-insight-icon {
             color: #5eead4;
-            font-size: 0.95rem;
+            font-size: 1.05rem;
         }
         .etf-cv2-venn-insight.blue .etf-cv2-venn-insight-icon { color: #93c5fd; }
         .etf-cv2-venn-insight-copy {
-            font-size: 0.74rem;
+            font-size: 0.85rem;
             color: rgba(255,255,255,0.62);
             line-height: 1.55;
         }
@@ -32377,7 +32377,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             justify-content: center;
         }
         .etf-cv2-insight-title {
-            font-size: 0.86rem;
+            font-size: 0.98rem;
             font-weight: 600;
             color: #5eead4;
             margin-bottom: 0.4rem;
@@ -32385,7 +32385,7 @@ def _inject_active_etf_compare_v2_css() -> None:
         .etf-cv2-insight-title.blue   { color: #93c5fd; }
         .etf-cv2-insight-title.purple { color: #c4b5fd; }
         .etf-cv2-insight-copy {
-            font-size: 0.72rem;
+            font-size: 0.83rem;
             color: rgba(255,255,255,0.6);
             line-height: 1.55;
         }
@@ -32399,7 +32399,7 @@ def _inject_active_etf_compare_v2_css() -> None:
             justify-content: space-between;
             flex-wrap: wrap;
             gap: 0.7rem;
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             color: rgba(255,255,255,0.42);
         }
         .etf-cv2-footer-left { flex: 1 1 auto; min-width: 220px; }
@@ -32562,14 +32562,14 @@ def _etf_cv2_venn_svg(left_unique: int, common: int, right_unique: int) -> str:
         <circle cx="90"  cy="90" r="68" fill="url(#cv2VennA)" stroke="#2dd4bf" stroke-width="1.5"/>
         <circle cx="150" cy="90" r="68" fill="url(#cv2VennB)" stroke="#60a5fa" stroke-width="1.5"/>
 
-        <text x="56"  y="92" text-anchor="middle" fill="#5eead4" font-size="26" font-weight="700">{left_unique}</text>
-        <text x="56"  y="115" text-anchor="middle" fill="rgba(255,255,255,0.62)" font-size="10">僅 ETF A</text>
+        <text x="56"  y="92" text-anchor="middle" fill="#5eead4" font-size="30" font-weight="700">{left_unique}</text>
+        <text x="56"  y="118" text-anchor="middle" fill="rgba(255,255,255,0.62)" font-size="11">僅 ETF A</text>
 
-        <text x="120" y="86" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">{common}</text>
-        <text x="120" y="105" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="9">共同</text>
+        <text x="120" y="86" text-anchor="middle" fill="#fff" font-size="20" font-weight="700">{common}</text>
+        <text x="120" y="106" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="10">共同</text>
 
-        <text x="184" y="92" text-anchor="middle" fill="#93c5fd" font-size="26" font-weight="700">{right_unique}</text>
-        <text x="184" y="115" text-anchor="middle" fill="rgba(255,255,255,0.62)" font-size="10">僅 ETF B</text>
+        <text x="184" y="92" text-anchor="middle" fill="#93c5fd" font-size="30" font-weight="700">{right_unique}</text>
+        <text x="184" y="118" text-anchor="middle" fill="rgba(255,255,255,0.62)" font-size="11">僅 ETF B</text>
     </svg>
     """
 
