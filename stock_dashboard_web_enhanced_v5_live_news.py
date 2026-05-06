@@ -8682,6 +8682,102 @@ def market_scope_label(scope: str) -> str:
     }.get(scope, scope)
 
 
+# v1.3.9: Top-of-page selector bar.
+# Surfaces Language / Dashboard mode / Market scope right under the
+# "David Lau Stock Market Vision" title so users can switch context without
+# opening the sidebar. This used to live in the sidebar; the same widgets
+# have been REMOVED from there to avoid Streamlit duplicate-key warnings.
+# Other sidebar settings (theme mode, layout mode, device control, watchlist
+# editor, refresh button) stay where they are.
+def _inject_top_selector_bar_css() -> None:
+    """Inject scoped styles for the top selector bar. Idempotent per-rerun safe
+    since Streamlit dedupes identical <style> blocks server-side."""
+    st.markdown(
+        """
+        <style>
+        .top-selector-bar {
+            background: linear-gradient(180deg, rgba(11,18,32,0.55) 0%, rgba(8,14,28,0.45) 100%);
+            border: 1px solid rgba(70,140,200,0.18);
+            border-radius: 14px;
+            padding: 0.55rem 1rem 0.2rem 1rem;
+            margin: 0.2rem 0 1rem 0;
+        }
+        .top-selector-bar-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: rgba(255,255,255,0.5);
+            text-transform: uppercase;
+            margin-bottom: 0.05rem;
+        }
+        .top-selector-bar [data-testid="stSelectbox"] > label {
+            font-size: 0.74rem !important;
+            color: rgba(255,255,255,0.62) !important;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        @media (max-width: 720px) {
+            .top-selector-bar { padding: 0.45rem 0.7rem 0.15rem 0.7rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_top_dashboard_selectors() -> None:
+    """Render Language / Dashboard mode / Market scope side-by-side at the top
+    of the page, beneath the dashboard title. Each selectbox writes to the
+    same session_state key the sidebar previously used, so downstream code
+    that reads st.session_state["dashboard_language"] / "dashboard_mode" /
+    "dashboard_market_scope" continues to work without changes.
+    """
+    _inject_top_selector_bar_css()
+    st.markdown('<div class="top-selector-bar">', unsafe_allow_html=True)
+    cols = st.columns(3, gap="small")
+
+    with cols[0]:
+        current_lang = st.session_state.get("dashboard_language", "English")
+        if current_lang not in LANGUAGE_OPTIONS:
+            current_lang = "English"
+        selected_lang = st.selectbox(
+            t("language"),
+            options=list(LANGUAGE_OPTIONS.keys()),
+            index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
+            key="top_selector_language",
+        )
+        st.session_state["dashboard_language"] = selected_lang
+
+    with cols[1]:
+        current_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
+        if current_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
+            current_dashboard_mode = "General Market"
+        selected_dashboard_mode = st.selectbox(
+            t("dashboard_mode"),
+            options=DASHBOARD_MODE_OPTIONS,
+            index=DASHBOARD_MODE_OPTIONS.index(current_dashboard_mode),
+            format_func=dashboard_mode_label,
+            key="top_selector_dashboard_mode",
+        )
+        st.session_state["dashboard_mode"] = selected_dashboard_mode
+
+    with cols[2]:
+        current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+        if current_market_scope not in MARKET_SCOPE_OPTIONS:
+            current_market_scope = "Mixed (U.S. + Taiwan)"
+        selected_market_scope = st.selectbox(
+            t("market_scope"),
+            options=list(MARKET_SCOPE_OPTIONS.keys()),
+            index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_market_scope),
+            format_func=market_scope_label,
+            key="top_selector_market_scope",
+        )
+        st.session_state["dashboard_market_scope"] = selected_market_scope
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
 
 def sort_ticker_options(options) -> list[str]:
     seen: set[str] = set()
@@ -24896,15 +24992,13 @@ def render_home_news_briefing(
 
 def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str], str, list[str], str, str]:
     render_html_block(f'<div class="side-group-label">{t("watchlist_universe")}</div>')
-    current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
-    selected_market_scope = st.selectbox(
-        t("market_scope"),
-        options=list(MARKET_SCOPE_OPTIONS.keys()),
-        index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_market_scope) if current_market_scope in MARKET_SCOPE_OPTIONS else 0,
-        format_func=market_scope_label,
-    )
-    st.session_state["dashboard_market_scope"] = selected_market_scope
-    st.caption(t("market_scope_note"))
+    # v1.3.9: Market scope picker moved to the top selector bar (see
+    # render_top_dashboard_selectors). We just read the session_state value
+    # the top picker writes; downstream code (scope_group_options below,
+    # ticker filters, etc.) is unchanged.
+    selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    if selected_market_scope not in MARKET_SCOPE_OPTIONS:
+        selected_market_scope = "Mixed (U.S. + Taiwan)"
 
 
     scope_group_options = market_scope_group_options(selected_market_scope)
@@ -30961,13 +31055,12 @@ def generate_dashboard():
     inject_layout_profile_overrides()
 
     with st.sidebar:
-        current_lang = st.session_state.get("dashboard_language", "English")
-        selected_lang = st.selectbox(
-            t("language"),
-            options=list(LANGUAGE_OPTIONS.keys()),
-            index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
-        )
-        st.session_state["dashboard_language"] = selected_lang
+        # v1.3.9: Language and Dashboard mode pickers moved to the top of the
+        # page (see render_top_dashboard_selectors). Reading session_state
+        # here keeps downstream sidebar widgets / labels in sync.
+        selected_lang = st.session_state.get("dashboard_language", "English")
+        if selected_lang not in LANGUAGE_OPTIONS:
+            selected_lang = "English"
 
         current_theme_mode = st.session_state.get("dashboard_theme_mode", "Dark Horizon")
         if current_theme_mode not in THEME_MODE_OPTIONS:
@@ -30982,17 +31075,9 @@ def generate_dashboard():
         st.caption(t("theme_mode_note"))
         inject_horizon_theme_mode_overrides(selected_theme_mode)
 
-        current_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
-        if current_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
-            current_dashboard_mode = "General Market"
-        selected_dashboard_mode = st.selectbox(
-            t("dashboard_mode"),
-            options=DASHBOARD_MODE_OPTIONS,
-            index=DASHBOARD_MODE_OPTIONS.index(current_dashboard_mode),
-            format_func=dashboard_mode_label,
-        )
-        st.session_state["dashboard_mode"] = selected_dashboard_mode
-        st.caption(t("dashboard_mode_note"))
+        selected_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
+        if selected_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
+            selected_dashboard_mode = "General Market"
 
         current_layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
         if current_layout_mode not in DASHBOARD_LAYOUT_OPTIONS:
@@ -31276,6 +31361,11 @@ def generate_dashboard():
     render_html_block(
         f'<div class="top-intro">{t("top_intro")}</div>'
     )
+
+    # v1.3.9: Top-of-page selector bar (Language / Dashboard mode / Market
+    # scope). Replaces the same three controls in the sidebar so they're
+    # discoverable without opening the side panel.
+    render_top_dashboard_selectors()
 
     dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
     layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
