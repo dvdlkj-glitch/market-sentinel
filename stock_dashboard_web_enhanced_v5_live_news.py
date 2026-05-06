@@ -3450,9 +3450,12 @@ def render_general_market_dashboard_layout(
     lens_meta: dict | None = None,
     layout_mode: str = "Advanced",
 ) -> None:
-    global_reference_data = fetch_global_reference_data(lens_meta["period"], lens_meta["interval"])
-    global_reference_quotes = fetch_live_reference_quotes(tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES))
-    global_indicator = build_global_market_indicator(global_reference_data, lens_meta=lens_meta, live_quotes=global_reference_quotes)
+    # v1.4.6: render_global_market_indicator() used to be called inside three
+    # tabs of this layout (Standard market_brief, Advanced overview, Expert
+    # research_flow header). It has been promoted to generate_dashboard()
+    # so it shows ABOVE the Decision Cockpit regardless of which tab is
+    # active. We deliberately keep the global_indicator computation out of
+    # this function -- it's now done once at the top level.
     lang_zh = get_lang() == "繁體中文"
 
     render_dashboard_layout_intro(layout_mode, "General Market", tickers)
@@ -3471,7 +3474,6 @@ def render_general_market_dashboard_layout(
             state_key="dashboard_standard_general_section",
         )
         if current_section == "layout_standard_market_brief_tab":
-            render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
             render_section_guide()
@@ -3502,7 +3504,6 @@ def render_general_market_dashboard_layout(
             widget_label="dashboard-advanced-general-station",
         )
         if current_section == "layout_overview_tab":
-            render_global_market_indicator(global_indicator)
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
             render_section_guide()
@@ -3516,7 +3517,6 @@ def render_general_market_dashboard_layout(
         else:
             render_ticker_workspace_tabs(daily_data, intraday_data, tickers, lens_meta=lens_meta)
     else:
-        render_global_market_indicator(global_indicator)
         if show_taiwan_macro:
             render_taiwan_market_macro_strip(force_show=True)
         expert_sections = [
@@ -34061,6 +34061,23 @@ def generate_dashboard():
         return
 
     if dashboard_mode != "Active ETF Lab":
+        # v1.4.6: Render the Global Market Indicator ABOVE the Decision
+        # Cockpit so users see baseline breadth (NASDAQ / S&P / DOW / TAIEX)
+        # before the 5-question spine. This used to live inside the
+        # General Market layout's overview tab; we surfaced it to the top
+        # so it's visible regardless of which tab they're on. The duplicate
+        # call inside render_general_market_layout has been removed.
+        global_reference_data = fetch_global_reference_data(period, interval)
+        global_reference_quotes = fetch_live_reference_quotes(
+            tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES)
+        )
+        global_indicator = build_global_market_indicator(
+            global_reference_data,
+            lens_meta=lens_meta,
+            live_quotes=global_reference_quotes,
+        )
+        render_global_market_indicator(global_indicator)
+
         # v1.4.0: Decision Cockpit -- the 5-question decision spine. Reuses
         # the same builders the briefing below uses, so no extra fetches.
         render_decision_cockpit(
