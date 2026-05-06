@@ -13489,7 +13489,14 @@ def render_expander_meta(section: str, item_count: int | None, helper_base: str)
 # ---------------------------
 # Data Fetch
 # ---------------------------
-@st.cache_data(ttl=300)
+# v1.4.1: bumped TTL from 300s -> 1800s (30 min) for daily and 120s -> 600s
+# (10 min) for intraday. Rationale: yfinance bulk download for 30-80 tickers
+# costs 5-12 seconds cold; the previous TTL meant nearly every re-entry to
+# the dashboard re-paid that cost. 30 min is short enough that intraday
+# moves are still tracked via the intraday endpoint, but long enough that
+# typical reload patterns hit cache. Users can force-refresh via the
+# sidebar "Refresh live data" button when needed.
+@st.cache_data(ttl=1800)
 def fetch_daily_data(tickers: list[str], period: str, interval: str):
     sink = io.StringIO()
     with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
@@ -13505,7 +13512,7 @@ def fetch_daily_data(tickers: list[str], period: str, interval: str):
         )
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=600)
 def fetch_intraday_data(tickers: list[str]):
     sink = io.StringIO()
     with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
@@ -24916,6 +24923,2644 @@ def _render_editor_analysis_html(items: list[dict], *, lang_zh: bool) -> str:
     return "".join(cards)
 
 
+# ===========================================================================
+# v1.4.0: Decision Cockpit
+# ---------------------------------------------------------------------------
+# A 5-question decision spine that sits at the top of the dashboard. Reuses
+# the existing top-movers / supply-chain-rankings / active-ETF builders so
+# no new fetchers are introduced. The cockpit is rendered ABOVE
+# render_home_news_briefing; the briefing keeps all of its detail and just
+# becomes "the deeper layer below the cockpit" rather than the entry point.
+#
+# Step 1 of the rollout: implements Q1, Q2, Q3 with a polished card layout
+# matching the user-approved mockup. Q4 (chase / wait / avoid) and
+# Q5 (existing position management) are stubbed at the bottom for now.
+# ===========================================================================
+COCKPIT_ONBOARDING_FLAG_KEY = "cockpit_onboarding_dismissed"
+
+
+def _cockpit_inject_css() -> None:
+    """Inject scoped styles for the decision cockpit. Streamlit dedupes
+    identical <style> blocks server-side so calling this on every rerun is
+    safe. We avoid session_state guards here because Streamlit clears the
+    DOM on rerun but keeps session_state, leading to missing CSS on second
+    render (the same issue we hit in the v1.3.8 ETF compare board)."""
+    st.markdown(
+        """
+        <style>
+        .cockpit-shell {
+            background: linear-gradient(180deg, rgba(15,22,40,0.85) 0%, rgba(8,12,28,0.85) 100%);
+            border: 1px solid rgba(94,234,212,0.22);
+            border-radius: 18px;
+            padding: 1.4rem 1.6rem 1.6rem 1.6rem;
+            margin: 0 0 1.5rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .cockpit-shell::before {
+            content: "";
+            position: absolute; inset: 0;
+            background: radial-gradient(circle at 90% 10%, rgba(94,234,212,0.08), transparent 40%),
+                        radial-gradient(circle at 10% 90%, rgba(96,165,250,0.06), transparent 45%);
+            pointer-events: none;
+        }
+        .cockpit-shell > * { position: relative; z-index: 1; }
+        .cockpit-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #5eead4;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 0.4rem;
+        }
+        .cockpit-kicker-dot {
+            width: 8px; height: 8px;
+            background: #5eead4;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #5eead4;
+        }
+        .cockpit-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.3rem;
+        }
+        .cockpit-sub {
+            font-size: 0.98rem;
+            color: rgba(255,255,255,0.55);
+            margin-bottom: 1.1rem;
+            line-height: 1.55;
+        }
+        .cockpit-onboarding {
+            background: rgba(45,212,191,0.08);
+            border: 1px solid rgba(45,212,191,0.32);
+            border-radius: 12px;
+            padding: 0.7rem 1rem;
+            margin-bottom: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+        }
+        .cockpit-onboarding-icon { font-size: 1.45rem; flex-shrink: 0; }
+        .cockpit-onboarding-text {
+            flex: 1;
+            font-size: 0.95rem;
+            color: rgba(255,255,255,0.78);
+            line-height: 1.5;
+        }
+        .cockpit-q-card {
+            background: linear-gradient(180deg, rgba(20,28,48,0.55) 0%, rgba(12,18,34,0.55) 100%);
+            border: 1px solid rgba(60,100,150,0.18);
+            border-radius: 14px;
+            padding: 1.05rem 1.2rem;
+            margin-bottom: 0.85rem;
+        }
+        .cockpit-q-header {
+            display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.85rem;
+        }
+        .cockpit-q-num {
+            width: 32px; height: 32px;
+            background: rgba(94,234,212,0.12);
+            border: 1.5px solid rgba(94,234,212,0.45);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.05rem; font-weight: 700; color: #5eead4; flex-shrink: 0;
+        }
+        .cockpit-q-text { font-size: 1.22rem; font-weight: 600; color: #fff; flex: 1; }
+        .cockpit-q1-row {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 1.1rem; align-items: center; margin-bottom: 0.85rem;
+        }
+        .cockpit-verdict-light {
+            width: 78px; height: 78px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.5rem;
+            flex-shrink: 0;
+        }
+        .cockpit-verdict-light.green {
+            background: radial-gradient(circle, rgba(45,212,191,0.4) 0%, rgba(45,212,191,0.1) 70%, transparent 100%);
+            border: 2px solid rgba(45,212,191,0.6);
+            box-shadow: 0 0 24px rgba(45,212,191,0.4);
+        }
+        .cockpit-verdict-light.yellow {
+            background: radial-gradient(circle, rgba(250,204,21,0.4) 0%, rgba(250,204,21,0.1) 70%, transparent 100%);
+            border: 2px solid rgba(250,204,21,0.6);
+            box-shadow: 0 0 24px rgba(250,204,21,0.4);
+        }
+        .cockpit-verdict-light.red {
+            background: radial-gradient(circle, rgba(239,68,68,0.4) 0%, rgba(239,68,68,0.1) 70%, transparent 100%);
+            border: 2px solid rgba(239,68,68,0.6);
+        }
+        .cockpit-verdict-text { flex: 1; }
+        .cockpit-verdict-label {
+            font-size: 1.7rem; font-weight: 700; color: #5eead4;
+            line-height: 1.1; margin-bottom: 0.25rem;
+        }
+        .cockpit-verdict-label.yellow { color: #facc15; }
+        .cockpit-verdict-label.red { color: #f87171; }
+        .cockpit-verdict-detail { font-size: 0.95rem; color: rgba(255,255,255,0.62); line-height: 1.5; }
+        .cockpit-score-block { text-align: right; flex-shrink: 0; }
+        .cockpit-score-label {
+            font-size: 0.78rem; color: rgba(255,255,255,0.5);
+            text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.2rem;
+        }
+        .cockpit-score-value {
+            font-size: 2.05rem; font-weight: 700; color: #5eead4; line-height: 1;
+        }
+        .cockpit-score-value.yellow { color: #facc15; }
+        .cockpit-score-value.red { color: #f87171; }
+        .cockpit-q1-breakdown {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.6rem;
+            padding-top: 0.85rem;
+            border-top: 1px dashed rgba(255,255,255,0.08);
+        }
+        .cockpit-cond {
+            background: rgba(8,14,28,0.5);
+            border-radius: 10px;
+            padding: 0.65rem 0.75rem;
+            display: flex; flex-direction: column; gap: 0.2rem;
+        }
+        .cockpit-cond-name {
+            font-size: 0.82rem; color: rgba(255,255,255,0.55);
+            display: flex; align-items: center; gap: 0.35rem;
+        }
+        .cockpit-cond-tick { font-size: 0.95rem; }
+        .cockpit-cond-tick.pass { color: #5eead4; }
+        .cockpit-cond-tick.warn { color: #facc15; }
+        .cockpit-cond-tick.fail { color: #f87171; }
+        .cockpit-cond-value { font-size: 1.1rem; font-weight: 600; color: #fff; }
+        .cockpit-cond-bar {
+            height: 4px;
+            background: rgba(60,90,130,0.3);
+            border-radius: 999px;
+            overflow: hidden;
+            margin-top: 0.2rem;
+        }
+        .cockpit-cond-bar-fill { height: 100%; border-radius: 999px; }
+        .cockpit-cond-bar-fill.pass { background: linear-gradient(90deg, #2dd4bf, #5eead4); }
+        .cockpit-cond-bar-fill.warn { background: linear-gradient(90deg, #facc15, #fde047); }
+        .cockpit-cond-bar-fill.fail { background: linear-gradient(90deg, #ef4444, #f87171); }
+        .cockpit-q2-medals {
+            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.7rem;
+        }
+        .cockpit-medal-card {
+            background: rgba(8,14,28,0.5);
+            border: 1px solid rgba(60,100,150,0.18);
+            border-radius: 12px;
+            padding: 0.85rem 0.95rem;
+            position: relative; overflow: hidden;
+        }
+        .cockpit-medal-card.gold {
+            border-color: rgba(250,204,21,0.45);
+            background: linear-gradient(180deg, rgba(250,204,21,0.08), rgba(8,14,28,0.5));
+        }
+        .cockpit-medal-card.silver {
+            border-color: rgba(203,213,225,0.35);
+            background: linear-gradient(180deg, rgba(203,213,225,0.06), rgba(8,14,28,0.5));
+        }
+        .cockpit-medal-card.bronze {
+            border-color: rgba(217,119,6,0.4);
+            background: linear-gradient(180deg, rgba(217,119,6,0.06), rgba(8,14,28,0.5));
+        }
+        .cockpit-medal-rank { font-size: 1.85rem; margin-bottom: 0.3rem; }
+        .cockpit-medal-theme {
+            font-size: 1.15rem; font-weight: 700; color: #fff; margin-bottom: 0.35rem;
+        }
+        .cockpit-medal-pct {
+            font-size: 1.7rem; font-weight: 700; color: #5eead4;
+            line-height: 1.05; margin-bottom: 0.25rem;
+        }
+        .cockpit-medal-detail { font-size: 0.85rem; color: rgba(255,255,255,0.55); line-height: 1.4; }
+        /* v1.4.3: Q3 layout per the user-approved mockup. Each sub-section
+           (TOP 5 stocks / TOP 3 chains / TOP 3 ETFs) is its own panel with
+           a darker background, an icon-led header, and a kicker pipe-divider
+           subtitle. The legacy .cockpit-q3-section-header style is dropped. */
+        .cockpit-q-text-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0.18rem;
+            flex: 1;
+        }
+        .cockpit-q-subtext {
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.55);
+            font-weight: 500;
+        }
+        .cockpit-q3-panel {
+            background: rgba(8,12,24,0.62);
+            border: 1px solid rgba(60,100,150,0.15);
+            border-radius: 14px;
+            padding: 1.1rem 1.2rem 1.2rem 1.2rem;
+            margin-bottom: 1rem;
+        }
+        .cockpit-q3-panel:last-of-type {
+            margin-bottom: 0.5rem;
+        }
+        .cockpit-q3-panel-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.95rem;
+        }
+        .cockpit-q3-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+            row-gap: 0.3rem;
+        }
+        .cockpit-q3-panel-icon {
+            font-size: 1.3rem;
+            line-height: 1;
+        }
+        .cockpit-q3-panel-icon.stock { filter: drop-shadow(0 0 6px rgba(250,204,21,0.32)); }
+        .cockpit-q3-panel-icon.chain { filter: drop-shadow(0 0 6px rgba(94,234,212,0.32)); }
+        .cockpit-q3-panel-icon.etf { filter: drop-shadow(0 0 6px rgba(96,165,250,0.32)); }
+        .cockpit-q3-panel-kicker {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.01em;
+        }
+        .cockpit-q3-panel-kicker.stock { color: #fff; }
+        .cockpit-q3-panel-kicker.chain { color: #fff; }
+        .cockpit-q3-panel-kicker.etf { color: #fff; }
+        .cockpit-q3-panel-divider {
+            color: rgba(255,255,255,0.22);
+            font-weight: 300;
+            margin: 0 0.15rem;
+        }
+        .cockpit-q3-panel-sub {
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.62);
+            font-weight: 500;
+        }
+        .cockpit-q3-list {
+            display: grid; grid-template-columns: 1fr; gap: 0.55rem;
+        }
+        /* "Featured" card -- the rank-1 spotlight pick. Stronger left bar,
+           outer glow ring, larger title; matches the mockup's TOP-1 styling. */
+        .cockpit-pick-card.featured {
+            background: linear-gradient(180deg, rgba(15,28,52,0.78) 0%, rgba(10,18,38,0.72) 100%);
+            border: 1.5px solid rgba(94,234,212,0.42);
+            border-left: 5px solid #5eead4;
+            box-shadow: 0 0 0 1px rgba(94,234,212,0.12), 0 8px 28px rgba(94,234,212,0.06);
+            padding: 1.15rem 1.3rem;
+        }
+        .cockpit-pick-card.featured:hover {
+            border-left-color: #93c5fd;
+            background: linear-gradient(180deg, rgba(18,32,58,0.85) 0%, rgba(12,20,42,0.78) 100%);
+        }
+        .cockpit-pick-card.featured .cockpit-pick-name {
+            font-size: 1.45rem;
+            font-weight: 700;
+        }
+        .cockpit-pick-card.featured .cockpit-pick-pct {
+            font-size: 1.55rem;
+        }
+        /* ===== v1.4.5 Loading placeholder skeleton ===== */
+        .cockpit-loading-shell {
+            min-height: 320px;
+        }
+        .cockpit-loading-row {
+            display: flex;
+            align-items: center;
+            gap: 1.1rem;
+            margin: 0.4rem 0 1.4rem 0;
+        }
+        .cockpit-loading-spinner {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 3px solid rgba(94,234,212,0.18);
+            border-top-color: #5eead4;
+            animation: cockpit-spin 0.9s linear infinite;
+            flex-shrink: 0;
+        }
+        @keyframes cockpit-spin {
+            to { transform: rotate(360deg); }
+        }
+        .cockpit-loading-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #fff;
+            line-height: 1.3;
+            margin-bottom: 0.25rem;
+        }
+        .cockpit-loading-sub {
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.5;
+        }
+        /* Animated dots after the title */
+        .cockpit-loading-dots {
+            display: inline-flex;
+            margin-left: 0.2rem;
+        }
+        .cockpit-loading-dots > span {
+            opacity: 0.2;
+            animation: cockpit-dots 1.4s infinite;
+        }
+        .cockpit-loading-dots > span:nth-child(2) { animation-delay: 0.2s; }
+        .cockpit-loading-dots > span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes cockpit-dots {
+            0%, 60%, 100% { opacity: 0.2; }
+            30% { opacity: 1; }
+        }
+        /* Shimmer skeleton bars */
+        .cockpit-loading-skeleton {
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }
+        .cockpit-loading-bar {
+            background: linear-gradient(
+                90deg,
+                rgba(20,28,48,0.55) 0%,
+                rgba(40,60,100,0.35) 50%,
+                rgba(20,28,48,0.55) 100%
+            );
+            background-size: 200% 100%;
+            border-radius: 12px;
+            border: 1px solid rgba(60,100,150,0.16);
+        }
+        .cockpit-loading-bar.shimmer {
+            animation: cockpit-shimmer 1.6s ease-in-out infinite;
+        }
+        @keyframes cockpit-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        @media (max-width: 720px) {
+            .cockpit-loading-title { font-size: 1.1rem; }
+            .cockpit-loading-sub { font-size: 0.85rem; }
+        }
+        /* ===== end v1.4.5 Loading placeholder ===== */
+
+        .cockpit-q3-disclaimer {
+            margin-top: 0.85rem;
+            padding-top: 0.6rem;
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.42);
+            line-height: 1.55;
+            font-style: italic;
+        }
+
+        /* ===== v1.4.4 Q3 layout (mockup ChatGPT_Image_2026-05-06) ===== */
+        /* Top summary strip: three pill-style summary cards above main content */
+        .cockpit-q3-summary-strip {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.85rem;
+            margin: 0.4rem 0 1.1rem 0;
+        }
+        .cockpit-q3-summary-card {
+            background: rgba(8,14,28,0.62);
+            border: 1px solid rgba(60,100,150,0.18);
+            border-radius: 14px;
+            padding: 1.1rem 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .cockpit-q3-summary-card.stock { border-color: rgba(250,204,21,0.32); background: linear-gradient(135deg, rgba(250,204,21,0.06), rgba(8,14,28,0.62)); }
+        .cockpit-q3-summary-card.chain { border-color: rgba(168,85,247,0.32); background: linear-gradient(135deg, rgba(168,85,247,0.08), rgba(8,14,28,0.62)); }
+        .cockpit-q3-summary-card.etf { border-color: rgba(96,165,250,0.32); background: linear-gradient(135deg, rgba(96,165,250,0.06), rgba(8,14,28,0.62)); }
+        .cockpit-q3-summary-icon {
+            font-size: 2rem;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        .cockpit-q3-summary-text { flex: 1; min-width: 0; }
+        .cockpit-q3-summary-kicker {
+            font-size: 0.86rem;
+            color: rgba(255,255,255,0.62);
+            font-weight: 500;
+            margin-bottom: 0.15rem;
+        }
+        .cockpit-q3-summary-value {
+            font-size: 1.85rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.05;
+            margin-bottom: 0.18rem;
+        }
+        .cockpit-q3-summary-value > * { display: inline; }
+        .cockpit-q3-summary-sub {
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.48);
+        }
+
+        /* Two-column layout: left = stocks (8 fr), right = chains+etfs (5 fr) */
+        .cockpit-q3-twocol {
+            display: grid;
+            grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+            gap: 1rem;
+            margin-bottom: 0.8rem;
+        }
+        .cockpit-q3-right {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            min-width: 0;
+        }
+        .cockpit-q3-right .cockpit-q3-panel { margin-bottom: 0; }
+        .cockpit-q3-panel-left { min-width: 0; }
+
+        /* Panel header: kicker + view-all link */
+        .cockpit-q3-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            margin-bottom: 0.95rem;
+        }
+        .cockpit-q3-view-all {
+            font-size: 0.86rem;
+            color: rgba(94,234,212,0.85);
+            text-decoration: none;
+            font-weight: 500;
+            white-space: nowrap;
+            transition: color 0.15s ease;
+        }
+        .cockpit-q3-view-all:hover { color: #5eead4; }
+
+        /* Spotlight card (TOP 1 in 盤前焦點) */
+        .cockpit-spotlight-card {
+            background: linear-gradient(180deg, rgba(15,28,52,0.82) 0%, rgba(10,18,38,0.78) 100%);
+            border: 1.5px solid rgba(94,234,212,0.42);
+            border-radius: 14px;
+            padding: 1.4rem 1.5rem;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 1.1rem;
+            align-items: center;
+            box-shadow: 0 0 0 1px rgba(94,234,212,0.12), 0 8px 28px rgba(94,234,212,0.06);
+            margin-bottom: 1rem;
+        }
+        .cockpit-spotlight-rank {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: rgba(94,234,212,0.16);
+            border: 1.5px solid rgba(94,234,212,0.55);
+            color: #5eead4;
+            font-weight: 700;
+            font-size: 1.15rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .cockpit-spotlight-body { min-width: 0; }
+        .cockpit-spotlight-head {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.45rem;
+        }
+        .cockpit-spotlight-name {
+            font-size: 1.85rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.1;
+        }
+        .cockpit-spotlight-theme {
+            font-size: 0.92rem;
+            padding: 0.32rem 0.85rem;
+        }
+        .cockpit-spotlight-blurb {
+            font-size: 0.95rem;
+            color: rgba(255,255,255,0.72);
+            line-height: 1.55;
+        }
+        .cockpit-spotlight-right {
+            display: flex;
+            flex-direction: column;
+            gap: 0.7rem;
+            align-items: flex-end;
+            flex-shrink: 0;
+        }
+        .cockpit-spotlight-pct {
+            font-size: 1.95rem;
+            font-weight: 700;
+            color: #5eead4;
+            line-height: 1;
+            text-align: right;
+        }
+        .cockpit-spotlight-pct.down { color: #f87171; }
+        .cockpit-spotlight-btn {
+            font-size: 0.92rem;
+            padding: 0.5rem 1.2rem;
+        }
+
+        /* Compact table rows for TOP 2-5 */
+        .cockpit-q3-table-header {
+            display: grid;
+            grid-template-columns: 38px 80px 1fr 88px 76px;
+            gap: 0.85rem;
+            align-items: center;
+            padding: 0 0.4rem 0.55rem 0.4rem;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.45);
+            font-weight: 500;
+            border-bottom: 1px dashed rgba(255,255,255,0.08);
+            margin-bottom: 0.3rem;
+        }
+        .cockpit-q3-table-rows {
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }
+        .cockpit-q3-table-row {
+            display: grid;
+            grid-template-columns: 38px 80px 1fr 88px 76px;
+            gap: 0.85rem;
+            align-items: center;
+            padding: 0.7rem 0.4rem;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            transition: background 0.15s ease;
+        }
+        .cockpit-q3-table-row:hover {
+            background: rgba(255,255,255,0.02);
+        }
+        .cockpit-q3-table-row:last-child { border-bottom: none; }
+        .cockpit-q3-tr-rank {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(94,234,212,0.12);
+            border: 1.5px solid rgba(94,234,212,0.42);
+            color: #5eead4;
+            font-weight: 700;
+            font-size: 0.92rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .cockpit-q3-tr-name {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #fff;
+        }
+        .cockpit-q3-tr-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            min-width: 0;
+        }
+        .cockpit-q3-tr-pct {
+            font-size: 1.08rem;
+            font-weight: 700;
+            color: #5eead4;
+            text-align: right;
+        }
+        .cockpit-q3-tr-pct.down { color: #f87171; }
+        .cockpit-q3-tr-btn {
+            padding: 0.32rem 0.75rem;
+            font-size: 0.82rem;
+            justify-self: end;
+        }
+        .cockpit-q3-tr-btn-h {
+            text-align: right;
+        }
+
+        @media (max-width: 1100px) {
+            .cockpit-q3-twocol { grid-template-columns: 1fr; }
+            .cockpit-q3-summary-strip { grid-template-columns: 1fr; gap: 0.55rem; }
+            .cockpit-q3-summary-value { font-size: 1.5rem; }
+        }
+        @media (max-width: 720px) {
+            .cockpit-spotlight-card {
+                grid-template-columns: auto 1fr;
+                padding: 1.1rem 1rem;
+            }
+            .cockpit-spotlight-right {
+                grid-column: 1 / -1;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .cockpit-spotlight-name { font-size: 1.45rem; }
+            .cockpit-spotlight-pct { font-size: 1.5rem; }
+            .cockpit-q3-table-header {
+                grid-template-columns: 32px 1fr 80px;
+            }
+            .cockpit-q3-table-header > :nth-child(3),
+            .cockpit-q3-table-header > :nth-child(5) {
+                display: none;
+            }
+            .cockpit-q3-table-row {
+                grid-template-columns: 32px 1fr auto;
+                row-gap: 0.45rem;
+            }
+            .cockpit-q3-tr-tags {
+                grid-column: 1 / -1;
+            }
+            .cockpit-q3-tr-btn {
+                grid-column: 1 / -1;
+                justify-self: start;
+            }
+        }
+        /* ===== end v1.4.4 Q3 layout ===== */
+
+        .cockpit-pick-card {
+            background: rgba(8,14,28,0.5);
+            border: 1px solid rgba(60,100,150,0.18);
+            border-left: 3px solid #5eead4;
+            border-radius: 12px;
+            padding: 0.95rem 1.15rem;
+            display: grid;
+            grid-template-columns: auto 1fr auto auto;
+            gap: 1.1rem;
+            align-items: center;
+            transition: transform 0.15s ease, border-left-color 0.15s ease, background 0.15s ease;
+        }
+        .cockpit-pick-card:hover {
+            transform: translateX(2px);
+            border-left-color: #93c5fd;
+            background: rgba(15,22,42,0.65);
+        }
+        .cockpit-pick-rank {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(94,234,212,0.12);
+            border: 1.5px solid rgba(94,234,212,0.42);
+            color: #5eead4;
+            font-weight: 700;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .cockpit-pick-icon { font-size: 1.55rem; }
+        .cockpit-pick-body { min-width: 0; }
+        .cockpit-pick-name {
+            font-size: 1.18rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 0.42rem;
+            letter-spacing: -0.005em;
+        }
+        .cockpit-pick-reasons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            row-gap: 0.45rem;
+        }
+        .cockpit-pick-tag {
+            font-size: 0.86rem;
+            padding: 0.28rem 0.78rem;
+            border-radius: 999px;
+            background: rgba(45,212,191,0.12);
+            color: #5eead4;
+            border: 1px solid rgba(45,212,191,0.28);
+            white-space: nowrap;
+            line-height: 1.3;
+        }
+        .cockpit-pick-tag.flow {
+            background: rgba(96,165,250,0.12); color: #93c5fd; border-color: rgba(96,165,250,0.28);
+        }
+        .cockpit-pick-tag.theme {
+            background: rgba(168,85,247,0.12); color: #c4b5fd; border-color: rgba(168,85,247,0.28);
+        }
+        .cockpit-pick-tag-stale {
+            opacity: 0.78;
+        }
+        .cockpit-pick-tag-stale::after {
+            content: " *";
+            color: rgba(255,255,255,0.4);
+        }
+        .cockpit-pick-pct {
+            font-size: 1.32rem;
+            font-weight: 700;
+            color: #5eead4;
+            text-align: right;
+            min-width: 92px;
+        }
+        .cockpit-pick-pct.down { color: #f87171; }
+        .cockpit-pick-detail-btn {
+            background: rgba(94,234,212,0.08);
+            border: 1px solid rgba(94,234,212,0.36);
+            color: #5eead4;
+            padding: 0.42rem 1rem;
+            border-radius: 8px;
+            font-size: 0.86rem;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s ease, border-color 0.15s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .cockpit-pick-detail-btn:hover {
+            background: rgba(94,234,212,0.18);
+            border-color: rgba(94,234,212,0.6);
+            color: #5eead4;
+        }
+        .cockpit-pick-stale-note {
+            margin-top: 0.5rem;
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.42);
+            font-style: italic;
+        }
+        .cockpit-disclaimer {
+            margin-top: 1.2rem; padding-top: 1rem;
+            border-top: 1px dashed rgba(255,255,255,0.08);
+            font-size: 0.85rem; color: rgba(255,255,255,0.42); line-height: 1.55;
+        }
+        .cockpit-stub-note {
+            background: rgba(15,22,40,0.5);
+            border: 1px dashed rgba(96,165,250,0.22);
+            border-radius: 10px;
+            padding: 0.7rem 0.95rem;
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.55);
+            margin-bottom: 0.85rem;
+            line-height: 1.5;
+        }
+
+        /* Tight inner shell variant for Q5 (so the Streamlit text_area
+           doesn't sit inside a too-wide cockpit padding) */
+        .cockpit-shell.cockpit-shell-tight {
+            padding: 1rem 1.4rem 1.2rem 1.4rem;
+            margin-top: -0.35rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Q4 trigger grid */
+        .cockpit-q4-triggers {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.6rem;
+            padding-top: 0.85rem;
+            border-top: 1px dashed rgba(255,255,255,0.08);
+        }
+        .cockpit-q4-trigger-copy {
+            font-size: 0.82rem;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.45;
+            margin-top: 0.2rem;
+        }
+
+        /* Q5 holdings */
+        .cockpit-q-card-q5 { margin-bottom: 0.45rem; }
+        .cockpit-q5-help {
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.62);
+            line-height: 1.55;
+            margin-top: -0.4rem;
+            margin-bottom: 0.4rem;
+        }
+        .cockpit-q5-help-example {
+            font-size: 0.85rem;
+            color: rgba(94,234,212,0.72);
+            font-family: "SF Mono", Menlo, Consolas, monospace;
+            background: rgba(94,234,212,0.06);
+            border-left: 3px solid rgba(94,234,212,0.32);
+            padding: 0.4rem 0.7rem;
+            border-radius: 6px;
+            margin-bottom: 0.2rem;
+        }
+        .cockpit-q5-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.7rem;
+            margin-bottom: 0.85rem;
+        }
+        .cockpit-q5-holding {
+            background: rgba(8,14,28,0.5);
+            border: 1px solid rgba(60,100,150,0.18);
+            border-left: 3px solid rgba(94,234,212,0.5);
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+        }
+        .cockpit-q5-holding.tone-pass { border-left-color: #5eead4; }
+        .cockpit-q5-holding.tone-warn { border-left-color: #facc15; }
+        .cockpit-q5-holding.tone-fail { border-left-color: #f87171; }
+        .cockpit-q5-head {
+            display: flex;
+            align-items: baseline;
+            gap: 0.7rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.55rem;
+        }
+        .cockpit-q5-name {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #fff;
+            flex: 1;
+            min-width: 0;
+        }
+        .cockpit-q5-move {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #5eead4;
+        }
+        .cockpit-q5-pnl {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: rgba(255,255,255,0.7);
+            padding: 0.15rem 0.55rem;
+            border-radius: 999px;
+            background: rgba(15,22,40,0.65);
+        }
+        .cockpit-q5-pnl.pass { color: #5eead4; background: rgba(45,212,191,0.12); }
+        .cockpit-q5-pnl.warn { color: #facc15; background: rgba(250,204,21,0.10); }
+        .cockpit-q5-pnl.fail { color: #f87171; background: rgba(239,68,68,0.10); }
+        .cockpit-q5-notes {
+            display: flex;
+            flex-direction: column;
+            gap: 0.32rem;
+        }
+        .cockpit-q5-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            font-size: 0.86rem;
+            line-height: 1.5;
+            color: rgba(255,255,255,0.78);
+        }
+        .cockpit-q5-note-text { flex: 1; }
+
+        @media (max-width: 760px) {
+            .cockpit-shell { padding: 1.1rem 1rem 1.2rem 1rem; }
+            .cockpit-q1-row { grid-template-columns: 1fr; text-align: center; }
+            .cockpit-q1-breakdown { grid-template-columns: repeat(2, 1fr); }
+            .cockpit-q4-triggers { grid-template-columns: repeat(2, 1fr); }
+            .cockpit-q2-medals { grid-template-columns: 1fr; }
+            .cockpit-q5-grid { grid-template-columns: 1fr; }
+            .cockpit-pick-card {
+                grid-template-columns: auto 1fr;
+                gap: 0.7rem;
+            }
+            .cockpit-pick-pct, .cockpit-pick-detail-btn {
+                grid-column: 1 / -1;
+                text-align: left;
+            }
+            .cockpit-pick-detail-btn { justify-self: start; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _cockpit_minify_html(html_text: str) -> str:
+    """Flatten leading whitespace to prevent Streamlit's CommonMark parser
+    from interpreting indented HTML blocks as code blocks."""
+    if not html_text:
+        return ""
+    return " ".join(line.strip() for line in html_text.split("\n") if line.strip())
+
+
+def _cockpit_compute_q1_verdict(top_movers: list[dict], chain_rankings: list[dict],
+                                lang_zh: bool) -> dict:
+    """Synthesise Q1 'can we trade today?' from existing dashboard signals.
+
+    Returns:
+        {
+            "verdict_color": "green"|"yellow"|"red",
+            "verdict_emoji": str,
+            "verdict_label": str,
+            "verdict_detail": str,
+            "score": float,                # composite score in [-1, +1]
+            "conditions": [
+                {"name": str, "value_text": str, "tone": str, "fill_pct": float},
+                ...4 entries
+            ]
+        }
+
+    Inputs are the SAME builders that feed News Briefing, so we never make
+    extra network calls. When a signal isn't available (e.g. cold start with
+    no chain rankings), we set tone='warn' and fill_pct=0 so the user sees
+    the gap rather than a fake green light.
+    """
+    # --- Condition 1: 漲跌家比 (advancers / decliners among top movers + chain) ---
+    advancers = 0
+    decliners = 0
+    for item in (top_movers or []):
+        move = _safe_float(item.get("move"))
+        if pd.isna(move): continue
+        if move > 0: advancers += 1
+        elif move < 0: decliners += 1
+    for row in (chain_rankings or []):
+        rising = int(row.get("rising_count", 0) or 0)
+        total = int(row.get("ticker_count", 0) or 0)
+        advancers += rising
+        decliners += max(total - rising, 0)
+    breadth_total = max(advancers + decliners, 1)
+    breadth_ratio = advancers / breadth_total
+    breadth_text = f"{advancers} / {decliners}"
+    if breadth_ratio >= 0.6:
+        breadth_tone = "pass"
+    elif breadth_ratio >= 0.45:
+        breadth_tone = "warn"
+    else:
+        breadth_tone = "fail"
+    breadth_fill = max(0.0, min(breadth_ratio * 100.0, 100.0))
+
+    # --- Condition 2: 外資淨流向 (sum across top supply-chain leaders) ---
+    foreign_total = 0.0
+    foreign_seen = False
+    for row in (chain_rankings or []):
+        fn = _safe_float(row.get("foreign_net_total"))
+        if pd.notna(fn):
+            foreign_total += float(fn)
+            foreign_seen = True
+    if not foreign_seen:
+        foreign_tone = "warn"
+        foreign_text = "—"
+        foreign_fill = 0.0
+    else:
+        # Foreign flow is in lots / shares from the chain builder. Map by
+        # signed log scale so the bar saturates at roughly +/- 50k.
+        foreign_text = (
+            f"{'+' if foreign_total >= 0 else ''}{int(round(foreign_total)):,}"
+            + ("" if not lang_zh else " 張")
+        )
+        if foreign_total > 0:
+            foreign_tone = "pass"
+            foreign_fill = min(50.0 + (foreign_total / 50000.0) * 50.0, 100.0)
+        elif foreign_total < 0:
+            foreign_tone = "fail"
+            foreign_fill = max(50.0 + (foreign_total / 50000.0) * 50.0, 0.0)
+        else:
+            foreign_tone = "warn"
+            foreign_fill = 50.0
+
+    # --- Condition 3: 量能 (avg volume_ratio across top movers) ---
+    # build_home_news_top_taiwan_movers / _ticker_move_from_data exposes
+    # this as `volume_ratio` (current vol / 20-day baseline), not volume_x.
+    volume_ratio_values = []
+    for item in (top_movers or []):
+        vr = _safe_float(item.get("volume_ratio"))
+        if pd.notna(vr):
+            volume_ratio_values.append(float(vr))
+    if not volume_ratio_values:
+        volume_tone = "warn"
+        volume_text = "—"
+        volume_fill = 0.0
+    else:
+        avg_vr = sum(volume_ratio_values) / len(volume_ratio_values)
+        volume_text = f"{avg_vr:.2f}×"
+        if avg_vr >= 1.5:
+            volume_tone = "pass"
+            volume_fill = min((avg_vr / 3.0) * 100.0, 100.0)
+        elif avg_vr >= 1.0:
+            volume_tone = "warn"
+            volume_fill = min((avg_vr / 3.0) * 100.0, 100.0)
+        else:
+            volume_tone = "fail"
+            volume_fill = min(avg_vr / 3.0 * 100.0, 100.0)
+
+    # --- Condition 4: 強勢題材數 (chain rankings with positive move) ---
+    chain_rising = 0
+    for row in (chain_rankings or []):
+        m = _safe_float(row.get("move"))
+        if pd.notna(m) and float(m) > 0:
+            chain_rising += 1
+    chain_total = len(chain_rankings or []) or 3
+    chain_text = f"{chain_rising} / {chain_total}"
+    chain_ratio = chain_rising / max(chain_total, 1)
+    if chain_ratio >= 0.66:
+        chain_tone = "pass"
+    elif chain_ratio >= 0.34:
+        chain_tone = "warn"
+    else:
+        chain_tone = "fail"
+    chain_fill = chain_ratio * 100.0
+
+    # --- Composite score ---
+    tone_to_pts = {"pass": 1.0, "warn": 0.0, "fail": -1.0}
+    weights = [0.40, 0.30, 0.20, 0.10]  # breadth, foreign, volume, chain
+    tones = [breadth_tone, foreign_tone, volume_tone, chain_tone]
+    score = sum(weights[i] * tone_to_pts[tones[i]] for i in range(4))
+    score = max(-1.0, min(1.0, score))
+
+    # --- Verdict ---
+    # Special case: if everything came back blank (no movers AND no chain
+    # rankings), show a "data not ready" yellow rather than misleading red.
+    cold_start = (not top_movers) and (not chain_rankings)
+    pass_count = sum(1 for t in tones if t == "pass")
+
+    if cold_start:
+        verdict_color = "yellow"
+        verdict_emoji = "🟡"
+        verdict_label = "訊號尚未就緒" if lang_zh else "Signals warming up"
+        verdict_detail = (
+            "目前還沒抓到足夠的盤中資料，刷新後或盤中時段會自動補齊。"
+            if lang_zh else
+            "Not enough intraday data yet; conditions will populate once the market session is active."
+        )
+    elif score >= 0.45 and pass_count >= 2:
+        verdict_color = "green"
+        verdict_emoji = "🟢"
+        verdict_label = "可以做 (Risk-on)" if lang_zh else "Risk-on"
+        verdict_detail = (
+            "多數訊號正面：漲家領先、量能放大或外資偏買。短線可進場，但避開高位追價。"
+            if lang_zh else
+            "Most signals positive: advancers lead and flow / volume support entry. Avoid late chases though."
+        )
+    elif score >= -0.2:
+        verdict_color = "yellow"
+        verdict_emoji = "🟡"
+        verdict_label = "謹慎觀察" if lang_zh else "Cautious"
+        verdict_detail = (
+            "訊號分歧：部分指標正面、部分指標弱。建議減少持股、等更明確訊號或回測。"
+            if lang_zh else
+            "Mixed signals: some positives but breadth or flow not aligned. Lighter exposure advised; wait for clearer setup."
+        )
+    else:
+        verdict_color = "red"
+        verdict_emoji = "🔴"
+        verdict_label = "先避開" if lang_zh else "Stand aside"
+        verdict_detail = (
+            "多數訊號偏弱：漲家不足、外資偏賣或量能不夠。短線建議降低部位或先觀望。"
+            if lang_zh else
+            "Most signals weak: poor breadth, selling flow, or thin volume. Reduce exposure or stay out short-term."
+        )
+
+    return {
+        "verdict_color": verdict_color,
+        "verdict_emoji": verdict_emoji,
+        "verdict_label": verdict_label,
+        "verdict_detail": verdict_detail,
+        "score": score,
+        "conditions": [
+            {
+                "name": "漲跌家比" if lang_zh else "Breadth",
+                "value_text": breadth_text,
+                "tone": breadth_tone,
+                "fill_pct": breadth_fill,
+            },
+            {
+                "name": "外資淨流向" if lang_zh else "Foreign net",
+                "value_text": foreign_text,
+                "tone": foreign_tone,
+                "fill_pct": foreign_fill,
+            },
+            {
+                "name": "量比 (前段)" if lang_zh else "Volume × (top set)",
+                "value_text": volume_text,
+                "tone": volume_tone,
+                "fill_pct": volume_fill,
+            },
+            {
+                "name": "強勢題材數" if lang_zh else "Strong themes",
+                "value_text": chain_text,
+                "tone": chain_tone,
+                "fill_pct": chain_fill,
+            },
+        ],
+    }
+
+
+def _cockpit_format_pct(value: object) -> str:
+    fv = _safe_float(value)
+    if pd.isna(fv):
+        return "—"
+    return f"{fv:+.2f}%"
+
+
+def _cockpit_ticker_chain_title(ticker: str) -> str:
+    """Reverse-lookup which supply-chain group a ticker belongs to.
+
+    Returns the chain title (e.g. "Memory 記憶體") if the ticker is in any
+    SUPPLY_CHAIN_FOCUS_CONFIGS catalog, else "". Cheap O(N) scan; the
+    catalogs are small (~30-50 tickers each) and we only call this for the
+    top 3 picks per render.
+    """
+    if not ticker:
+        return ""
+    norm = normalize_dashboard_ticker(ticker)
+    for config_key, config in (SUPPLY_CHAIN_FOCUS_CONFIGS or {}).items():
+        catalog = config.get("catalog") or []
+        for entry in catalog:
+            entry_ticker = normalize_dashboard_ticker(str(entry.get("ticker", "") or ""))
+            if entry_ticker and entry_ticker == norm:
+                return str(config.get("title") or supply_chain_group_label(config_key) or "")
+    return ""
+
+
+def _cockpit_format_flow_date_suffix(flow_date_str: str, lang_zh: bool) -> str:
+    """Convert TWSE flow_date (YYYY-MM-DD) into a compact stale suffix.
+
+    Returns:
+        ""   when the date is today (no suffix needed)
+        " (今日)" / " (today)" when explicitly today
+        " (5/5)" / " (5/5)"   for any prior date in current year
+        " (2025/12/30)"       for a date in a prior year (rare edge case)
+    """
+    if not flow_date_str:
+        return ""
+    try:
+        flow_ts = pd.Timestamp(flow_date_str).normalize()
+        today_ts = pd.Timestamp.now(TW_TZ).normalize().tz_localize(None)
+    except Exception:
+        return ""
+    if flow_ts == today_ts:
+        return ""  # current data, no suffix needed; clean visual
+    # Prior date: surface short month/day so the user knows
+    if flow_ts.year == today_ts.year:
+        return f" ({flow_ts.month}/{flow_ts.day})"
+    return f" ({flow_ts.year}/{flow_ts.month}/{flow_ts.day})"
+
+
+def _cockpit_underlying_signal_with_timeout(ticker: str, max_news: int = 3, timeout_sec: float = 1.5) -> dict:
+    """Wrap fetch_active_etf_underlying_signal with a soft timeout.
+
+    The underlying fetch is decorated with @st.cache_data(ttl=1800), so the
+    happy path is almost free. The risk is the FIRST cold call of the day
+    spending 3-9 seconds chaining yfinance news + TWSE flow + TPEX fallback.
+
+    Strategy: try cache hit first (instant). If we end up on the cold path,
+    bail out after timeout_sec so the cockpit still paints; the data will be
+    cached for the next rerun.
+
+    Returns either the full signal dict on success, or {} on timeout/error.
+    The caller knows to render with the "stale or missing flow" presentation
+    when {} comes back.
+    """
+    # Try the cache-only fast path first. Streamlit's cache wrapper accepts
+    # the standard call signature and will return immediately on hit.
+    try:
+        # Call WITHOUT a thread when the function looks cached: we detect
+        # a likely cache hit by timing a tiny inner call. This is brittle.
+        # Simpler and equally effective: just always call with concurrent
+        # timeout protection. On warm path the call returns in ~1ms.
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(fetch_active_etf_underlying_signal, ticker, max_news)
+            try:
+                return future.result(timeout=timeout_sec) or {}
+            except concurrent.futures.TimeoutError:
+                # Don't cancel: let the work finish in the background so it
+                # populates the @st.cache_data cache for the next rerun.
+                return {}
+    except Exception:
+        return {}
+
+
+def _cockpit_pick_reasons(item: dict, leader_theme: str | None, lang_zh: bool) -> list[tuple[str, str, bool]]:
+    """Build the reason tags for a Q3 stock pick.
+
+    Returns a list of (tone_class, label, is_stale) where:
+      * tone_class is in {"theme", "flow", ""} matching CSS modifiers
+      * is_stale=True when the tag is built from yesterday-or-older data
+
+    v1.4.4: thresholds lowered so each pick gets richer context tags.
+    Per the user-approved layout, the goal is for every stock to surface
+    the available signals (theme / volume / foreign / news / attention)
+    rather than hiding tags below a "tidy" cutoff. Cap raised from 4 -> 5
+    so attention score has room when all six axes are populated.
+
+    Data sources:
+      * ``volume_ratio`` - same-day volume vs 20-day baseline
+      * Chain membership via _cockpit_ticker_chain_title reverse lookup
+      * Foreign net + news score via _cockpit_underlying_signal_with_timeout
+        (1.5s timeout, then graceful no-tag fallback; cached 30 min after first
+        success)
+      * Attention score (move + volume + trend) computed inline below
+    """
+    reasons: list[tuple[str, str, bool]] = []
+    ticker = str(item.get("ticker") or "")
+
+    # --- Theme / chain membership (instant, in-memory lookup) ---
+    chain_title = _cockpit_ticker_chain_title(ticker)
+    if chain_title:
+        if leader_theme and (leader_theme in chain_title or chain_title in leader_theme):
+            reasons.append(("theme", f"{chain_title} {('領頭' if lang_zh else 'leader')}", False))
+        else:
+            reasons.append(("theme", f"{chain_title} {('題材' if lang_zh else 'theme')}", False))
+
+    # --- Volume burst (lower threshold: any abnormal expansion gets a tag) ---
+    vr = _safe_float(item.get("volume_ratio"))
+    if pd.notna(vr) and float(vr) >= 1.3:
+        reasons.append(("", f"{('量能爆' if lang_zh else 'Vol burst')} {float(vr):.1f}×", False))
+    elif pd.notna(vr) and float(vr) >= 1.05:
+        # was 1.0 -> 1.05 to filter out trivially flat volume
+        reasons.append(("", f"{('量能放大' if lang_zh else 'Vol up')} {float(vr):.1f}×", False))
+
+    # --- Foreign flow + news (timeout-guarded; date-suffix when stale) ---
+    if ticker:
+        signal = _cockpit_underlying_signal_with_timeout(ticker, max_news=3, timeout_sec=1.5)
+        flow_date = str(signal.get("flow_date", "") or "")
+        date_suffix = _cockpit_format_flow_date_suffix(flow_date, lang_zh)
+        is_stale = bool(date_suffix)
+
+        # v1.4.4: foreign flow threshold lowered 100 -> 10 lots so smaller
+        # but real flow gets surfaced. The "tag explosion" risk is bounded
+        # because TWSE rounds to whole lots and most names won't have
+        # exactly 0 flow on a session.
+        fn = _safe_float(signal.get("foreign_net"))
+        if pd.notna(fn) and abs(float(fn)) >= 10:
+            unit = "張" if lang_zh else "lots"
+            if float(fn) > 0:
+                reasons.append((
+                    "flow",
+                    f"{('外資買' if lang_zh else 'Foreign buy')} +{int(round(float(fn))):,} {unit}{date_suffix}",
+                    is_stale,
+                ))
+            else:
+                reasons.append((
+                    "flow",
+                    f"{('外資賣' if lang_zh else 'Foreign sell')} {int(round(float(fn))):,} {unit}{date_suffix}",
+                    is_stale,
+                ))
+        elif pd.notna(fn):
+            label_text = "外資中性" if lang_zh else "Foreign neutral"
+            reasons.append(("flow", f"{label_text}{date_suffix}", is_stale))
+
+        # v1.4.4: news threshold lowered 0.30 -> 0.15 so weaker but
+        # directional news still appears as a small tag.
+        news_score = _safe_float(signal.get("news_score"))
+        if pd.notna(news_score) and abs(float(news_score)) >= 0.15:
+            sign = "+" if float(news_score) > 0 else ""
+            reasons.append(("", f"{('新聞' if lang_zh else 'News')} {sign}{float(news_score):.2f}", False))
+
+    # --- Attention score (synthesized: move magnitude + volume + trend bonus) ---
+    # This is the same composite the active-ETF spotlight builder uses but
+    # computed inline so we don't need to re-fetch. Surfaces a relative
+    # "heat" reading per pick.
+    move_val = _safe_float(item.get("move"))
+    volume_x = _safe_float(item.get("volume_ratio"))
+    attention = 0.0
+    if pd.notna(move_val):
+        attention += abs(float(move_val)) * 1.6
+        if float(move_val) > 0:
+            attention += float(move_val) * 0.8
+    if pd.notna(volume_x):
+        attention += min(max(float(volume_x), 0.0), 5.0) * 3.0
+    if attention >= 1.0:
+        reasons.append(("", f"{('關注度' if lang_zh else 'Attention')} {attention:.1f}", False))
+
+    return reasons[:5]  # cap at 5 (was 4): make room for attention
+
+
+def _cockpit_render_q1_html(verdict: dict, lang_zh: bool) -> str:
+    color = verdict["verdict_color"]
+    label_class = "" if color == "green" else color
+    score_class = "" if color == "green" else color
+    cond_html = ""
+    for cond in verdict["conditions"]:
+        tone = cond["tone"]
+        cond_html += (
+            f'<div class="cockpit-cond">'
+            f'  <div class="cockpit-cond-name"><span class="cockpit-cond-tick {tone}">●</span>{escape(cond["name"])}</div>'
+            f'  <div class="cockpit-cond-value">{escape(cond["value_text"])}</div>'
+            f'  <div class="cockpit-cond-bar"><div class="cockpit-cond-bar-fill {tone}" style="width: {cond["fill_pct"]:.1f}%;"></div></div>'
+            f'</div>'
+        )
+    score_text = f"{verdict['score']:+.2f}"
+    score_label_text = "綜合分數" if lang_zh else "Composite score"
+    return (
+        f'<div class="cockpit-q-card">'
+        f'  <div class="cockpit-q-header">'
+        f'    <div class="cockpit-q-num">1</div>'
+        f'    <div class="cockpit-q-text">{escape("今天市場能不能做？" if lang_zh else "Can we trade today?")}</div>'
+        f'  </div>'
+        f'  <div class="cockpit-q1-row">'
+        f'    <div class="cockpit-verdict-light {color}">{verdict["verdict_emoji"]}</div>'
+        f'    <div class="cockpit-verdict-text">'
+        f'      <div class="cockpit-verdict-label {label_class}">{escape(verdict["verdict_label"])}</div>'
+        f'      <div class="cockpit-verdict-detail">{escape(verdict["verdict_detail"])}</div>'
+        f'    </div>'
+        f'    <div class="cockpit-score-block">'
+        f'      <div class="cockpit-score-label">{escape(score_label_text)}</div>'
+        f'      <div class="cockpit-score-value {score_class}">{escape(score_text)}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="cockpit-q1-breakdown">{cond_html}</div>'
+        f'</div>'
+    )
+
+
+def _cockpit_render_q2_html(chain_rankings: list[dict], lang_zh: bool) -> str:
+    medal_emojis = ["🥇", "🥈", "🥉"]
+    medal_classes = ["gold", "silver", "bronze"]
+    cards_html = ""
+    for idx in range(3):
+        if idx < len(chain_rankings):
+            row = chain_rankings[idx]
+            theme = str(row.get("title") or "—")
+            move_text = _cockpit_format_pct(row.get("move"))
+            rising = int(row.get("rising_count", 0) or 0)
+            total = int(row.get("ticker_count", 0) or 0)
+            leader_name = str(row.get("leader_name") or "—")
+            leader_move = _cockpit_format_pct(row.get("leader_move"))
+            foreign_net = _safe_float(row.get("foreign_net_total"))
+            foreign_part = ""
+            if pd.notna(foreign_net) and float(foreign_net) != 0:
+                if float(foreign_net) > 0:
+                    foreign_part = f"{'外資買' if lang_zh else 'Foreign buy'} +{int(round(float(foreign_net))):,}"
+                else:
+                    foreign_part = f"{'外資賣' if lang_zh else 'Foreign sell'} {int(round(float(foreign_net))):,}"
+            else:
+                foreign_part = "外資中性" if lang_zh else "Foreign neutral"
+            detail_line1 = (
+                f"{rising} / {total} {'上漲' if lang_zh else 'risers'} ・ "
+                f"{'領頭' if lang_zh else 'Leader'} {leader_name} {leader_move}"
+            )
+            detail_line2 = foreign_part
+            if total > 0 and rising == 0 and pd.notna(_safe_float(row.get("move"))) and float(_safe_float(row.get("move"))) > 5:
+                detail_line2 += " ・ " + ("注意單檔強拉" if lang_zh else "single-name spike")
+        else:
+            theme = "—"
+            move_text = "—"
+            detail_line1 = "—"
+            detail_line2 = "—"
+        cards_html += (
+            f'<div class="cockpit-medal-card {medal_classes[idx]}">'
+            f'  <div class="cockpit-medal-rank">{medal_emojis[idx]}</div>'
+            f'  <div class="cockpit-medal-theme">{escape(theme)}</div>'
+            f'  <div class="cockpit-medal-pct">{escape(move_text)}</div>'
+            f'  <div class="cockpit-medal-detail">{escape(detail_line1)}<br>{escape(detail_line2)}</div>'
+            f'</div>'
+        )
+    return (
+        f'<div class="cockpit-q-card">'
+        f'  <div class="cockpit-q-header">'
+        f'    <div class="cockpit-q-num">2</div>'
+        f'    <div class="cockpit-q-text">{escape("哪個題材最強？" if lang_zh else "Which theme is strongest?")}</div>'
+        f'  </div>'
+        f'  <div class="cockpit-q2-medals">{cards_html}</div>'
+        f'</div>'
+    )
+
+
+def _cockpit_pick_detail_url(ticker: str) -> str:
+    """Build a stable URL fragment for the 'See details' button.
+
+    We use Streamlit's query-param convention: setting ``?focus_ticker=...``
+    drives the existing Workspace ticker focus. The current page is the
+    Cockpit's own dashboard so we anchor to a query-only navigation.
+    """
+    if not ticker:
+        return "#"
+    return f"?focus_ticker={ticker}"
+
+
+def _cockpit_render_pick_card_stock(
+    item: dict,
+    rank: int,
+    leader_theme: str,
+    lang_zh: bool,
+) -> tuple[str, bool]:
+    """Render a single pick-card for a stock (Taiwan TOP movers).
+
+    Returns ``(html, any_stale)`` where ``any_stale`` is True when the card
+    contains a foreign-flow tag built from data older than today.
+    """
+    ticker = str(item.get("ticker") or "")
+    label = str(item.get("label") or "").strip()
+    # display_ticker_label outputs "<code> <chinese>"; flip to "<chinese> <code>"
+    display_name = label
+    if label and " " in label:
+        parts = label.split(" ", 1)
+        code_part, name_part = parts[0].strip(), parts[1].strip()
+        if name_part and code_part:
+            display_name = f"{name_part} {code_part}"
+    if not display_name:
+        display_name = ticker or "—"
+
+    move_value = _safe_float(item.get("move"))
+    move_text = _cockpit_format_pct(item.get("move"))
+    move_class = "down" if pd.notna(move_value) and float(move_value) < 0 else ""
+
+    reasons = _cockpit_pick_reasons(item, leader_theme, lang_zh)
+    if not reasons:
+        reasons = [("", "資料整理中" if lang_zh else "Building reasons…", False)]
+
+    any_stale = False
+    tag_parts: list[str] = []
+    for reason_tuple in reasons:
+        if len(reason_tuple) == 3:
+            tone, label_text, is_stale = reason_tuple
+        else:
+            tone, label_text = reason_tuple
+            is_stale = False
+        if is_stale:
+            any_stale = True
+        stale_cls = " cockpit-pick-tag-stale" if is_stale else ""
+        tag_parts.append(
+            f'<span class="cockpit-pick-tag {tone}{stale_cls}">{escape(label_text)}</span>'
+        )
+    reasons_html = "".join(tag_parts)
+
+    detail_url = _cockpit_pick_detail_url(ticker)
+    detail_btn_text = "看盤點" if lang_zh else "View"
+    # rank 1 gets a featured class with stronger border + larger name; per the
+    # user-approved layout where the #1 spot reads as the "spotlight" pick.
+    featured_cls = " featured" if rank == 1 else ""
+    return (
+        (
+            f'<div class="cockpit-pick-card{featured_cls}">'
+            f'  <div class="cockpit-pick-rank">{rank}</div>'
+            f'  <div class="cockpit-pick-body">'
+            f'    <div class="cockpit-pick-name">{escape(display_name)}</div>'
+            f'    <div class="cockpit-pick-reasons">{reasons_html}</div>'
+            f'  </div>'
+            f'  <div class="cockpit-pick-pct {move_class}">{escape(move_text)}</div>'
+            f'  <a class="cockpit-pick-detail-btn" href="{escape(detail_url)}" target="_self">{escape(detail_btn_text)}</a>'
+            f'</div>'
+        ),
+        any_stale,
+    )
+
+
+def _cockpit_render_pick_card_chain(row: dict, rank: int, lang_zh: bool) -> str:
+    """Render a single pick-card for a supply-chain group ranking.
+
+    v1.4.3: Per the user-approved layout (mockup screenshot 1000167369),
+    chain rows now show two compact tags: the rising-count and a "short-term
+    move" pill driven by leader_move. Foreign-flow aggregate moved off this
+    card -- the per-stock cards above already surface foreign flow with
+    higher fidelity, and removing it here keeps the chain row visually
+    cleaner so users can scan group breadth + leader strength quickly.
+    """
+    title = str(row.get("title") or "—")
+    move_value = _safe_float(row.get("move"))
+    move_text = _cockpit_format_pct(row.get("move"))
+    move_class = "down" if pd.notna(move_value) and float(move_value) < 0 else ""
+    rising = int(row.get("rising_count", 0) or 0)
+    total = int(row.get("ticker_count", 0) or 0)
+    leader_move_text = _cockpit_format_pct(row.get("leader_move"))
+
+    tag_parts: list[str] = []
+    tag_parts.append(
+        f'<span class="cockpit-pick-tag theme">'
+        f'{escape(f"{rising}/{total} {("上漲" if lang_zh else "risers")}")}'
+        f'</span>'
+    )
+    leader_move_value = _safe_float(row.get("leader_move"))
+    if pd.notna(leader_move_value):
+        short_label = (
+            f"短期 漲幅 {leader_move_text}"
+            if lang_zh else
+            f"Short-term {leader_move_text}"
+        )
+        tag_parts.append(f'<span class="cockpit-pick-tag">{escape(short_label)}</span>')
+    # Single-name spike warning if total > 0 but rising == 0 and group +5%+
+    if total > 0 and rising == 0 and pd.notna(move_value) and float(move_value) > 5:
+        warn_label = "注意：單檔強拉" if lang_zh else "Single-name spike"
+        tag_parts.append(f'<span class="cockpit-pick-tag">{escape(warn_label)}</span>')
+    reasons_html = "".join(tag_parts)
+
+    return (
+        f'<div class="cockpit-pick-card">'
+        f'  <div class="cockpit-pick-rank">{rank}</div>'
+        f'  <div class="cockpit-pick-body">'
+        f'    <div class="cockpit-pick-name">{escape(title)}</div>'
+        f'    <div class="cockpit-pick-reasons">{reasons_html}</div>'
+        f'  </div>'
+        f'  <div class="cockpit-pick-pct {move_class}">{escape(move_text)}</div>'
+        f'</div>'
+    )
+
+
+def _cockpit_render_pick_card_etf(item: dict, rank: int, lang_zh: bool) -> str:
+    """Render a single pick-card for an active ETF spotlight row."""
+    ticker = str(item.get("ticker") or "")
+    raw_label = str(item.get("label") or ticker or "—").strip()
+    # active_etf_selector_label format is "<code>.TW <name> · <style> / <direction>".
+    # Pull a clean two-line presentation: code on top line, descriptive
+    # remainder below as a tag.
+    head_part = ticker if ticker else raw_label
+    sub_part = ""
+    if " " in raw_label:
+        # First space splits "<code>.TW" from the rest
+        parts = raw_label.split(" ", 1)
+        code_part, rest = parts[0].strip(), parts[1].strip()
+        if code_part and rest:
+            head_part = code_part
+            sub_part = rest
+
+    move_value = _safe_float(item.get("move"))
+    move_text = _cockpit_format_pct(item.get("move"))
+    move_class = "down" if pd.notna(move_value) and float(move_value) < 0 else ""
+
+    tag_parts: list[str] = []
+    if sub_part:
+        tag_parts.append(f'<span class="cockpit-pick-tag theme">{escape(sub_part[:36])}</span>')
+    trend_label = str(item.get("trend") or "").strip()
+    if trend_label and trend_label != "N/A":
+        # Trend is something like "Strong uptrend" / "強勢上升趨勢"
+        tag_parts.append(f'<span class="cockpit-pick-tag">{escape(trend_label)}</span>')
+    signal_label = str(item.get("signal") or "").strip()
+    if signal_label and signal_label.upper() not in {"HOLD", "N/A"}:
+        tag_parts.append(f'<span class="cockpit-pick-tag flow">{escape(signal_label)}</span>')
+    volume_ratio = _safe_float(item.get("volume_ratio"))
+    if pd.notna(volume_ratio) and float(volume_ratio) >= 1.3:
+        tag_parts.append(
+            f'<span class="cockpit-pick-tag">'
+            f'{escape(f"{("量能爆" if lang_zh else "Vol burst")} {float(volume_ratio):.1f}×")}'
+            f'</span>'
+        )
+    score = _safe_float(item.get("attention_score"))
+    if pd.notna(score):
+        tag_parts.append(
+            f'<span class="cockpit-pick-tag">'
+            f'{escape(f"{("關注度" if lang_zh else "Attention")} {float(score):.1f}")}'
+            f'</span>'
+        )
+    reasons_html = "".join(tag_parts)
+
+    detail_url = _cockpit_pick_detail_url(ticker)
+    detail_btn_text = "看盤點" if lang_zh else "View"
+    return (
+        f'<div class="cockpit-pick-card">'
+        f'  <div class="cockpit-pick-rank">{rank}</div>'
+        f'  <div class="cockpit-pick-body">'
+        f'    <div class="cockpit-pick-name">{escape(head_part)}</div>'
+        f'    <div class="cockpit-pick-reasons">{reasons_html}</div>'
+        f'  </div>'
+        f'  <div class="cockpit-pick-pct {move_class}">{escape(move_text)}</div>'
+        f'  <a class="cockpit-pick-detail-btn" href="{escape(detail_url)}" target="_self">{escape(detail_btn_text)}</a>'
+        f'</div>'
+    )
+
+
+def _cockpit_render_q3_spotlight_card(item: dict, leader_theme: str, lang_zh: bool) -> tuple[str, bool]:
+    """Render the TOP-1 spotlight card with a multi-line layout matching
+    the user-approved mockup: large name, theme tag, descriptive blurb,
+    big percentage, and a primary 'View' button. The other 4 picks render
+    as a compact table below this card.
+    """
+    ticker = str(item.get("ticker") or "")
+    label = str(item.get("label") or "").strip()
+    display_name = label
+    if label and " " in label:
+        parts = label.split(" ", 1)
+        code_part, name_part = parts[0].strip(), parts[1].strip()
+        if name_part and code_part:
+            display_name = name_part  # spotlight only shows the chinese name
+    if not display_name:
+        display_name = ticker or "—"
+
+    move_value = _safe_float(item.get("move"))
+    move_text = _cockpit_format_pct(item.get("move"))
+    move_class = "down" if pd.notna(move_value) and float(move_value) < 0 else ""
+
+    # Pull the chain title for the theme tag and a short description
+    chain_title = _cockpit_ticker_chain_title(ticker)
+    theme_label = chain_title or (leader_theme or "—")
+
+    # Build a one-line descriptive blurb. We can't generate genuinely
+    # editorial copy on the fly, so we emit a cleanly-templated sentence
+    # using the chain title + move strength rather than fake-news text.
+    if pd.notna(move_value) and float(move_value) >= 5:
+        blurb = (
+            f"{theme_label} 動能擴散，盤前出現強勢攻擊量。"
+            if lang_zh else
+            f"{theme_label} momentum broadening with pre-market volume."
+        ) if theme_label != "—" else (
+            "盤前出現強勢攻擊量，市場關注度集中。"
+            if lang_zh else
+            "Strong pre-market volume; concentrated attention."
+        )
+    elif pd.notna(move_value) and float(move_value) > 0:
+        blurb = (
+            f"{theme_label} 帶動下，盤前資金開始流入。"
+            if lang_zh else
+            f"Pre-market flow returning under the {theme_label} theme."
+        ) if theme_label != "—" else (
+            "盤前資金開始流入，等盤後確認延續性。"
+            if lang_zh else
+            "Pre-market flow returning; watch for follow-through."
+        )
+    else:
+        blurb = (
+            f"{theme_label} 表現偏弱，建議等盤後再評估。"
+            if lang_zh else
+            f"{theme_label} weakening; reassess after the close."
+        ) if theme_label != "—" else (
+            "表現偏弱，建議等盤後再評估。"
+            if lang_zh else
+            "Weakening; reassess after the close."
+        )
+
+    # Reasons for the underline tags (theme + small chips)
+    _ = _cockpit_pick_reasons(item, leader_theme, lang_zh)
+    # We don't render full tag list on the spotlight card -- just the
+    # theme tag prominently. The rest live in the smaller rows below.
+
+    detail_url = _cockpit_pick_detail_url(ticker)
+    detail_btn_text = "看盤點" if lang_zh else "View"
+
+    return (
+        (
+            f'<div class="cockpit-spotlight-card">'
+            f'  <div class="cockpit-spotlight-rank">1</div>'
+            f'  <div class="cockpit-spotlight-body">'
+            f'    <div class="cockpit-spotlight-head">'
+            f'      <div class="cockpit-spotlight-name">{escape(display_name)}</div>'
+            f'      <span class="cockpit-pick-tag theme cockpit-spotlight-theme">{escape(theme_label)}</span>'
+            f'    </div>'
+            f'    <div class="cockpit-spotlight-blurb">{escape(blurb)}</div>'
+            f'  </div>'
+            f'  <div class="cockpit-spotlight-right">'
+            f'    <div class="cockpit-spotlight-pct {move_class}">{escape(move_text)}</div>'
+            f'    <a class="cockpit-pick-detail-btn cockpit-spotlight-btn" href="{escape(detail_url)}" target="_self">{escape(detail_btn_text)}</a>'
+            f'  </div>'
+            f'</div>'
+        ),
+        False,  # spotlight card itself doesn't surface stale-flow tag
+    )
+
+
+def _cockpit_render_q3_table_row(item: dict, rank: int, leader_theme: str, lang_zh: bool) -> tuple[str, bool]:
+    """Render a single TOP 2-5 row in the compact table layout under the
+    spotlight card. Returns (html, any_stale)."""
+    ticker = str(item.get("ticker") or "")
+    label = str(item.get("label") or "").strip()
+    display_name = label
+    if label and " " in label:
+        parts = label.split(" ", 1)
+        code_part, name_part = parts[0].strip(), parts[1].strip()
+        if name_part and code_part:
+            display_name = name_part  # table only shows chinese name
+    if not display_name:
+        display_name = ticker or "—"
+
+    move_value = _safe_float(item.get("move"))
+    move_text = _cockpit_format_pct(item.get("move"))
+    move_class = "down" if pd.notna(move_value) and float(move_value) < 0 else ""
+
+    reasons = _cockpit_pick_reasons(item, leader_theme, lang_zh)
+    any_stale = False
+    tag_parts: list[str] = []
+    for reason_tuple in reasons:
+        if len(reason_tuple) == 3:
+            tone, label_text, is_stale = reason_tuple
+        else:
+            tone, label_text = reason_tuple
+            is_stale = False
+        if is_stale:
+            any_stale = True
+        stale_cls = " cockpit-pick-tag-stale" if is_stale else ""
+        tag_parts.append(
+            f'<span class="cockpit-pick-tag {tone}{stale_cls}">{escape(label_text)}</span>'
+        )
+    reasons_html = "".join(tag_parts) or '<span class="cockpit-pick-tag">—</span>'
+
+    detail_url = _cockpit_pick_detail_url(ticker)
+    detail_btn_text = "看盤點" if lang_zh else "View"
+
+    return (
+        (
+            f'<div class="cockpit-q3-table-row">'
+            f'  <div class="cockpit-q3-tr-rank">{rank}</div>'
+            f'  <div class="cockpit-q3-tr-name">{escape(display_name)}</div>'
+            f'  <div class="cockpit-q3-tr-tags">{reasons_html}</div>'
+            f'  <div class="cockpit-q3-tr-pct {move_class}">{escape(move_text)}</div>'
+            f'  <a class="cockpit-pick-detail-btn cockpit-q3-tr-btn" href="{escape(detail_url)}" target="_self">{escape(detail_btn_text)}</a>'
+            f'</div>'
+        ),
+        any_stale,
+    )
+
+
+def _cockpit_render_q3_html(
+    top_movers: list[dict],
+    chain_rankings: list[dict],
+    active_etfs: list[dict],
+    lang_zh: bool,
+) -> str:
+    """Render Q3 with the user-approved layout (mockup ChatGPT_Image_2026-05-06):
+
+      [3 summary cards: 盤前焦點 5 檔 / 最強題材 3 組 / 主動權好股 3 檔]
+      [left column: spotlight TOP-1 + table TOP 2-5]
+      [right column: 最強題材 TOP 3 panel + 主動權好股 TOP 3 panel]
+      [bottom disclaimer]
+
+    Underlying data is unchanged; this is a pure presentation rewrite.
+    """
+    leader_theme = ""
+    if chain_rankings:
+        leader_theme = str(chain_rankings[0].get("title") or "")
+    any_stale = False
+
+    # === Left column: spotlight + table ===
+    spotlight_html = ""
+    table_rows_html = ""
+    if top_movers:
+        spotlight_card_html, _ = _cockpit_render_q3_spotlight_card(top_movers[0], leader_theme, lang_zh)
+        spotlight_html = spotlight_card_html
+        for idx, item in enumerate(top_movers[1:5], start=2):
+            row_html, row_stale = _cockpit_render_q3_table_row(item, idx, leader_theme, lang_zh)
+            table_rows_html += row_html
+            if row_stale:
+                any_stale = True
+    else:
+        spotlight_html = (
+            f'<div class="cockpit-stub-note">'
+            f'{escape("尚無符合條件的台股；等盤中 Top Movers 資料更新後會自動顯示。" if lang_zh else "No qualifying Taiwan stocks yet; will populate once Top Movers data refreshes.")}'
+            f'</div>'
+        )
+
+    table_header = (
+        f'<div class="cockpit-q3-table-header">'
+        f'  <div class="cockpit-q3-tr-rank">{escape("排名" if lang_zh else "Rank")}</div>'
+        f'  <div class="cockpit-q3-tr-name">{escape("個股" if lang_zh else "Stock")}</div>'
+        f'  <div class="cockpit-q3-tr-tags">{escape("焦點題材 / 事件" if lang_zh else "Theme / event")}</div>'
+        f'  <div class="cockpit-q3-tr-pct">{escape("盤前表現" if lang_zh else "Pre-market")}</div>'
+        f'  <div class="cockpit-q3-tr-btn-h">{escape("操作" if lang_zh else "Action")}</div>'
+        f'</div>'
+    ) if table_rows_html else ""
+
+    # === Right column: chains + ETFs ===
+    chain_html = ""
+    for idx, row in enumerate(chain_rankings[:3]):
+        chain_html += _cockpit_render_pick_card_chain(row, idx + 1, lang_zh)
+    if not chain_html:
+        chain_html = (
+            f'<div class="cockpit-stub-note">'
+            f'{escape("尚無強勢供應鏈榜單；等供應鏈快照重整後會自動顯示。" if lang_zh else "No supply-chain ranking yet; will populate once snapshots refresh.")}'
+            f'</div>'
+        )
+
+    etf_html = ""
+    for idx, item in enumerate(active_etfs[:3]):
+        etf_html += _cockpit_render_pick_card_etf(item, idx + 1, lang_zh)
+    if not etf_html:
+        etf_html = (
+            f'<div class="cockpit-stub-note">'
+            f'{escape("尚無主動式 ETF 焦點；先在常看清單加入主動式 ETF 即可顯示。" if lang_zh else "No active ETF spotlight yet; add active ETFs to the watchlist to populate.")}'
+            f'</div>'
+        )
+
+    stale_note_html = ""
+    if any_stale:
+        stale_note_html = (
+            f'<div class="cockpit-pick-stale-note">'
+            f'{escape("* 外資資料以最近一個有公告的交易日為準。TWSE T86 在收盤後約 2 小時公告，盤前/盤中顯示的會是前一交易日。" if lang_zh else "* Foreign-flow data uses the most recent published trading day. TWSE publishes T86 ~2 hours after close, so pre-market and intraday views show the prior session.")}'
+            f'</div>'
+        )
+
+    # Top summary strip (3 cards)
+    stock_count = len(top_movers[:5])
+    chain_count = len(chain_rankings[:3])
+    etf_count = len(active_etfs[:3])
+    summary_strip_html = (
+        f'<div class="cockpit-q3-summary-strip">'
+        f'  <div class="cockpit-q3-summary-card stock">'
+        f'    <div class="cockpit-q3-summary-icon">🏆</div>'
+        f'    <div class="cockpit-q3-summary-text">'
+        f'      <div class="cockpit-q3-summary-kicker">{escape("盤前焦點" if lang_zh else "Pre-market focus")}</div>'
+        f'      <div class="cockpit-q3-summary-value">{stock_count} {escape("檔" if lang_zh else "names")}</div>'
+        f'      <div class="cockpit-q3-summary-sub">{escape("市場關注度最高" if lang_zh else "Top market attention")}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="cockpit-q3-summary-card chain">'
+        f'    <div class="cockpit-q3-summary-icon">⚡</div>'
+        f'    <div class="cockpit-q3-summary-text">'
+        f'      <div class="cockpit-q3-summary-kicker">{escape("最強題材" if lang_zh else "Strongest themes")}</div>'
+        f'      <div class="cockpit-q3-summary-value">{chain_count} {escape("組" if lang_zh else "themes")}</div>'
+        f'      <div class="cockpit-q3-summary-sub">{escape("題材動能最強" if lang_zh else "Top theme momentum")}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="cockpit-q3-summary-card etf">'
+        f'    <div class="cockpit-q3-summary-icon">🎯</div>'
+        f'    <div class="cockpit-q3-summary-text">'
+        f'      <div class="cockpit-q3-summary-kicker">{escape("主動權好股" if lang_zh else "Active ETFs")}</div>'
+        f'      <div class="cockpit-q3-summary-value">{etf_count} {escape("檔" if lang_zh else "ETFs")}</div>'
+        f'      <div class="cockpit-q3-summary-sub">{escape("主動資金關注" if lang_zh else "Active money focus")}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'</div>'
+    )
+
+    # Left main panel: 盤前焦點 (spotlight + table)
+    view_all_label = "查看全部 ›" if lang_zh else "View all ›"
+    left_panel_html = (
+        f'<div class="cockpit-q3-panel cockpit-q3-panel-left">'
+        f'  <div class="cockpit-q3-panel-header">'
+        f'    <div class="cockpit-q3-panel-title">'
+        f'      <span class="cockpit-q3-panel-icon stock">🎯</span>'
+        f'      <span class="cockpit-q3-panel-kicker stock">{escape("盤前焦點 TOP 5" if lang_zh else "PRE-MARKET FOCUS TOP 5")}</span>'
+        f'    </div>'
+        f'    <a class="cockpit-q3-view-all" href="#" target="_self">{escape(view_all_label)}</a>'
+        f'  </div>'
+        f'  {spotlight_html}'
+        f'  {table_header}'
+        f'  <div class="cockpit-q3-table-rows">{table_rows_html}</div>'
+        f'</div>'
+    )
+
+    # Right column: chains panel + etfs panel stacked
+    right_panel_html = (
+        f'<div class="cockpit-q3-right">'
+        f'  <div class="cockpit-q3-panel">'
+        f'    <div class="cockpit-q3-panel-header">'
+        f'      <div class="cockpit-q3-panel-title">'
+        f'        <span class="cockpit-q3-panel-icon chain">⚡</span>'
+        f'        <span class="cockpit-q3-panel-kicker chain">{escape("最強題材 TOP 3" if lang_zh else "STRONGEST THEMES TOP 3")}</span>'
+        f'      </div>'
+        f'      <a class="cockpit-q3-view-all" href="#" target="_self">{escape(view_all_label)}</a>'
+        f'    </div>'
+        f'    <div class="cockpit-q3-list">{chain_html}</div>'
+        f'  </div>'
+        f'  <div class="cockpit-q3-panel">'
+        f'    <div class="cockpit-q3-panel-header">'
+        f'      <div class="cockpit-q3-panel-title">'
+        f'        <span class="cockpit-q3-panel-icon etf">🎯</span>'
+        f'        <span class="cockpit-q3-panel-kicker etf">{escape("主動權好股 TOP 3" if lang_zh else "ACTIVE ETF TOP 3")}</span>'
+        f'      </div>'
+        f'      <a class="cockpit-q3-view-all" href="#" target="_self">{escape(view_all_label)}</a>'
+        f'    </div>'
+        f'    <div class="cockpit-q3-list">{etf_html}</div>'
+        f'  </div>'
+        f'</div>'
+    )
+
+    return (
+        f'<div class="cockpit-q-card">'
+        f'  <div class="cockpit-q-header">'
+        f'    <div class="cockpit-q-num">3</div>'
+        f'    <div class="cockpit-q-text-stack">'
+        f'      <div class="cockpit-q-text">{escape("哪些機會值得看？" if lang_zh else "Which opportunities are worth a look?")}</div>'
+        f'      <div class="cockpit-q-subtext">{escape("盤前雷達 TOP 5｜即時熱門投資機會" if lang_zh else "Pre-market radar TOP 5 | live opportunity scan")}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  {summary_strip_html}'
+        f'  <div class="cockpit-q3-twocol">'
+        f'    {left_panel_html}'
+        f'    {right_panel_html}'
+        f'  </div>'
+        f'  {stale_note_html}'
+        f'  <div class="cockpit-q3-disclaimer">'
+        f'    {escape("* 內容僅供參考，非任何投資建議。投資有風險，請審慎評估自身風險承受能力並自負投資風險。" if lang_zh else "* For reference only, not investment advice. Trading involves risk; assess your risk tolerance carefully.")}'
+        f'  </div>'
+        f'</div>'
+    )
+
+
+def _cockpit_compute_q4_signal(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    chain_rankings: list[dict],
+    top_movers: list[dict],
+    lang_zh: bool,
+) -> dict:
+    """Synthesize Q4 'chase / wait / avoid' from the strongest theme's leader.
+
+    Approach: we use the leader of the #1 supply-chain group as a proxy for
+    "where the market is currently leaning". Then we evaluate four rules:
+
+      1. Consecutive up days — too many up days in a row signals stretch
+      2. Volume exhaustion — last-day volume below 5-day max indicates
+         momentum cooling
+      3. Foreign continuity — foreign flow still net buying or already turning
+      4. Distance from 20-day high — too close to high = late chase risk
+
+    Each rule contributes a tone: pass / warn / fail. The verdict combines
+    them: ``chase`` requires no fails and >= 2 passes; ``avoid`` triggers on
+    >= 2 fails or any structural red flag; everything in between is ``wait``.
+
+    Returns a dict with ``verdict`` ('chase'|'wait'|'avoid'), ``label``,
+    ``detail``, ``triggers`` (list of {name, value, tone, copy}). Returns a
+    'data not ready' verdict when the rankings or daily data are unavailable.
+    """
+    # Resolve the proxy ticker: leader of the strongest theme. Fall back
+    # to the top mover if chain rankings are empty.
+    proxy_ticker = ""
+    proxy_name = ""
+    proxy_theme = ""
+    if chain_rankings:
+        first = chain_rankings[0]
+        proxy_theme = str(first.get("title") or "")
+        # Look up the leader's ticker by matching name against the catalog.
+        leader_name_raw = str(first.get("leader_name") or "").strip()
+        proxy_name = leader_name_raw
+        if leader_name_raw and proxy_theme:
+            for config in (SUPPLY_CHAIN_FOCUS_CONFIGS or {}).values():
+                if str(config.get("title") or "") != proxy_theme:
+                    continue
+                for entry in (config.get("catalog") or []):
+                    if str(entry.get("name") or "").strip() == leader_name_raw:
+                        proxy_ticker = normalize_dashboard_ticker(str(entry.get("ticker") or ""))
+                        break
+                if proxy_ticker:
+                    break
+    if not proxy_ticker and top_movers:
+        # Fallback: best top mover with a real ticker
+        for item in top_movers:
+            t = normalize_dashboard_ticker(str(item.get("ticker") or ""))
+            if t:
+                proxy_ticker = t
+                label = str(item.get("label") or "").strip()
+                if label and " " in label:
+                    proxy_name = label.split(" ", 1)[1].strip() or t
+                else:
+                    proxy_name = label or t
+                if not proxy_theme:
+                    proxy_theme = _cockpit_ticker_chain_title(t)
+                break
+
+    if not proxy_ticker:
+        return {
+            "verdict": "wait",
+            "color": "yellow",
+            "emoji": "🟡",
+            "label": "訊號尚未就緒" if lang_zh else "Signals warming up",
+            "detail": (
+                "尚無強勢題材或領頭股可供分析，等盤中 Top Movers 與供應鏈榜單就緒後會自動更新。"
+                if lang_zh else
+                "No proxy leader available yet; will populate once Top Movers and chain rankings refresh."
+            ),
+            "proxy_label": "—",
+            "triggers": [],
+        }
+
+    proxy_label = f"{proxy_name} {proxy_ticker}" if proxy_name and proxy_name != proxy_ticker else proxy_ticker
+    if proxy_theme:
+        proxy_label = f"{proxy_label} ({proxy_theme})"
+
+    # Pull price + volume series for the proxy ticker
+    price_series, _ = get_price_series(daily_data, proxy_ticker)
+    volume_series = get_series(daily_data, "Volume", proxy_ticker)
+
+    triggers: list[dict] = []
+
+    # --- Rule 1: Consecutive up days ---
+    consecutive_up = 0
+    if price_series is not None and len(price_series.dropna()) >= 5:
+        clean = price_series.dropna()
+        diffs = clean.diff().dropna()
+        # Count trailing positive moves
+        for value in reversed(list(diffs)):
+            if pd.notna(value) and float(value) > 0:
+                consecutive_up += 1
+            else:
+                break
+    if consecutive_up >= 5:
+        rule1_tone = "fail"
+        rule1_copy = (f"已連漲 {consecutive_up} 天" if lang_zh else f"{consecutive_up} consecutive up days")
+    elif consecutive_up >= 3:
+        rule1_tone = "warn"
+        rule1_copy = (f"連漲 {consecutive_up} 天" if lang_zh else f"{consecutive_up} up days")
+    elif consecutive_up >= 0:
+        rule1_tone = "pass"
+        rule1_copy = (f"連漲 {consecutive_up} 天" if lang_zh else f"{consecutive_up} up days")
+    triggers.append({
+        "name": "連漲天數" if lang_zh else "Consecutive up days",
+        "value": str(consecutive_up),
+        "tone": rule1_tone,
+        "copy": rule1_copy,
+    })
+
+    # --- Rule 2: Volume exhaustion (last day vs 5-day max) ---
+    exhaustion_tone = "pass"
+    exhaustion_copy = "—"
+    if volume_series is not None and len(volume_series.dropna()) >= 5:
+        clean_vol = volume_series.dropna()
+        latest_vol = float(clean_vol.iloc[-1])
+        recent5_max = float(clean_vol.tail(5).max())
+        if recent5_max > 0:
+            ratio = latest_vol / recent5_max
+            if ratio < 0.5 and consecutive_up >= 2:
+                exhaustion_tone = "fail"
+                exhaustion_copy = (
+                    f"最新量僅近 5 日最大量 {ratio*100:.0f}%（量縮）"
+                    if lang_zh else
+                    f"Latest volume only {ratio*100:.0f}% of 5-day max (cooling)"
+                )
+            elif ratio < 0.7:
+                exhaustion_tone = "warn"
+                exhaustion_copy = (
+                    f"量能略縮 {ratio*100:.0f}%"
+                    if lang_zh else
+                    f"Volume softening to {ratio*100:.0f}% of 5-day max"
+                )
+            else:
+                exhaustion_tone = "pass"
+                exhaustion_copy = (
+                    f"量能維持（{ratio*100:.0f}% of 5d max）"
+                    if lang_zh else
+                    f"Volume sustained ({ratio*100:.0f}% of 5d max)"
+                )
+    triggers.append({
+        "name": "量能延續" if lang_zh else "Volume sustain",
+        "value": exhaustion_copy.split("（")[0].split("(")[0].strip()[:14] if exhaustion_copy != "—" else "—",
+        "tone": exhaustion_tone,
+        "copy": exhaustion_copy,
+    })
+
+    # --- Rule 3: Foreign continuity ---
+    foreign_tone = "warn"
+    foreign_copy = "外資資料尚未就緒" if lang_zh else "Foreign data pending"
+    foreign_value = "—"
+    try:
+        signal = fetch_active_etf_underlying_signal(proxy_ticker, max_news=1) or {}
+    except Exception:
+        signal = {}
+    fn = _safe_float(signal.get("foreign_net"))
+    if pd.notna(fn):
+        fn_int = int(round(float(fn)))
+        foreign_value = f"{fn_int:+,}"
+        if fn > 500:
+            foreign_tone = "pass"
+            foreign_copy = f"外資延續買 {fn_int:+,} 張" if lang_zh else f"Foreign buy continuing {fn_int:+,}"
+        elif fn > 0:
+            foreign_tone = "warn"
+            foreign_copy = f"外資小買 {fn_int:+,} 張" if lang_zh else f"Foreign mild buy {fn_int:+,}"
+        elif fn > -500:
+            foreign_tone = "warn"
+            foreign_copy = (f"外資中性 {fn_int:+,} 張" if lang_zh else f"Foreign neutral {fn_int:+,}")
+        else:
+            foreign_tone = "fail"
+            foreign_copy = f"外資轉賣 {fn_int:+,} 張" if lang_zh else f"Foreign turning seller {fn_int:+,}"
+    triggers.append({
+        "name": "外資延續" if lang_zh else "Foreign continuity",
+        "value": foreign_value,
+        "tone": foreign_tone,
+        "copy": foreign_copy,
+    })
+
+    # --- Rule 4: Distance from 20-day high ---
+    distance_tone = "pass"
+    distance_copy = "—"
+    distance_value = "—"
+    if price_series is not None and len(price_series.dropna()) >= 5:
+        clean = price_series.dropna()
+        latest_price = float(clean.iloc[-1])
+        recent_window = clean.tail(20)
+        recent_high = float(recent_window.max())
+        if recent_high > 0:
+            distance_pct = (latest_price - recent_high) / recent_high * 100
+            distance_value = f"{distance_pct:+.1f}%"
+            if distance_pct >= -1.0:
+                distance_tone = "fail"
+                distance_copy = (
+                    f"已逼近近 20 日高點（差 {distance_pct:+.1f}%）"
+                    if lang_zh else
+                    f"Within {distance_pct:+.1f}% of 20-day high"
+                )
+            elif distance_pct >= -4.0:
+                distance_tone = "warn"
+                distance_copy = (
+                    f"距高點 {distance_pct:+.1f}%（接近）"
+                    if lang_zh else
+                    f"{distance_pct:+.1f}% from 20-day high (close)"
+                )
+            else:
+                distance_tone = "pass"
+                distance_copy = (
+                    f"距高點 {distance_pct:+.1f}%（有空間）"
+                    if lang_zh else
+                    f"{distance_pct:+.1f}% from 20-day high (room)"
+                )
+    triggers.append({
+        "name": "距 20 日高點" if lang_zh else "Distance from 20-day high",
+        "value": distance_value,
+        "tone": distance_tone,
+        "copy": distance_copy,
+    })
+
+    # --- Verdict ---
+    pass_count = sum(1 for t in triggers if t["tone"] == "pass")
+    fail_count = sum(1 for t in triggers if t["tone"] == "fail")
+
+    if fail_count >= 2:
+        verdict = "avoid"
+        color = "red"
+        emoji = "🔴"
+        label_text = "先避開" if lang_zh else "Stand aside"
+        detail = (
+            f"以 {proxy_label} 為代理：多項規則亮紅燈（連漲過長 / 量能透支 / 距高點過近 / 外資轉賣）。短線追價勝率偏低。"
+            if lang_zh else
+            f"Proxy {proxy_label}: multiple rules failing (overextended / volume exhausting / too close to high / foreign turning). Late chase has poor odds."
+        )
+    elif fail_count >= 1 or pass_count < 2:
+        verdict = "wait"
+        color = "yellow"
+        emoji = "🟡"
+        label_text = "等回測" if lang_zh else "Wait for pullback"
+        detail = (
+            f"以 {proxy_label} 為代理：訊號分歧。建議等回到 5 日線或量能補足再進，避免在反彈末段追價。"
+            if lang_zh else
+            f"Proxy {proxy_label}: mixed signals. Wait for retest of 5-day MA or volume confirmation before entry."
+        )
+    else:
+        verdict = "chase"
+        color = "green"
+        emoji = "🟢"
+        label_text = "可以追" if lang_zh else "Chase OK"
+        detail = (
+            f"以 {proxy_label} 為代理：多數規則正面（連漲未過長、量能延續、外資延續、距高點仍有空間）。短線追價勝率偏高。"
+            if lang_zh else
+            f"Proxy {proxy_label}: most rules positive. Late chase still has reasonable odds."
+        )
+
+    return {
+        "verdict": verdict,
+        "color": color,
+        "emoji": emoji,
+        "label": label_text,
+        "detail": detail,
+        "proxy_label": proxy_label,
+        "triggers": triggers,
+    }
+
+
+def _cockpit_render_q4_html(q4: dict, lang_zh: bool) -> str:
+    color = q4.get("color", "yellow")
+    label_text = str(q4.get("label", "—"))
+    detail_text = str(q4.get("detail", ""))
+    emoji = str(q4.get("emoji", "🟡"))
+    triggers = list(q4.get("triggers") or [])
+
+    triggers_html = ""
+    for trig in triggers:
+        tone = str(trig.get("tone", "warn"))
+        triggers_html += (
+            f'<div class="cockpit-cond">'
+            f'  <div class="cockpit-cond-name"><span class="cockpit-cond-tick {tone}">●</span>{escape(str(trig.get("name", "")))}</div>'
+            f'  <div class="cockpit-cond-value">{escape(str(trig.get("value", "—")))}</div>'
+            f'  <div class="cockpit-q4-trigger-copy">{escape(str(trig.get("copy", "")))}</div>'
+            f'</div>'
+        )
+    label_class = "" if color == "green" else color
+    return (
+        f'<div class="cockpit-q-card">'
+        f'  <div class="cockpit-q-header">'
+        f'    <div class="cockpit-q-num">4</div>'
+        f'    <div class="cockpit-q-text">{escape("現在適合追、等回測、還是先避開？" if lang_zh else "Chase, wait for pullback, or stand aside?")}</div>'
+        f'  </div>'
+        f'  <div class="cockpit-q1-row">'
+        f'    <div class="cockpit-verdict-light {color}">{emoji}</div>'
+        f'    <div class="cockpit-verdict-text">'
+        f'      <div class="cockpit-verdict-label {label_class}">{escape(label_text)}</div>'
+        f'      <div class="cockpit-verdict-detail">{escape(detail_text)}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="cockpit-q4-triggers">{triggers_html}</div>'
+        f'</div>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q5: existing position observation notes
+# Implementation choice: use NEUTRAL language ("觀察重點" / "review notes")
+# rather than directive language ("續抱 / 減碼 / 出場") to avoid the dashboard
+# becoming a quasi-investment-advisor product. We surface what's worth
+# noticing for each holding; the user makes the call.
+# ---------------------------------------------------------------------------
+COCKPIT_PORTFOLIO_KEY = "cockpit_portfolio_text"
+
+
+def _cockpit_parse_portfolio_text(text: str) -> list[dict]:
+    """Parse a portfolio textarea into normalized holdings.
+
+    Accepted line formats (one holding per line, '#' or empty lines ignored):
+        2330        -> {ticker: 2330.TW, cost: NaN}
+        2330.TW     -> {ticker: 2330.TW, cost: NaN}
+        2330 580    -> {ticker: 2330.TW, cost: 580.0}
+        2330,580    -> {ticker: 2330.TW, cost: 580.0}
+        2330.TW @ 580 -> {ticker: 2330.TW, cost: 580.0}
+    """
+    holdings: list[dict] = []
+    seen: set[str] = set()
+    for raw_line in str(text or "").split("\n"):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Replace separators with whitespace for uniform splitting
+        cleaned = line.replace(",", " ").replace("@", " ").replace("\t", " ")
+        parts = [p for p in cleaned.split() if p]
+        if not parts:
+            continue
+        ticker_raw = parts[0]
+        normalized = normalize_dashboard_ticker(ticker_raw)
+        # If user typed just "2330", normalize_dashboard_ticker may not add the
+        # exchange suffix. Force .TW for 4-5 digit tickers.
+        if normalized and "." not in normalized and normalized.isdigit():
+            normalized = f"{normalized}.TW"
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+
+        cost_value: float = float("nan")
+        if len(parts) >= 2:
+            try:
+                cost_value = float(parts[1])
+            except Exception:
+                cost_value = float("nan")
+        holdings.append({"ticker": normalized, "cost": cost_value})
+        if len(holdings) >= 12:
+            break  # cap to keep UI compact
+    return holdings
+
+
+def _cockpit_compute_q5_holding_review(
+    holding: dict,
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    chain_rankings: list[dict],
+    lang_zh: bool,
+) -> dict:
+    """Per-holding review note. Returns the same shape regardless of data
+    availability so the renderer can stay simple."""
+    ticker = str(holding.get("ticker") or "")
+    cost = _safe_float(holding.get("cost"))
+
+    label = display_ticker_label(ticker) if ticker else "—"
+    # "代碼 中文名" -> "中文名 代碼"
+    if label and " " in label:
+        parts = label.split(" ", 1)
+        if parts[0].strip() and parts[1].strip():
+            label = f"{parts[1].strip()} {parts[0].strip()}"
+
+    item = _ticker_move_from_data(daily_data, intraday_data, ticker) if ticker else {}
+    move = _safe_float(item.get("move"))
+    price = _safe_float(item.get("price"))
+    volume_ratio = _safe_float(item.get("volume_ratio"))
+
+    # P&L vs cost (only if cost provided)
+    pnl_pct = float("nan")
+    if pd.notna(cost) and pd.notna(price) and cost > 0:
+        pnl_pct = (float(price) - float(cost)) / float(cost) * 100.0
+
+    # Build neutral observation notes
+    notes: list[tuple[str, str]] = []  # (tone, text)
+
+    # Theme strength alignment
+    chain_title = _cockpit_ticker_chain_title(ticker)
+    if chain_title and chain_rankings:
+        leader_theme = str(chain_rankings[0].get("title") or "")
+        if leader_theme and (leader_theme in chain_title or chain_title in leader_theme):
+            notes.append(("pass", f"屬於今日最強題材 ({chain_title})" if lang_zh
+                                   else f"In today's strongest theme ({chain_title})"))
+        else:
+            notes.append(("warn", f"屬於 {chain_title}（非今日最強題材）" if lang_zh
+                                   else f"In {chain_title} (not today's strongest)"))
+
+    # Daily move
+    if pd.notna(move):
+        if float(move) >= 5:
+            notes.append(("warn", f"當日大漲 {float(move):+.2f}% — 注意是否短線過熱"
+                                   if lang_zh else
+                                   f"Up {float(move):+.2f}% today — watch for overextension"))
+        elif float(move) >= 1:
+            notes.append(("pass", f"當日 {float(move):+.2f}%" if lang_zh
+                                   else f"Up {float(move):+.2f}% today"))
+        elif float(move) >= -1:
+            notes.append(("warn", f"當日 {float(move):+.2f}%（盤整）" if lang_zh
+                                   else f"{float(move):+.2f}% today (range-bound)"))
+        elif float(move) >= -5:
+            notes.append(("warn", f"當日 {float(move):+.2f}% — 留意支撐"
+                                   if lang_zh else
+                                   f"{float(move):+.2f}% today — watch support"))
+        else:
+            notes.append(("fail", f"當日大跌 {float(move):+.2f}% — 檢查是否有事件" if lang_zh
+                                   else f"Down {float(move):+.2f}% today — check for catalysts"))
+
+    # Volume context
+    if pd.notna(volume_ratio):
+        if float(volume_ratio) >= 1.5:
+            notes.append(("pass", f"量能放大 {float(volume_ratio):.1f}×" if lang_zh
+                                   else f"Volume {float(volume_ratio):.1f}×"))
+        elif float(volume_ratio) <= 0.5:
+            notes.append(("warn", f"量能萎縮 {float(volume_ratio):.1f}×" if lang_zh
+                                   else f"Volume thin {float(volume_ratio):.1f}×"))
+
+    # P&L context (only when cost provided)
+    if pd.notna(pnl_pct):
+        if pnl_pct >= 15:
+            notes.append(("pass", f"未實現損益 {pnl_pct:+.1f}% — 評估是否分批降風險" if lang_zh
+                                   else f"Unrealized {pnl_pct:+.1f}% — consider partial profit-taking"))
+        elif pnl_pct >= 0:
+            notes.append(("pass", f"未實現損益 {pnl_pct:+.1f}%" if lang_zh
+                                   else f"Unrealized {pnl_pct:+.1f}%"))
+        elif pnl_pct >= -8:
+            notes.append(("warn", f"未實現損益 {pnl_pct:+.1f}%（小幅虧損）" if lang_zh
+                                   else f"Unrealized {pnl_pct:+.1f}% (minor loss)"))
+        else:
+            notes.append(("fail", f"未實現損益 {pnl_pct:+.1f}% — 確認是否符合停損規劃"
+                                   if lang_zh else
+                                   f"Unrealized {pnl_pct:+.1f}% — review against stop plan"))
+
+    if not notes:
+        notes.append(("warn", "資料尚未就緒" if lang_zh else "Data warming up"))
+
+    # Headline tone = worst tone
+    tones = [t for t, _ in notes]
+    if "fail" in tones:
+        headline_tone = "fail"
+    elif "warn" in tones:
+        headline_tone = "warn"
+    else:
+        headline_tone = "pass"
+
+    return {
+        "ticker": ticker,
+        "label": label,
+        "move_text": f"{move:+.2f}%" if pd.notna(move) else "—",
+        "pnl_text": f"{pnl_pct:+.1f}%" if pd.notna(pnl_pct) else "",
+        "headline_tone": headline_tone,
+        "notes": notes,
+    }
+
+
+def _cockpit_render_q5_html(reviews: list[dict], lang_zh: bool) -> str:
+    """Render holdings review cards. The textarea + parse trigger is
+    rendered by render_decision_cockpit using Streamlit primitives; this
+    helper just turns the reviews into HTML."""
+    if not reviews:
+        return ""
+    cards_html = ""
+    for review in reviews:
+        tone = str(review.get("headline_tone", "warn"))
+        notes_html = ""
+        for note_tone, note_text in review.get("notes") or []:
+            notes_html += (
+                f'<div class="cockpit-q5-note">'
+                f'  <span class="cockpit-cond-tick {note_tone}">●</span>'
+                f'  <span class="cockpit-q5-note-text">{escape(str(note_text))}</span>'
+                f'</div>'
+            )
+        pnl_text = str(review.get("pnl_text", "") or "")
+        pnl_html = (
+            f'<div class="cockpit-q5-pnl {tone}">{escape(pnl_text)}</div>'
+            if pnl_text else ""
+        )
+        cards_html += (
+            f'<div class="cockpit-q5-holding tone-{tone}">'
+            f'  <div class="cockpit-q5-head">'
+            f'    <div class="cockpit-q5-name">{escape(str(review.get("label", "—")))}</div>'
+            f'    <div class="cockpit-q5-move">{escape(str(review.get("move_text", "—")))}</div>'
+            f'    {pnl_html}'
+            f'  </div>'
+            f'  <div class="cockpit-q5-notes">{notes_html}</div>'
+            f'</div>'
+        )
+    return f'<div class="cockpit-q5-grid">{cards_html}</div>'
+
+
+def render_decision_cockpit(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    dashboard_tickers: list[str],
+    lens_meta: dict | None,
+    *,
+    dashboard_mode: str,
+    selected_supply_chain_groups: list[str],
+) -> None:
+    """Render the 5-question Decision Cockpit at the top of the dashboard.
+
+    Reuses build_home_news_top_taiwan_movers and
+    build_home_news_supply_chain_rankings (the same data the News Briefing
+    section uses), so adding the cockpit does NOT trigger any extra fetches.
+
+    v1.4.5: shows a "preparing the market decision spine" loading placeholder
+    immediately on first paint, then replaces it with the real cockpit once
+    all builders return. This gives the user clear feedback that the page is
+    actively working, instead of staring at a blank space for 2-5 seconds
+    while builders + underlying-signal fetches resolve.
+    """
+    lang_zh = _news_briefing_is_zh()
+    _cockpit_inject_css()
+
+    # ---- Loading placeholder (shown until all builders return) ----
+    # We use st.empty() so we can swap the skeleton for the real cockpit
+    # in-place rather than rendering both stacked. Important: any HTML
+    # injected via the placeholder gets cleared by .empty() at the end.
+    loading_placeholder = st.empty()
+    loading_title = "今天市場決策主線預備中" if lang_zh else "Preparing today's market decision spine"
+    loading_subtext = (
+        "整理盤前焦點、最強題材、主動權好股…請稍候 1–3 秒。"
+        if lang_zh else
+        "Compiling pre-market focus, strongest themes, and active ETFs… 1–3 seconds."
+    )
+    loading_html = (
+        f'<div class="cockpit-shell cockpit-loading-shell">'
+        f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>DECISION COCKPIT</div>'
+        f'  <div class="cockpit-loading-row">'
+        f'    <div class="cockpit-loading-spinner"></div>'
+        f'    <div class="cockpit-loading-text">'
+        f'      <div class="cockpit-loading-title">'
+        f'        {escape(loading_title)}<span class="cockpit-loading-dots"><span>.</span><span>.</span><span>.</span></span>'
+        f'      </div>'
+        f'      <div class="cockpit-loading-sub">{escape(loading_subtext)}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="cockpit-loading-skeleton">'
+        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 90px;"></div>'
+        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 110px;"></div>'
+        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 220px;"></div>'
+        f'  </div>'
+        f'</div>'
+    )
+    loading_placeholder.markdown(_cockpit_minify_html(loading_html), unsafe_allow_html=True)
+
+    # ---- Heavy lifting: builders + verdict computation ----
+    top_movers = build_home_news_top_taiwan_movers(
+        daily_data, intraday_data, dashboard_tickers, selected_supply_chain_groups
+    )
+    chain_rankings = build_home_news_supply_chain_rankings(
+        selected_supply_chain_groups, lens_meta=lens_meta
+    )
+    # v1.4.2: Q3 now absorbs the active ETF spotlight that used to live in
+    # the News Briefing block. Pull the same builder.
+    active_etfs = build_home_news_active_etf_spotlight(
+        daily_data, intraday_data, dashboard_tickers, lens_meta, dashboard_mode
+    )
+
+    verdict = _cockpit_compute_q1_verdict(top_movers, chain_rankings, lang_zh)
+
+    # Q4: chase / wait / avoid based on the strongest theme's leader as proxy
+    q4 = _cockpit_compute_q4_signal(daily_data, intraday_data, chain_rankings, top_movers, lang_zh)
+
+    # Now that all the heavy work is done, clear the loading placeholder
+    # before rendering the real cockpit. This makes the swap feel instant.
+    loading_placeholder.empty()
+
+    onboarding_html = ""
+    if not st.session_state.get(COCKPIT_ONBOARDING_FLAG_KEY, False):
+        onboarding_text = (
+            "第一次進來嗎？這 5 張卡片會直接告訴你「能不能做、什麼題材最強、哪幾檔最值得看、現在該追嗎、已有部位怎麼處理」。讀完不用 1 分鐘，就能形成今天的判斷。"
+            if lang_zh else
+            "First time here? These five cards tell you 'can we trade, which theme leads, which names to watch, chase or wait, and what to notice on existing positions'. About one minute top-to-bottom."
+        )
+        onboarding_html = (
+            f'<div class="cockpit-onboarding">'
+            f'  <span class="cockpit-onboarding-icon">👋</span>'
+            f'  <span class="cockpit-onboarding-text">{escape(onboarding_text)}</span>'
+            f'</div>'
+        )
+
+    title_text = "今天的市場決策主線" if lang_zh else "Today's market decision spine"
+    sub_text = (
+        "五個問題、一條主線。從上到下讀，1 分鐘就能判斷今天能不能做、看哪個題材、哪幾檔值得看、追或等、以及手上持倉要注意什麼。下方詳細模組是「想再深挖」用。"
+        if lang_zh else
+        "Five questions, one spine. Read top-to-bottom; one minute to decide on entry, theme, watchlist, chase-or-wait, and per-holding notes. Detail modules below are for deeper digs."
+    )
+    disclaimer_text = (
+        "以上判斷規則為公開市場資料的彙整推算，僅供研究參考，非投資建議。Q5 的觀察重點針對你輸入的持倉，不會留存到下次連線。"
+        if lang_zh else
+        "Rule-based aggregation of public market data; for research only, not investment advice. Q5 observation notes apply to the holdings you input and are not persisted across sessions."
+    )
+
+    # --- Render Q1-Q4 in one HTML block ---
+    shell_top_html = (
+        f'<div class="cockpit-shell">'
+        f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>DECISION COCKPIT</div>'
+        f'  <div class="cockpit-title">{escape(title_text)}</div>'
+        f'  <div class="cockpit-sub">{escape(sub_text)}</div>'
+        f'  {onboarding_html}'
+        f'  {_cockpit_render_q1_html(verdict, lang_zh)}'
+        f'  {_cockpit_render_q2_html(chain_rankings, lang_zh)}'
+        f'  {_cockpit_render_q3_html(top_movers, chain_rankings, active_etfs, lang_zh)}'
+        f'  {_cockpit_render_q4_html(q4, lang_zh)}'
+        f'</div>'
+    )
+    st.markdown(_cockpit_minify_html(shell_top_html), unsafe_allow_html=True)
+
+    # --- Q5: portfolio textarea + observation cards ---
+    # We use Streamlit primitives here because we need a real text_area input;
+    # the resulting holdings are then rendered as HTML below.
+    q5_shell_open = (
+        f'<div class="cockpit-shell cockpit-shell-tight">'
+        f'  <div class="cockpit-q-card cockpit-q-card-q5">'
+        f'    <div class="cockpit-q-header">'
+        f'      <div class="cockpit-q-num">5</div>'
+        f'      <div class="cockpit-q-text">{escape("已有部位該怎麼做？" if lang_zh else "How should I review existing positions?")}</div>'
+        f'    </div>'
+        f'    <div class="cockpit-q5-help">'
+        f'      {escape("輸入手上的持倉（每行一檔，可選擇加上成本價）。系統會根據今日訊號給出觀察重點 — 不是買賣建議。" if lang_zh else "Enter one holding per line (with optional cost). The system surfaces observation notes for today — not buy/sell instructions.")}'
+        f'    </div>'
+        f'    <div class="cockpit-q5-help-example">'
+        f'      {escape("例如：2330 580   或   2337.TW @ 42" if lang_zh else "Example:  2330 580   or   2337.TW @ 42")}'
+        f'    </div>'
+        f'  </div>'
+        f'</div>'
+    )
+    st.markdown(_cockpit_minify_html(q5_shell_open), unsafe_allow_html=True)
+
+    # text_area outside the HTML shell so Streamlit can capture input
+    portfolio_text = st.text_area(
+        label=("我的持倉清單" if lang_zh else "My holdings"),
+        value=st.session_state.get(COCKPIT_PORTFOLIO_KEY, ""),
+        height=110,
+        key="cockpit_portfolio_input",
+        placeholder=(
+            "例如：\n2330 580\n2337.TW @ 42\n# 用 # 開頭的行會被忽略"
+            if lang_zh else
+            "Example:\n2330 580\n2337.TW @ 42\n# Lines starting with # are ignored"
+        ),
+        label_visibility="collapsed",
+    )
+    if portfolio_text != st.session_state.get(COCKPIT_PORTFOLIO_KEY, ""):
+        st.session_state[COCKPIT_PORTFOLIO_KEY] = portfolio_text
+
+    holdings = _cockpit_parse_portfolio_text(portfolio_text)
+    reviews: list[dict] = []
+    for holding in holdings:
+        reviews.append(
+            _cockpit_compute_q5_holding_review(
+                holding, daily_data, intraday_data, chain_rankings, lang_zh
+            )
+        )
+
+    if reviews:
+        q5_results_html = (
+            f'<div class="cockpit-shell cockpit-shell-tight">'
+            f'  {_cockpit_render_q5_html(reviews, lang_zh)}'
+            f'  <div class="cockpit-disclaimer">⚠ {escape(disclaimer_text)}</div>'
+            f'</div>'
+        )
+    else:
+        empty_note = (
+            "尚未輸入持倉。輸入後這裡會列出每一檔的觀察重點：題材對齊、當日表現、量能、成本損益。"
+            if lang_zh else
+            "No holdings entered yet. Once you do, this section will list per-holding observation notes: theme alignment, day performance, volume, P&L vs cost."
+        )
+        q5_results_html = (
+            f'<div class="cockpit-shell cockpit-shell-tight">'
+            f'  <div class="cockpit-stub-note">{escape(empty_note)}</div>'
+            f'  <div class="cockpit-disclaimer">⚠ {escape(disclaimer_text)}</div>'
+            f'</div>'
+        )
+    st.markdown(_cockpit_minify_html(q5_results_html), unsafe_allow_html=True)
+
+    # Streamlit-native dismiss button for the onboarding banner.
+    if not st.session_state.get(COCKPIT_ONBOARDING_FLAG_KEY, False):
+        if st.button(
+            "我懂了 ✕" if lang_zh else "Got it ✕",
+            key="cockpit_onboarding_dismiss",
+            use_container_width=False,
+        ):
+            st.session_state[COCKPIT_ONBOARDING_FLAG_KEY] = True
+            st.rerun()
+
+
+# v1.4.2: Standalone Editor Analysis block. Replaces the second column of
+# the old "Market first-read desk" News Briefing. Visual style matches
+# cockpit's clean card aesthetic so it sits naturally below the cockpit.
+def render_editor_analysis_block(lang_zh: bool) -> None:
+    """Render the editor's curated analysis cards + TAIEX volume terrain in
+    a single below-cockpit block. We keep these because:
+
+      1. Editor Analysis (loaded from editor_analysis_items.json) is
+         hand-curated content the user has explicitly written -- not
+         something the cockpit's automated rules can replace.
+      2. TAIEX volume terrain is a useful at-a-glance view of macro tape
+         that complements but does not duplicate the cockpit's per-name picks.
+    """
+    editor_items = load_editor_analysis_items(max_items=4)
+    editor_cards_html = _render_editor_analysis_html(editor_items, lang_zh=lang_zh)
+    terrain_card_html = _render_home_news_taiex_volume_terrain_html(lang_zh=lang_zh)
+
+    # Inject the SAME news-briefing CSS (still defines .home-editor-card etc.)
+    inject_home_news_briefing_css()
+
+    timestamp_text = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M")
+    section_kicker = "EDITOR & TERRAIN" if not lang_zh else "版主分析 & 加權量能"
+    section_title = "版主特別分析與加權指數量能地形" if lang_zh else "Editor analysis and TAIEX volume terrain"
+    section_copy = (
+        "版主手動撰寫的觀點分析，加上加權指數量能地形圖，補完上方 Cockpit 的自動結論。"
+        if lang_zh else
+        "Hand-written editor notes plus the TAIEX volume terrain to complement the automated cockpit conclusions."
+    )
+
+    block_html = (
+        f'<div class="home-news-shell">'
+        f'  <div class="home-news-head">'
+        f'    <div>'
+        f'      <div class="section-header">{escape(section_kicker)}</div>'
+        f'      <div class="home-news-title">{escape(section_title)}</div>'
+        f'      <div class="home-news-copy">{escape(section_copy)}</div>'
+        f'    </div>'
+        f'    <span class="home-news-pill">{escape(("更新" if lang_zh else "Updated") + " " + timestamp_text)}</span>'
+        f'  </div>'
+        f'  <div class="home-news-grid">'
+        f'    <div class="home-news-column">'
+        f'      <div class="home-news-column-title">{escape("加權指數量能" if lang_zh else "TAIEX volume terrain")}</div>'
+        f'      <div class="home-news-column-copy">{escape("公開日量資料的視覺化呈現。" if lang_zh else "Visualization of the public daily-volume feed.")}</div>'
+        f'      {terrain_card_html}'
+        f'    </div>'
+        f'    <div class="home-news-column">'
+        f'      <div class="home-news-column-title">{escape("版主特別分析" if lang_zh else "Editor analysis")}</div>'
+        f'      <div class="home-news-column-copy">{escape("由版主提供的額外分析內容。" if lang_zh else "Curated notes from the dashboard owner.")}</div>'
+        f'      <div class="home-editor-list">{editor_cards_html}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'</div>'
+    )
+    render_html_block(block_html)
+
+
 def render_home_news_briefing(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -31416,7 +34061,9 @@ def generate_dashboard():
         return
 
     if dashboard_mode != "Active ETF Lab":
-        render_home_news_briefing(
+        # v1.4.0: Decision Cockpit -- the 5-question decision spine. Reuses
+        # the same builders the briefing below uses, so no extra fetches.
+        render_decision_cockpit(
             daily_data,
             intraday_data,
             dashboard_tickers,
@@ -31424,6 +34071,11 @@ def generate_dashboard():
             dashboard_mode=dashboard_mode,
             selected_supply_chain_groups=selected_supply_chain_groups,
         )
+        # v1.4.2: News Briefing's three auto-summary cards (TOP 5 stocks /
+        # supply chain / active ETF spotlight) have been absorbed into Q3 of
+        # the cockpit. We keep the Editor Analysis cards + TAIEX volume
+        # terrain in a standalone block below the cockpit.
+        render_editor_analysis_block(lang_zh=_news_briefing_is_zh())
 
     if dashboard_mode == "Active ETF Lab":
         render_active_etf_lab_dashboard(
