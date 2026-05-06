@@ -25604,7 +25604,22 @@ def render_active_etf_overall_briefing(active_etf_tickers: list[str], daily_data
     ]
     side_html = ""
     for kicker, title, copy, tags in side_cards:
-        side_html += f'<div class="active-etf-view-card"><div class="active-etf-section">{escape(kicker)}</div><h4>{escape(title)}</h4><p>{escape(copy)}</p><div class="active-etf-tagrow">{"".join(f"<span class=\"active-etf-tag\">{escape(tag)}</span>" for tag in tags)}</div></div>'
+        # v1.3.8.4 fix: pre-build the tag HTML so the outer f-string body
+        # contains no backslash escapes. Python 3.11 (used by GitHub Actions
+        # runners) raises SyntaxError on backslashes inside f-string {}
+        # expressions; only Python 3.12+ allows it via PEP 701. Building the
+        # nested HTML separately keeps the main file importable on both.
+        tags_html = "".join(
+            f'<span class="active-etf-tag">{escape(tag)}</span>' for tag in tags
+        )
+        side_html += (
+            f'<div class="active-etf-view-card">'
+            f'<div class="active-etf-section">{escape(kicker)}</div>'
+            f'<h4>{escape(title)}</h4>'
+            f'<p>{escape(copy)}</p>'
+            f'<div class="active-etf-tagrow">{tags_html}</div>'
+            f'</div>'
+        )
     chips = [f"Prefetch {len(ready_rows)} / {len(rows)}", f"{'常看 ETF' if lang_zh else 'Watchlist'} {len(rows)}", f"{'更新' if lang_zh else 'Updated'} {latest_update}"]
     render_html_block(
         f"""
