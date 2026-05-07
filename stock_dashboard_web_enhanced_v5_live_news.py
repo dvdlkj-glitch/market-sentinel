@@ -1,43 +1,187 @@
 #!/usr/bin/env python
 """
-Version: HORIZON Release LEO Supply Chain v1.3.8
-Updated: 2026-05-05
-Highlights (v1.3.8 patch over v1.3.7):
-- NEW: Redesigned Active ETF compare board (render_active_etf_compare_v2_dashboard)
-  matching the user-provided design spec. Single coherent layout: header with
-  decorative chart art + chips, 4 top metric cards (common / A unique / B unique
-  / overlap weight), 3 middle cards (premium-discount VS, outstanding units,
-  capital momentum with today + 30D), 2 bottom cards (venn + 4 insight tiles),
-  and footer with disclaimer + data source + update time.
-- NEW: Auto-generated 4-tile insight cards. Reads overlap weight, bucket focus,
-  and 30D turnover off the existing snapshot to surface "重疊低·分散佳",
-  "A 聚焦{theme}", "B 聚焦{theme}", "A/B 流動性領先" style narratives.
-- Replaces the v1.3.7 stack of (summary cards + capital momentum + strategy
-  summary + bucket compare) inside render_active_etf_pair_comparison.
-  The detail tables (focus rows, common holdings, unique holdings) below are
-  unchanged.
-- All v1.3.7 capabilities carry over (pair-compare prefetch via Supabase,
-  ETF official-data fetcher, snapshot-based daily/intraday restore, etc.).
-Highlights from v1.3.7:
-- Removed duplicate function definitions for fetch_twse_etf_institutional_flow,
-  render_active_etf_tracker_section, _active_etf_holdings_map. The kept versions
-  enforce a hard deadline so prefetch jobs no longer hang on TWSE rate limits.
-- Active ETF Lab restores prefetched daily/intraday frames from snapshots
-  before falling back to live yfinance.
-- Pair compare no longer rebuilds the side that already has a ready snapshot.
-- ETF official-data fetcher (NAV, premium/discount, fund size, units,
-  turnover) wired into the workspace snapshot via etf_official_payload (JSONB
-  additive only - no Supabase schema migration).
-- Pair compare prefetch job warms up Supabase via synthetic ticker key
-  ("PAIR::A::B"). First-time pair selection now reads straight from Supabase
-  with no synthesis or fetch.
-- peek_active_etf_pair_snapshot has a Path C Supabase fallback.
-- Cleaned up dead code (_ensure_bundles).
-Carry-overs from v1.3.6:
-- Taiwan Futures Lab with direction-aware break-even planning.
-- Feasibility ratio, recent range proxy, settlement-pressure warning, and
-  fresher TWSE/TAIFEX market fetches.
-- Kept the existing theme and dashboard analysis functions intact.
+================================================================================
+HORIZON Release LEO Supply Chain — Stock Market Dashboard
+================================================================================
+Version : v1.4.7
+Updated : 2026-05-06
+Author  : David Lau (with iterative AI-assisted refactors)
+Lines   : ~37,250
+
+--------------------------------------------------------------------------------
+WHAT THIS FILE DOES
+--------------------------------------------------------------------------------
+A single-file Streamlit dashboard for Taiwan-focused multi-asset analysis.
+Three primary modes -- General Market, Supply Chain Lab, Active ETF Lab --
+share one codebase but render different layouts and pull from a shared
+data layer (yfinance + TWSE + Supabase prefetch snapshots).
+
+The Decision Cockpit (Q1-Q5) sits at the top of every non-ETF-Lab mode and
+synthesises today's market into a single decision spine:
+  Q1 today's tradeability    Q2 strongest theme    Q3 worth watching
+  Q4 chase / wait / avoid    Q5 holdings observation notes
+
+================================================================================
+TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
+================================================================================
+
+§ 0. File header & imports                              L     1 –    250
+§ 1. Layout / theme injection                           L   250 –    900
+
+§ 2. SUPPLY CHAIN catalogs & configs                    L   900 –  1,250
+     - LOW_ORBIT / ABF / MEMORY / ROBOTICS / PACKAGING_TEST catalogs
+     - SUPPLY_CHAIN_FOCUS_CONFIGS (master registry)
+
+§ 3. SUPPLY CHAIN snapshot prefetch / restore           L  1,250 –  3,200
+     - peek_supply_chain_focus_snapshot
+     - prefetch_supply_chain_focus_snapshots_job
+
+§ 4. General market layout entry                        L  3,400 –  3,650
+     - render_general_market_dashboard_layout
+
+§ 5. ACTIVE ETF metadata / catalog                      L  5,800 –  6,200
+     - ACTIVE_ETF_METADATA, _GROUP_METADATA, _CODES, etc.
+
+§ 6. Translations (zh / en)                             L  6,200 –  7,200
+     - LANGUAGE_OPTIONS, _TRANSLATIONS_ZH, _TRANSLATIONS_EN
+
+§ 7. Top dashboard selectors (Language / Mode / Scope)  L  8,400 –  8,800
+     - render_top_dashboard_selectors
+
+§ 8. Trend lens & display helpers                       L  8,800 –  9,200
+     - resolve_trend_lens, lens_meta builders
+
+§ 9. Global reference data (NASDAQ / S&P / DOW / TAIEX) L  9,600 –  9,900
+     - fetch_global_reference_data, build_global_market_indicator,
+       render_global_market_indicator
+
+§ 10. Yfinance data fetchers                            L 13,500 – 13,560
+     - fetch_daily_data    (TTL 1800s)
+     - fetch_intraday_data (TTL 600s)
+
+§ 11. ACTIVE ETF Lab logic                              L 21,700 – 22,500
+     - render_active_etf_lab_dashboard
+     - workspace render, holdings map, official payload
+
+§ 12. SUPPLY CHAIN Lab logic                            L 23,600 – 24,200
+     - render_supply_chain_lab_dashboard
+
+§ 13. NEWS BRIEFING builders (cockpit data sources)     L 23,800 – 24,150
+     - build_home_news_top_taiwan_movers
+     - build_home_news_supply_chain_rankings
+     - build_home_news_active_etf_spotlight
+
+§ 14. Editor analysis & TAIEX volume terrain            L 24,150 – 24,950
+     - load_editor_analysis_items, _render_editor_analysis_html
+     - _render_home_news_taiex_volume_terrain_html
+
+§ 15. DECISION COCKPIT — CSS injection                  L 24,950 – 25,400
+     - _cockpit_inject_css (entire scoped stylesheet)
+
+§ 16. DECISION COCKPIT — loading placeholder            L 25,400 – 25,500
+     - _build_cockpit_loading_html
+     - render_cockpit_loading_placeholder
+     - _cockpit_minify_html
+
+§ 17. DECISION COCKPIT — Q1 verdict                     L 25,800 – 26,200
+     - _cockpit_compute_q1_verdict
+     - _cockpit_render_q1_html
+
+§ 18. DECISION COCKPIT — Q2 medals & Q3 picks           L 26,200 – 26,800
+     - _cockpit_render_q2_html
+     - _cockpit_render_pick_card_stock / chain / etf
+     - _cockpit_render_q3_spotlight_card / table_row
+     - _cockpit_render_q3_html  (top movers + chains + ETFs)
+
+§ 19. DECISION COCKPIT — Q4 chase/wait/avoid            L 26,800 – 27,200
+     - _cockpit_compute_q4_signal
+     - _cockpit_render_q4_html
+
+§ 20. DECISION COCKPIT — Q5 holdings observation        L 27,200 – 27,370
+     - _cockpit_parse_portfolio_text
+     - _cockpit_compute_q5_holding_review
+     - _cockpit_render_q5_html
+
+§ 21. DECISION COCKPIT — main entry                     L 27,370 – 27,560
+     - render_decision_cockpit
+
+§ 22. Editor analysis block (below cockpit)             L 27,560 – 27,620
+     - render_editor_analysis_block
+     - render_home_news_briefing (legacy; not called)
+
+§ 23. ACTIVE ETF underlying signal & flow fetchers      L 33,000 – 34,000
+     - fetch_active_etf_underlying_signal (TTL 1800s)
+     - fetch_twse_stock_institutional_flow
+
+§ 24. Sidebar layout, watchlist, refresh button         L 33,200 – 33,700
+
+§ 25. ENTRY POINT                                       L 33,700 – 34,300
+     - generate_dashboard
+     - top selectors → loading placeholder → fetch → global indicator
+       → cockpit → editor block → mode-specific layout
+
+§ 26. ACTIVE ETF compare v2 dashboard                   L 35,900 – end
+
+================================================================================
+CHANGELOG (most recent first)
+================================================================================
+
+v1.4.7 (2026-05-06)
+  - Loading placeholder shows from FIRST PAINT, before any market-data fetch.
+    Covers the 5-12s yfinance cold-start that was previously a blank page.
+  - render_decision_cockpit accepts existing_loading_placeholder and
+    skip_loading_placeholder kwargs to coordinate one continuous loading state.
+
+v1.4.6 (2026-05-06)
+  - Global Market Indicator (NASDAQ / S&P / DOW / TAIEX) promoted from inside
+    General Market layout's overview tab to ABOVE the Decision Cockpit, visible
+    in all non-Active-ETF-Lab modes regardless of tab.
+
+v1.4.5 (2026-05-06)
+  - Loading placeholder skeleton + spinner + shimmer animations inside the
+    cockpit while builders run (Q1 verdict, Q2 medals, Q3 picks).
+
+v1.4.4 (2026-05-06)
+  - Q3 layout fully rebuilt to user-approved mockup: 3 summary cards on top,
+    spotlight TOP-1 card, compact TOP 2-5 table, two-column chains+ETFs panel.
+  - Tag thresholds lowered (foreign 100→10 lots, news 0.30→0.15 score, volume
+    1.0→1.05×) so each pick surfaces 2-3 tags rather than blanks.
+  - Inline attention-score tag added.
+
+v1.4.3 (2026-05-06)
+  - Q3 panels rendered as separate dark containers per sub-section. TOP 1 gets
+    a "featured" treatment with thicker border + glow.
+  - Button text "看細節" → "看盤點".
+
+v1.4.2 (2026-05-06)
+  - Q3 absorbs the entire News Briefing's three auto cards (台股 TOP 5 +
+    最強供應鏈 TOP 3 + 主動式 ETF TOP 3). News Briefing legacy fn kept but
+    no longer called. Editor Analysis + TAIEX terrain extracted into a
+    standalone render_editor_analysis_block below the cockpit.
+
+v1.4.1 (2026-05-06)
+  - Foreign-flow tags now show date suffix when stale (e.g. "外資買 +1,200 (5/5)").
+  - 1.5s timeout-guarded wrapper around fetch_active_etf_underlying_signal.
+  - Cache TTL bumps: fetch_daily_data 300→1800s, fetch_intraday_data 120→600s.
+
+v1.4.0 (2026-05-06)
+  - Decision Cockpit framework. Q1 verdict, Q2 medals, Q3 picks shipped first;
+    Q4 chase/wait/avoid + Q5 holdings observation in same release.
+
+v1.3.9 (2026-05-06)
+  - Top selector bar (Language / Mode / Scope) moved from sidebar to main
+    page. Sidebar duplicates removed.
+
+v1.3.8 (2026-05-05)
+  - Active ETF compare board v2 (render_active_etf_compare_v2_dashboard).
+
+v1.3.7
+  - Pair compare prefetch via Supabase. Active ETF Lab restores daily/intraday
+    frames from snapshots before falling back to yfinance.
+
+(Older history pruned. Search "v1.3.6" or "v1.3.0" backwards for archaeology.)
+
+================================================================================
 """
 from __future__ import annotations
 
@@ -52,7 +196,7 @@ import re
 import sqlite3
 import textwrap
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape, unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus
@@ -5775,13 +5919,34 @@ WATCHLIST_PRESETS = {
 }
 
 MARKET_SCOPE_OPTIONS = {
-    "Mixed (U.S. + Taiwan)": "Mixed (U.S. + Taiwan)",
-    "U.S. only": "U.S. only",
+    # v1.5.3: "Mixed (U.S. + Taiwan)" removed. The dashboard now requires
+    # picking a single market focus -- the previous mixed mode was creating
+    # cluttered watchlists and a confusing global indicator. Old saved
+    # preferences with "Mixed" get migrated to "Taiwan only" (the new default)
+    # by _normalize_market_scope() below.
     "Taiwan only": "Taiwan only",
+    "U.S. only": "U.S. only",
 }
 
+# v1.5.3: legacy values that need migrating to a current option.
+_LEGACY_MARKET_SCOPE_REDIRECTS = {
+    "Mixed (U.S. + Taiwan)": "Taiwan only",
+    "Mixed": "Taiwan only",
+}
+
+
+def _normalize_market_scope(value: str | None) -> str:
+    """Return a valid scope, migrating legacy values when needed."""
+    if not value:
+        return "Taiwan only"
+    if value in MARKET_SCOPE_OPTIONS:
+        return value
+    if value in _LEGACY_MARKET_SCOPE_REDIRECTS:
+        return _LEGACY_MARKET_SCOPE_REDIRECTS[value]
+    return "Taiwan only"
+
+
 MARKET_SCOPE_DEFAULT_GROUPS = {
-    "Mixed (U.S. + Taiwan)": ["Tech & AI", "Semiconductors", "Market ETFs", "Taiwan Semiconductors", "Taiwan AI Supply Chain", "Taiwan ETFs"],
     "U.S. only": ["Tech & AI", "Semiconductors", "Financials", "Healthcare", "Consumer", "Industrials", "Energy", "Market ETFs"],
     "Taiwan only": ["Taiwan Semiconductors", "Taiwan AI Supply Chain", "Taiwan Financials", "Taiwan ETFs"],
 }
@@ -6185,12 +6350,45 @@ st.set_page_config(page_title="David Lau Stock Market Vision", page_icon="📈",
 
 
 
-GLOBAL_REFERENCE_INDICES = [
+# v1.5.3: Global reference indices are now scope-aware.
+# - US scope shows NASDAQ / S&P 500 / DOW (3 cards)
+# - TW scope shows TAIEX / Taiwan Futures / TAIEX Volume / Foreign Net (4 cards)
+# Some Taiwan items aren't reliable yfinance tickers -- those use special
+# label_keys handled in build_global_market_indicator with their own fetchers.
+GLOBAL_REFERENCE_INDICES_US = [
     {"ticker": "^IXIC", "label_key": "global_market_nasdaq"},
     {"ticker": "^GSPC", "label_key": "global_market_sp500"},
-    {"ticker": "^DJI", "label_key": "global_market_dow"},
-    {"ticker": "^TWII", "label_key": "global_market_taiex"},
+    {"ticker": "^DJI",  "label_key": "global_market_dow"},
 ]
+
+GLOBAL_REFERENCE_INDICES_TW = [
+    {"ticker": "^TWII", "label_key": "global_market_taiex"},
+    # TX=F is the active Taiwan futures continuous contract on yfinance.
+    # When yfinance doesn't return data we render a placeholder card.
+    {"ticker": "TX=F",  "label_key": "global_market_tw_futures"},
+    # Synthetic markers handled below by special-case fetchers in
+    # build_global_market_indicator. These tickers are NOT yfinance symbols,
+    # they're sentinels we recognise to call TWSE APIs instead.
+    {"ticker": "__TWSE_TURNOVER__",     "label_key": "global_market_tw_turnover"},
+    {"ticker": "__TWSE_FOREIGN_NET__",  "label_key": "global_market_tw_foreign"},
+]
+
+# Backwards-compat: legacy code that imports GLOBAL_REFERENCE_INDICES gets the
+# union, so any old call site that fetches indicators won't break.
+GLOBAL_REFERENCE_INDICES = GLOBAL_REFERENCE_INDICES_US + GLOBAL_REFERENCE_INDICES_TW
+
+
+def get_indices_for_scope(market_scope: str) -> list[dict]:
+    """Return the global reference indices for a given market scope.
+
+    v1.5.3: After Mixed scope was removed, this is the single source of truth
+    for "which indicator cards do we show". Pass through _normalize so legacy
+    'Mixed' values still resolve to the new Taiwan default.
+    """
+    market_scope = _normalize_market_scope(market_scope)
+    if market_scope == "U.S. only":
+        return list(GLOBAL_REFERENCE_INDICES_US)
+    return list(GLOBAL_REFERENCE_INDICES_TW)
 
 
 GLOBAL_REFERENCE_QUOTE_TTL_SECONDS = 60
@@ -6542,6 +6740,13 @@ TRANSLATIONS["English"].update({
     "global_market_sp500": "S&P 500",
     "global_market_dow": "Dow Jones",
     "global_market_taiex": "TAIEX",
+    "global_market_tw_futures": "TW Futures",
+    "global_market_tw_turnover": "TAIEX Turnover",
+    "global_market_tw_foreign": "Foreign Net Total",
+    "global_market_tw_data_pending": "Data pending",
+    "global_market_tw_as_of": "As of {date}",
+    "global_market_prev_day_close": "Prev close",
+    "global_market_prev2_day_close": "2 days ago",
 })
 
 TRANSLATIONS["繁體中文"].update({
@@ -6563,6 +6768,13 @@ TRANSLATIONS["繁體中文"].update({
     "global_market_sp500": "標普 500",
     "global_market_dow": "道瓊工業指數",
     "global_market_taiex": "加權指數",
+    "global_market_tw_futures": "台指期",
+    "global_market_tw_turnover": "台股交易量",
+    "global_market_tw_foreign": "外資合計",
+    "global_market_tw_data_pending": "資料準備中",
+    "global_market_tw_as_of": "資料日期 {date}",
+    "global_market_prev_day_close": "前一日",
+    "global_market_prev2_day_close": "前兩日",
 })
 
 
@@ -7294,7 +7506,7 @@ TRANSLATIONS["繁體中文"].update({
 })
 
 def get_lang() -> str:
-    return st.session_state.get("dashboard_language", "English")
+    return st.session_state.get("dashboard_language", "繁體中文")
 
 
 def get_language() -> str:
@@ -8690,91 +8902,412 @@ def market_scope_label(scope: str) -> str:
 # Other sidebar settings (theme mode, layout mode, device control, watchlist
 # editor, refresh button) stay where they are.
 def _inject_top_selector_bar_css() -> None:
-    """Inject scoped styles for the top selector bar. Idempotent per-rerun safe
-    since Streamlit dedupes identical <style> blocks server-side."""
+    """Inject scoped styles for the top Hero Bar (v1.5.0 redesign).
+
+    The Hero Bar replaces the old Top Selector Bar and adds:
+      * Visual experience-level cards (新手 / 初級 / 進階 / 資深) instead of
+        a plain Layout-mode selectbox -- with emoji + 1-line guidance copy.
+      * Larger Dashboard-mode and Language pickers in matching dark-horizon
+        gradient style.
+      * Fully responsive: 3 columns on desktop, stacks on mobile.
+
+    Streamlit dedupes identical <style> blocks server-side so this is safe
+    to call on every rerun (which is required because the placeholder is
+    cleared between paints).
+    """
     st.markdown(
         """
         <style>
-        .top-selector-bar {
-            background: linear-gradient(180deg, rgba(11,18,32,0.55) 0%, rgba(8,14,28,0.45) 100%);
-            border: 1px solid rgba(70,140,200,0.18);
-            border-radius: 14px;
-            padding: 0.55rem 1rem 0.2rem 1rem;
-            margin: 0.2rem 0 1rem 0;
+        /* ===== v1.5.0 Hero Bar ===== */
+        .hero-bar-shell {
+            background: linear-gradient(135deg, rgba(15,28,52,0.78) 0%, rgba(8,14,28,0.65) 60%, rgba(20,24,48,0.7) 100%);
+            border: 1px solid rgba(94,234,212,0.18);
+            border-radius: 18px;
+            padding: 1.4rem 1.6rem 1rem 1.6rem;
+            margin: 0.3rem 0 1.2rem 0;
+            position: relative;
+            overflow: hidden;
         }
-        .top-selector-bar-label {
-            font-size: 0.7rem;
+        .hero-bar-shell::before {
+            content: "";
+            position: absolute; inset: 0;
+            background: radial-gradient(circle at 0% 0%, rgba(94,234,212,0.08), transparent 40%),
+                        radial-gradient(circle at 100% 100%, rgba(168,85,247,0.06), transparent 45%);
+            pointer-events: none;
+        }
+        .hero-bar-shell > * { position: relative; z-index: 1; }
+        .hero-bar-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.78rem;
             font-weight: 600;
-            letter-spacing: 0.06em;
-            color: rgba(255,255,255,0.5);
+            color: #5eead4;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            margin-bottom: 0.05rem;
+            margin-bottom: 0.3rem;
         }
-        .top-selector-bar [data-testid="stSelectbox"] > label {
-            font-size: 0.74rem !important;
-            color: rgba(255,255,255,0.62) !important;
-            font-weight: 500;
+        .hero-bar-kicker-dot {
+            width: 8px; height: 8px;
+            background: #5eead4;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #5eead4;
+        }
+        .hero-bar-title {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.15rem;
+        }
+        .hero-bar-sub {
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.6);
+            margin-bottom: 1.05rem;
+            line-height: 1.5;
+        }
+        /* Each Streamlit column inside hero-bar gets a column-label */
+        .hero-bar-col-label {
+            font-size: 0.74rem;
+            font-weight: 600;
+            color: rgba(255,255,255,0.55);
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.4rem;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+        .hero-bar-shell [data-testid="stSelectbox"] > label {
+            display: none !important;  /* we render our own column label above */
+        }
+        .hero-bar-shell [data-testid="stSelectbox"] > div > div {
+            background: rgba(11,18,32,0.6) !important;
+            border: 1px solid rgba(94,234,212,0.22) !important;
+            border-radius: 10px !important;
+            font-size: 0.98rem !important;
+            color: #fff !important;
+        }
+        .hero-bar-shell [data-testid="stSelectbox"] > div > div:hover {
+            border-color: rgba(94,234,212,0.42) !important;
+        }
+        /* Experience-level segmented-button group */
+        .hero-bar-exp-group {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+        }
+        .hero-bar-shell .stButton > button {
+            background: rgba(11,18,32,0.55);
+            border: 1px solid rgba(94,234,212,0.18);
+            color: rgba(255,255,255,0.78);
+            border-radius: 12px;
+            padding: 0.7rem 0.5rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            line-height: 1.3;
+            min-height: 50px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+            width: 100%;
+        }
+        .hero-bar-shell .stButton > button:hover {
+            background: rgba(94,234,212,0.12);
+            border-color: rgba(94,234,212,0.45);
+            color: #fff;
+        }
+        .hero-bar-shell .stButton > button:focus:not(:active) {
+            border-color: rgba(94,234,212,0.45);
+            box-shadow: 0 0 0 2px rgba(94,234,212,0.12);
+        }
+        /* v1.5.2: Active experience-level button.
+           Marker pattern: the active button's label ends with "  ★" so CSS
+           can target it via [aria-label$="★"]. The previous approach used a
+           wrapper <div class="hero-exp-active"> rendered via st.markdown,
+           but Streamlit treats each markdown call as its own widget slot
+           -- which silently added ~20px height to the active column only,
+           breaking alignment. The marker-character approach has zero
+           layout side-effects.
+
+           The literal ★ in the visible label IS the active indicator --
+           paired with the green border + glow it reads cleanly as "this
+           one is selected" without needing additional pseudo-element art. */
+        .hero-bar-shell .stButton > button[aria-label$="★"] {
+            background: linear-gradient(135deg, rgba(94,234,212,0.22), rgba(94,234,212,0.08));
+            border: 1.5px solid rgba(94,234,212,0.65);
+            color: #5eead4;
+            box-shadow: 0 0 0 1px rgba(94,234,212,0.18), 0 4px 18px rgba(94,234,212,0.08);
+        }
+        /* v1.5.1: per-button hint caption below each experience-level button */
+        .hero-exp-hint {
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.5);
+            text-align: center;
+            margin-top: 0.35rem;
+            line-height: 1.35;
+            min-height: 1.5em;
+        }
+        .hero-bar-tip {
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.6);
+            margin-top: 0.7rem;
+            padding: 0.55rem 0.85rem;
+            background: rgba(94,234,212,0.06);
+            border-left: 3px solid rgba(94,234,212,0.42);
+            border-radius: 6px;
+            line-height: 1.5;
+        }
+        @media (max-width: 1100px) {
+            .hero-bar-exp-group { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 720px) {
-            .top-selector-bar { padding: 0.45rem 0.7rem 0.15rem 0.7rem; }
+            .hero-bar-shell { padding: 1.1rem 1rem 0.85rem 1rem; }
+            .hero-bar-title { font-size: 1.15rem; }
+            .hero-bar-exp-group { grid-template-columns: 1fr 1fr; }
         }
+        /* ===== end v1.5.0 Hero Bar ===== */
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
+# ---------------------------------------------------------------------------
+# v1.5.0 Experience-level metadata. This is a UI-only relabel of the existing
+# Layout mode (Standard / Advanced / Expert) plus a new "Beginner" entry that
+# maps to Standard. NO downstream code knows about "experience_level" -- we
+# always translate back to dashboard_layout_mode session_state. This keeps
+# all existing Standard/Advanced/Expert layout switches working unchanged.
+# ---------------------------------------------------------------------------
+EXPERIENCE_LEVEL_TO_LAYOUT = {
+    "beginner": "Standard",
+    "intermediate": "Standard",
+    "advanced": "Advanced",
+    "expert": "Expert",
+}
+
+
+def _experience_level_options(lang_zh: bool) -> list[dict]:
+    """Return list of (key, emoji, label, hint) tuples for the 4 user levels."""
+    if lang_zh:
+        return [
+            {"key": "beginner",     "emoji": "🌱", "label": "新手",   "hint": "先看大方向"},
+            {"key": "intermediate", "emoji": "📊", "label": "初級",   "hint": "看題材與焦點"},
+            {"key": "advanced",     "emoji": "🎯", "label": "進階",   "hint": "工具與比較"},
+            {"key": "expert",       "emoji": "🔬", "label": "資深",   "hint": "高密度研究"},
+        ]
+    return [
+        {"key": "beginner",     "emoji": "🌱", "label": "Beginner",     "hint": "Big picture only"},
+        {"key": "intermediate", "emoji": "📊", "label": "Intermediate", "hint": "Themes & focus"},
+        {"key": "advanced",     "emoji": "🎯", "label": "Advanced",     "hint": "Tools & compare"},
+        {"key": "expert",       "emoji": "🔬", "label": "Expert",       "hint": "Dense research"},
+    ]
+
+
+def _layout_to_experience_level(layout_mode: str, *, current_level: str | None = None) -> str:
+    """Reverse-map the persisted layout_mode back to an experience_level key.
+
+    Layout 'Standard' is shared between 'beginner' and 'intermediate'. When we
+    can't tell them apart (fresh session), prefer the one already chosen.
+    """
+    if current_level and current_level in EXPERIENCE_LEVEL_TO_LAYOUT:
+        if EXPERIENCE_LEVEL_TO_LAYOUT[current_level] == layout_mode:
+            return current_level
+    if layout_mode == "Advanced":
+        return "advanced"
+    if layout_mode == "Expert":
+        return "expert"
+    return "intermediate"  # default for Standard
+
+
+def _hint_copy_for_dashboard_mode(dashboard_mode: str, lang_zh: bool) -> str:
+    """One-line tip below the hero-bar selectors, mode-aware."""
+    if not lang_zh:
+        if dashboard_mode == "Active ETF Lab":
+            return "🎯 Active ETF Lab — pair compare and underlying-flow research."
+        if dashboard_mode == "Supply Chain Lab":
+            return "⚡ Supply Chain Lab — Memory / LEO / ABF / Robotics / Packaging-Test."
+        if dashboard_mode == "Taiwan Futures Lab":
+            return "📈 Taiwan Futures Lab — break-even and direction-aware planning."
+        return "🏆 Main Dashboard — full Decision Cockpit + cross-market view."
+    if dashboard_mode == "Active ETF Lab":
+        return "🎯 主動式 ETF Lab — 比較雙 ETF 與底層流向研究。"
+    if dashboard_mode == "Supply Chain Lab":
+        return "⚡ 供應鏈 Lab — 記憶體 / 低軌衛星 / ABF / 機器人 / 封測五大鏈。"
+    if dashboard_mode == "Taiwan Futures Lab":
+        return "📈 台指期 Lab — 回本價與方向感規劃。"
+    return "🏆 主 Dashboard — 完整決策主線 + 跨市場視角。"
+
+
 def render_top_dashboard_selectors() -> None:
-    """Render Language / Dashboard mode / Market scope side-by-side at the top
-    of the page, beneath the dashboard title. Each selectbox writes to the
-    same session_state key the sidebar previously used, so downstream code
-    that reads st.session_state["dashboard_language"] / "dashboard_mode" /
-    "dashboard_market_scope" continues to work without changes.
+    """Render the v1.5.0 Hero Bar at the top of the page.
+
+    Three columns:
+      [Dashboard Mode (4 options)]  [Experience Level (4 buttons)]  [Language]
+
+    All three write to existing session_state keys so downstream code that
+    reads dashboard_mode / dashboard_layout_mode / dashboard_language is
+    unchanged. The Theme Mode picker (previously in sidebar) has been removed
+    -- the dashboard now always uses Dark Horizon.
     """
     _inject_top_selector_bar_css()
-    st.markdown('<div class="top-selector-bar">', unsafe_allow_html=True)
-    cols = st.columns(3, gap="small")
+    lang_zh = st.session_state.get("dashboard_language", "繁體中文") == "繁體中文"
 
-    with cols[0]:
-        current_lang = st.session_state.get("dashboard_language", "English")
+    # ---- Hero Bar shell open ----
+    st.markdown('<div class="hero-bar-shell">', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="hero-bar-kicker"><span class="hero-bar-kicker-dot"></span>'
+        f'{escape("控制中心" if lang_zh else "CONTROL CENTER")}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="hero-bar-title">{escape("選擇你今天的工作場景" if lang_zh else "Choose your workspace")}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="hero-bar-sub">{escape("先選 Dashboard 模式 ➜ 再選你的使用者層級。設定即時生效，不用按確定。" if lang_zh else "Pick a dashboard mode, then your experience level. Changes apply instantly.")}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ---- Row 1: 3 selectboxes (Dashboard / Market Scope / Language) ----
+    # v1.5.1: re-added Market Scope (was lost in v1.5.0 rewrite). All three
+    # selectors are equal-weight columns so they line up cleanly.
+    col_dashboard, col_scope, col_lang = st.columns([1.2, 1.2, 1], gap="medium")
+
+    # === Column 1: Dashboard Mode ===
+    with col_dashboard:
+        st.markdown(
+            f'<div class="hero-bar-col-label">📍 {escape("DASHBOARD 模式" if lang_zh else "DASHBOARD MODE")}</div>',
+            unsafe_allow_html=True,
+        )
+        current_mode = st.session_state.get("dashboard_mode", "General Market")
+        if current_mode not in DASHBOARD_MODE_OPTIONS:
+            current_mode = "General Market"
+        # Dashboard-mode label that includes a leading emoji per option.
+        def _mode_label(value: str) -> str:
+            base = dashboard_mode_label(value)
+            emoji_map = {
+                "General Market":     "🏆",
+                "Active ETF Lab":     "🎯",
+                "Supply Chain Lab":   "⚡",
+                "Taiwan Futures Lab": "📈",
+            }
+            return f"{emoji_map.get(value, '•')}  {base}"
+        selected_mode = st.selectbox(
+            "_dashboard_mode_label",
+            options=DASHBOARD_MODE_OPTIONS,
+            index=DASHBOARD_MODE_OPTIONS.index(current_mode),
+            format_func=_mode_label,
+            key="top_selector_dashboard_mode",
+            label_visibility="collapsed",
+        )
+        st.session_state["dashboard_mode"] = selected_mode
+
+    # === Column 2: Market Scope (RESTORED in v1.5.1) ===
+    # The user can pick US-only / Taiwan-only / Mixed. v1.5.0 accidentally
+    # dropped this widget; the session_state key is read by 13+ downstream
+    # places so it MUST exist. Removing the "Mixed" option is階段 B work --
+    # not done here; we keep the existing 3 options and let the user pick.
+    with col_scope:
+        st.markdown(
+            f'<div class="hero-bar-col-label">🌍 {escape("市場範圍" if lang_zh else "MARKET SCOPE")}</div>',
+            unsafe_allow_html=True,
+        )
+        current_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
+        if current_scope not in MARKET_SCOPE_OPTIONS:
+            current_scope = "Taiwan only"
+        # Scope label with leading flag/globe emoji.
+        def _scope_label(value: str) -> str:
+            base = market_scope_label(value)
+            emoji_map = {
+                "Mixed (U.S. + Taiwan)": "🌐",
+                "U.S. only":             "🇺🇸",
+                "Taiwan only":           "🇹🇼",
+            }
+            return f"{emoji_map.get(value, '•')}  {base}"
+        selected_scope = st.selectbox(
+            "_scope_label",
+            options=list(MARKET_SCOPE_OPTIONS.keys()),
+            index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_scope),
+            format_func=_scope_label,
+            key="top_selector_market_scope",
+            label_visibility="collapsed",
+        )
+        st.session_state["dashboard_market_scope"] = selected_scope
+
+    # === Column 3: Language ===
+    with col_lang:
+        st.markdown(
+            f'<div class="hero-bar-col-label">🌐 {escape("語言" if lang_zh else "LANGUAGE")}</div>',
+            unsafe_allow_html=True,
+        )
+        current_lang = st.session_state.get("dashboard_language", "繁體中文")
         if current_lang not in LANGUAGE_OPTIONS:
-            current_lang = "English"
+            current_lang = "繁體中文"
         selected_lang = st.selectbox(
-            t("language"),
+            "_lang_label",
             options=list(LANGUAGE_OPTIONS.keys()),
             index=list(LANGUAGE_OPTIONS.keys()).index(current_lang),
             key="top_selector_language",
+            label_visibility="collapsed",
         )
+        # v1.5.3: Force rerun on language change so the rest of the Hero Bar
+        # text (and the entire page) immediately switches. Without this, the
+        # user sees stale English copy until the next interaction.
+        if selected_lang != current_lang:
+            st.session_state["dashboard_language"] = selected_lang
+            st.rerun()
         st.session_state["dashboard_language"] = selected_lang
 
-    with cols[1]:
-        current_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
-        if current_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
-            current_dashboard_mode = "General Market"
-        selected_dashboard_mode = st.selectbox(
-            t("dashboard_mode"),
-            options=DASHBOARD_MODE_OPTIONS,
-            index=DASHBOARD_MODE_OPTIONS.index(current_dashboard_mode),
-            format_func=dashboard_mode_label,
-            key="top_selector_dashboard_mode",
-        )
-        st.session_state["dashboard_mode"] = selected_dashboard_mode
+    # ---- Row 2: Experience Level (4 equal-width buttons across full width) ----
+    # v1.5.1: moved out of being a sub-column inside row 1. Putting all 4
+    # buttons across the full hero-bar width gives every button equal column
+    # width, equal min-height, and lets us shorten the labels (one short line
+    # instead of "label\nhint") so they don't wrap awkwardly.
+    st.markdown(
+        f'<div class="hero-bar-col-label" style="margin-top: 0.85rem;">👤 {escape("使用者層級" if lang_zh else "EXPERIENCE LEVEL")}</div>',
+        unsafe_allow_html=True,
+    )
+    persisted_layout = st.session_state.get("dashboard_layout_mode", "Advanced")
+    current_level = st.session_state.get(
+        "dashboard_experience_level",
+        _layout_to_experience_level(persisted_layout),
+    )
+    levels = _experience_level_options(lang_zh)
+    btn_cols = st.columns(4, gap="small")
+    for idx, level in enumerate(levels):
+        with btn_cols[idx]:
+            is_active = level["key"] == current_level
+            # v1.5.2: REMOVED the previous st.markdown('<div ...>') wrapper
+            # approach. Streamlit treats each markdown call as its own widget
+            # slot, so the wrapper div was silently adding ~20px of height to
+            # the active column ONLY -- which pushed that one button + its
+            # caption down and broke alignment. We now distinguish active
+            # state via a marker character in the button label that CSS can
+            # target with [aria-label*=" ★"]. Invisible to the eye, equal
+            # height for all 4 buttons.
+            base_label = f"{level['emoji']}  {level['label']}"
+            btn_label = base_label + ("  ★" if is_active else "")
+            if st.button(
+                btn_label,
+                key=f"hero_exp_{level['key']}",
+                use_container_width=True,
+            ):
+                st.session_state["dashboard_experience_level"] = level["key"]
+                st.session_state["dashboard_layout_mode"] = EXPERIENCE_LEVEL_TO_LAYOUT[level["key"]]
+                st.rerun()
+            # Per-button hint caption below the button
+            st.markdown(
+                f'<div class="hero-exp-hint">{escape(level["hint"])}</div>',
+                unsafe_allow_html=True,
+            )
 
-    with cols[2]:
-        current_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
-        if current_market_scope not in MARKET_SCOPE_OPTIONS:
-            current_market_scope = "Mixed (U.S. + Taiwan)"
-        selected_market_scope = st.selectbox(
-            t("market_scope"),
-            options=list(MARKET_SCOPE_OPTIONS.keys()),
-            index=list(MARKET_SCOPE_OPTIONS.keys()).index(current_market_scope),
-            format_func=market_scope_label,
-            key="top_selector_market_scope",
-        )
-        st.session_state["dashboard_market_scope"] = selected_market_scope
+    # ---- Hint copy below selectors ----
+    hint = _hint_copy_for_dashboard_mode(st.session_state.get("dashboard_mode", "General Market"), lang_zh)
+    st.markdown(f'<div class="hero-bar-tip">{escape(hint)}</div>', unsafe_allow_html=True)
 
+    # ---- Hero Bar shell close ----
     st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -8841,8 +9374,8 @@ def filter_tickers_for_market_scope(tickers: list[str], market_scope: str) -> li
 
 
 def default_tickers_for_market_scope(market_scope: str) -> list[str]:
-    if market_scope == "Mixed (U.S. + Taiwan)":
-        return DEFAULT_TICKERS.copy()
+    # v1.5.3: Mixed scope removed; legacy values get normalized to Taiwan only.
+    market_scope = _normalize_market_scope(market_scope)
     return [
         ticker
         for ticker in DEFAULT_TICKERS
@@ -9439,7 +9972,7 @@ def load_dashboard_preferences() -> None:
     if dashboard_mode not in DASHBOARD_MODE_OPTIONS:
         dashboard_mode = "General Market"
 
-    language = _query_param_first("lang") or _profile_value("lang") or st.session_state.get("dashboard_language", "English")
+    language = _query_param_first("lang") or _profile_value("lang") or st.session_state.get("dashboard_language", "繁體中文")
     if language not in LANGUAGE_OPTIONS:
         language = "English"
 
@@ -9461,9 +9994,9 @@ def load_dashboard_preferences() -> None:
     if layout_mode not in DASHBOARD_LAYOUT_OPTIONS:
         layout_mode = "Advanced"
 
-    market_scope = _query_param_first("scope") or _profile_value("scope") or st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    market_scope = _query_param_first("scope") or _profile_value("scope") or st.session_state.get("dashboard_market_scope", "Taiwan only")
     if market_scope not in MARKET_SCOPE_OPTIONS:
-        market_scope = "Mixed (U.S. + Taiwan)"
+        market_scope = "Taiwan only"
 
     groups = _csv_decode(_query_param_first("groups") or _profile_value("groups"))
     groups = [group for group in groups if group in market_scope_group_options(market_scope)]
@@ -9640,7 +10173,294 @@ def benchmark_delta_label(value: float) -> str:
 
 @st.cache_data(ttl=300)
 def fetch_global_reference_data(period: str, interval: str):
-    return fetch_daily_data([item["ticker"] for item in GLOBAL_REFERENCE_INDICES], period, interval)
+    # v1.5.3/v1.5.4: still fetch real yfinance indices (not just
+    # scope-relevant) so switching scope doesn't trigger re-fetch.
+    # Skip TWSE sentinel tickers AND TX=F (handled by fetch_taifex_futures_quote).
+    yfinance_tickers = [
+        item["ticker"] for item in GLOBAL_REFERENCE_INDICES
+        if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
+    ]
+    return fetch_daily_data(yfinance_tickers, period, interval)
+
+
+# v1.5.3: Taiwan-specific market aggregates (total turnover + foreign-net total)
+# fetched via TWSE BWIBBU/MI_INDEX endpoints. These are the underlying
+# datasets behind the "台股交易量" and "外資合計" indicator cards.
+#
+# v1.5.4: Now also returns the most recent 3 trading days of values
+# (D-0 latest, D-1 prior, D-2 two days back) so the indicator cards can
+# show "前一日 / 前兩日" mini-stats next to today's reading.
+#
+# Cached 30 min by default. TTL is intentionally generous because TWSE
+# publishes T86 (institutional flow) ~2 hours after market close, so the
+# value usually doesn't change during a session anyway. The cache key
+# includes today's TW date so we get a fresh fetch on the next trading day.
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_taiwan_market_aggregates(_cache_key: str) -> dict:
+    """Fetch TWSE market-wide aggregates: total turnover + foreign net,
+    over the most recent 3 trading days.
+
+    Returns a dict like:
+        {
+            "turnover_value":     float | None,   # latest day, in 億 NTD
+            "turnover_d1":        float | None,   # prior trading day
+            "turnover_d2":        float | None,   # two trading days ago
+            "turnover_change_pct": float | None,  # vs previous day
+            "foreign_net":        float | None,   # latest day, signed 億 NTD
+            "foreign_net_d1":     float | None,
+            "foreign_net_d2":     float | None,
+            "data_date":          "YYYY-MM-DD" | None,
+            "data_date_d1":       "YYYY-MM-DD" | None,
+            "data_date_d2":       "YYYY-MM-DD" | None,
+            "is_today":           bool,
+            "error":              str | None,
+        }
+
+    Graceful: any fetch failure returns None values + an error string.
+    Never raises -- callers can render a "資料準備中" placeholder safely.
+    """
+    result: dict = {
+        "turnover_value": None, "turnover_d1": None, "turnover_d2": None,
+        "turnover_change_pct": None,
+        "foreign_net": None, "foreign_net_d1": None, "foreign_net_d2": None,
+        "data_date": None, "data_date_d1": None, "data_date_d2": None,
+        "is_today": False,
+        "error": None,
+    }
+
+    today_tw = datetime.now(TW_TZ).date()
+
+    def _roc_to_iso(roc_str: str) -> str | None:
+        """Convert "114/05/06" ROC date string -> "2025-05-06" gregorian."""
+        if not roc_str or "/" not in roc_str:
+            return None
+        try:
+            parts = roc_str.split("/")
+            if len(parts) != 3:
+                return None
+            return f"{int(parts[0]) + 1911}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+        except (ValueError, IndexError):
+            return None
+
+    # --- 1. Total turnover from TWSE FMTQIK endpoint (~20 trading days) ---
+    try:
+        date_yyyymmdd = today_tw.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/exchangeReport/FMTQIK?response=json&date={date_yyyymmdd}"
+        payload = _twse_request_json(url)
+        rows = payload.get("data") or []
+        # Rows are oldest-first; we want the last 3.
+        if rows:
+            recent = rows[-3:] if len(rows) >= 3 else rows
+            # Last (most recent)
+            try:
+                last_row = recent[-1]
+                value_ntd = float(str(last_row[2] or "").replace(",", "").strip())
+                result["turnover_value"] = value_ntd / 1_0000_0000  # 元 -> 億
+                result["data_date"] = _roc_to_iso(str(last_row[0] or "").strip())
+                result["is_today"] = result["data_date"] == today_tw.strftime("%Y-%m-%d")
+            except (ValueError, IndexError):
+                pass
+            # D-1
+            if len(recent) >= 2:
+                try:
+                    d1_row = recent[-2]
+                    result["turnover_d1"] = float(
+                        str(d1_row[2] or "").replace(",", "").strip()
+                    ) / 1_0000_0000
+                    result["data_date_d1"] = _roc_to_iso(str(d1_row[0] or "").strip())
+                except (ValueError, IndexError):
+                    pass
+            # D-2
+            if len(recent) >= 3:
+                try:
+                    d2_row = recent[-3]
+                    result["turnover_d2"] = float(
+                        str(d2_row[2] or "").replace(",", "").strip()
+                    ) / 1_0000_0000
+                    result["data_date_d2"] = _roc_to_iso(str(d2_row[0] or "").strip())
+                except (ValueError, IndexError):
+                    pass
+            # Change % vs previous day
+            if result.get("turnover_value") and result.get("turnover_d1"):
+                prev = result["turnover_d1"]
+                cur = result["turnover_value"]
+                if prev > 0:
+                    result["turnover_change_pct"] = ((cur - prev) / prev) * 100.0
+    except Exception as exc:
+        result["error"] = f"turnover: {type(exc).__name__}"
+
+    # --- 2. Foreign net total from TWSE BFI82U for the latest 3 trading days ---
+    # We probe 3 dates (today + 2 prior business days). Each date returns one
+    # day of 三大法人 totals; we walk back until we have 3 successful pulls
+    # (or run out of probes after ~7 calendar days).
+    try:
+        probe_days = 0
+        probe_date = today_tw
+        d_index = 0  # 0 = today/D-0, 1 = D-1, 2 = D-2
+        while probe_days < 7 and d_index < 3:
+            yyyymmdd = probe_date.strftime("%Y%m%d")
+            url = (
+                f"https://www.twse.com.tw/fund/BFI82U?response=json"
+                f"&dayDate={yyyymmdd}&weekDate=&monthDate=&type=day"
+            )
+            try:
+                payload = _twse_request_json(url)
+                rows = payload.get("data") or []
+                # Look for "外資及陸資" row
+                found_value: float | None = None
+                for row in rows:
+                    investor = str(row[0] or "").strip() if row else ""
+                    if "外資" in investor or "Foreign" in investor:
+                        try:
+                            net_str = str(row[3] if len(row) > 3 else "0").replace(",", "").strip()
+                            found_value = float(net_str) / 1_0000_0000  # 元 -> 億
+                        except (ValueError, IndexError):
+                            pass
+                        break
+                if found_value is not None:
+                    if d_index == 0:
+                        result["foreign_net"] = found_value
+                    elif d_index == 1:
+                        result["foreign_net_d1"] = found_value
+                    elif d_index == 2:
+                        result["foreign_net_d2"] = found_value
+                    d_index += 1
+            except Exception:
+                pass  # this probe day failed, try previous day
+            # Walk back one calendar day; skip weekends
+            probe_date -= timedelta(days=1)
+            while probe_date.weekday() >= 5:
+                probe_date -= timedelta(days=1)
+            probe_days += 1
+    except Exception as exc:
+        if result.get("error"):
+            result["error"] += f"; foreign: {type(exc).__name__}"
+        else:
+            result["error"] = f"foreign: {type(exc).__name__}"
+
+    return result
+
+
+# v1.5.4: TAIFEX (Taiwan Futures Exchange) fetcher for 台指期 daily report.
+# yfinance ticker TX=F is unreliable; the official TAIFEX OpenAPI publishes
+# daily futures market reports at:
+#   https://openapi.taifex.com.tw/v1/DailyMarketReportFut
+# Each row includes Trading Date, Contract, ExpirationMonth, Open, High,
+# Low, LastPrice, ChangePrice, ChangePercent, Volume.
+# We pull the "TX" contract's "near-month" row (smallest contract month) for
+# D-0, D-1, D-2 by walking back trading days when a probe returns no data.
+#
+# Graceful: any fetch failure returns None values; the indicator card will
+# render "資料準備中" without breaking page render.
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_taifex_futures_quote(_cache_key: str) -> dict:
+    """Fetch TAIFEX 台指期 (TX) near-month quote for the latest 3 trading days.
+
+    Returns a dict like:
+        {
+            "last_price":   float | None,   # latest close
+            "last_price_d1": float | None,   # prior trading day close
+            "last_price_d2": float | None,   # two days back close
+            "change_pct":   float | None,   # latest day's % change
+            "change_pct_d1": float | None,
+            "data_date":    "YYYY-MM-DD" | None,
+            "data_date_d1": "YYYY-MM-DD" | None,
+            "data_date_d2": "YYYY-MM-DD" | None,
+            "is_today":     bool,
+            "error":        str | None,
+        }
+    """
+    result: dict = {
+        "last_price": None, "last_price_d1": None, "last_price_d2": None,
+        "change_pct": None, "change_pct_d1": None,
+        "data_date": None, "data_date_d1": None, "data_date_d2": None,
+        "is_today": False,
+        "error": None,
+    }
+    today_tw = datetime.now(TW_TZ).date()
+
+    def _pick_near_month_tx_row(rows: list) -> dict | None:
+        """From the day's daily report, pick the near-month TX contract row.
+
+        TAIFEX returns rows with 'Contract' = "TX" (台指期), "MTX" (小台),
+        "TE" (電子), "TF" (金融) etc., plus various contract months. We want
+        the TX with the earliest expiration month (= near-month/active).
+        """
+        tx_rows = [r for r in rows if r and str(r.get("Contract", "")).strip().upper() == "TX"]
+        if not tx_rows:
+            return None
+        # Sort by ContractMonth (e.g. "202505" "202506") ascending.
+        try:
+            tx_rows.sort(key=lambda r: str(r.get("ContractMonth", "999999")))
+        except Exception:
+            pass
+        # Filter out 一般交易時段 vs 盤後交易時段 if 'TradingSession' present;
+        # prefer the 一般 (regular) session if it exists.
+        regular = [r for r in tx_rows if "一般" in str(r.get("TradingSession", ""))]
+        return regular[0] if regular else tx_rows[0]
+
+    try:
+        probe_days = 0
+        probe_date = today_tw
+        d_index = 0
+        while probe_days < 7 and d_index < 3:
+            yyyymmdd = probe_date.strftime("%Y/%m/%d")
+            # TAIFEX OpenAPI accepts a date param; if no date the endpoint
+            # returns the latest available day. We always pass a date so the
+            # walk-back logic works.
+            url = (
+                f"https://openapi.taifex.com.tw/v1/DailyMarketReportFut"
+                f"?date={probe_date.strftime('%Y%m%d')}"
+            )
+            try:
+                payload = _twse_request_json(url)
+                # TAIFEX returns a list directly, not {"data": [...]}.
+                # Our generic _twse_request_json wraps non-list payloads --
+                # account for both shapes.
+                if isinstance(payload, list):
+                    rows = payload
+                elif isinstance(payload, dict):
+                    rows = payload.get("data") or payload.get("Data") or []
+                else:
+                    rows = []
+                row = _pick_near_month_tx_row(rows) if rows else None
+                if row:
+                    last_price_str = str(row.get("LastPrice", "")).replace(",", "").strip()
+                    change_pct_str = str(row.get("ChangePercent", "")).replace(",", "").strip()
+                    iso_date = probe_date.strftime("%Y-%m-%d")
+                    try:
+                        last_price = float(last_price_str)
+                    except ValueError:
+                        last_price = None
+                    try:
+                        change_pct = float(change_pct_str)
+                    except ValueError:
+                        change_pct = None
+                    if last_price is not None:
+                        if d_index == 0:
+                            result["last_price"] = last_price
+                            result["change_pct"] = change_pct
+                            result["data_date"] = iso_date
+                            result["is_today"] = iso_date == today_tw.strftime("%Y-%m-%d")
+                        elif d_index == 1:
+                            result["last_price_d1"] = last_price
+                            result["change_pct_d1"] = change_pct
+                            result["data_date_d1"] = iso_date
+                        elif d_index == 2:
+                            result["last_price_d2"] = last_price
+                            result["data_date_d2"] = iso_date
+                        d_index += 1
+            except Exception:
+                pass  # try previous day
+            # walk back one biz day
+            probe_date -= timedelta(days=1)
+            while probe_date.weekday() >= 5:
+                probe_date -= timedelta(days=1)
+            probe_days += 1
+    except Exception as exc:
+        result["error"] = f"taifex: {type(exc).__name__}"
+
+    return result
 
 
 @st.cache_data(ttl=GLOBAL_REFERENCE_QUOTE_TTL_SECONDS)
@@ -9694,20 +10514,209 @@ def global_market_trend_state(window_return: float, recent_return: float) -> str
     return t("global_market_pullback")
 
 
+def _trend_emoji_for_state(state: str) -> str:
+    """v1.5.4: emoji prefix that matches global_market_trend_state output."""
+    if state == t("global_market_uptrend"):
+        return "📈"
+    if state == t("global_market_downtrend"):
+        return "📉"
+    return "↔️"
+
+
 def build_global_market_indicator(
     reference_data: pd.DataFrame | None,
     lens_meta: dict | None = None,
     live_quotes: dict[str, dict] | None = None,
+    market_scope: str | None = None,
 ) -> dict:
+    """v1.5.3: scope-aware. Builds a US-cards-only or TW-cards-only indicator
+    set depending on market_scope.
+
+    v1.5.4: All cards now carry D-1 (prior trading day) and D-2 (two trading
+    days ago) values plus a trend_emoji string. Cards built from yfinance
+    history use the closing prices in the series; TWSE/TAIFEX-derived cards
+    pull D-1/D-2 from the dedicated fetcher's result dict.
+    """
     period = (lens_meta or {}).get("period", DEFAULT_PERIOD)
     interval = (lens_meta or {}).get("interval", DEFAULT_INTERVAL)
+    market_scope = _normalize_market_scope(market_scope or "Taiwan only")
+    indices_for_scope = get_indices_for_scope(market_scope)
 
-    cards = []
+    cards: list[dict] = []
     up = down = 0
     live_quotes = live_quotes or {}
+    tw_aggregates: dict | None = None
+    taifex_quote: dict | None = None
 
-    for item in GLOBAL_REFERENCE_INDICES:
+    def _hist_close_at(series: pd.Series | None, offset_from_end: int) -> float:
+        """Return close N positions back from the most recent (0 = latest)."""
+        if series is None or series.empty:
+            return float("nan")
+        try:
+            idx = -1 - offset_from_end
+            if abs(idx) > len(series):
+                return float("nan")
+            return float(series.iloc[idx])
+        except Exception:
+            return float("nan")
+
+    for item in indices_for_scope:
         ticker = item["ticker"]
+
+        # ============== Sentinel: TAIFEX 台指期 ==============
+        if ticker == "TX=F":
+            if taifex_quote is None:
+                taifex_quote = fetch_taifex_futures_quote(
+                    datetime.now(TW_TZ).strftime("%Y-%m-%d")
+                )
+            last_price = taifex_quote.get("last_price")
+            change_pct = taifex_quote.get("change_pct")
+            change_pct_d1 = taifex_quote.get("change_pct_d1")
+            data_date = taifex_quote.get("data_date")
+            data_date_d1 = taifex_quote.get("data_date_d1")
+            data_date_d2 = taifex_quote.get("data_date_d2")
+            is_today = bool(taifex_quote.get("is_today"))
+            if last_price is None:
+                cards.append({
+                    "ticker": ticker,
+                    "label": t(item["label_key"]),
+                    "last_price": float("nan"),
+                    "window_return": float("nan"),
+                    "recent_return": float("nan"),
+                    "last_price_d1": float("nan"),
+                    "last_price_d2": float("nan"),
+                    "state": t("global_market_pullback"),
+                    "trend_emoji": "↔️",
+                    "is_pending": True,
+                    "data_date": data_date,
+                    "is_stale": not is_today,
+                })
+            else:
+                # State derived from change_pct (today's day move) + change_pct_d1 (yesterday)
+                state = global_market_trend_state(change_pct or 0, change_pct_d1 or 0)
+                if state == t("global_market_uptrend"):
+                    up += 1
+                elif state == t("global_market_downtrend"):
+                    down += 1
+                cards.append({
+                    "ticker": ticker,
+                    "label": t(item["label_key"]),
+                    "last_price": last_price,
+                    "window_return": change_pct if change_pct is not None else float("nan"),
+                    "recent_return": change_pct_d1 if change_pct_d1 is not None else float("nan"),
+                    "last_price_d1": taifex_quote.get("last_price_d1") or float("nan"),
+                    "last_price_d2": taifex_quote.get("last_price_d2") or float("nan"),
+                    "data_date_d1": data_date_d1,
+                    "data_date_d2": data_date_d2,
+                    "state": state,
+                    "trend_emoji": _trend_emoji_for_state(state),
+                    "is_pending": False,
+                    "data_date": data_date,
+                    "is_stale": not is_today,
+                })
+            continue
+
+        # ============== Sentinel: TWSE turnover ==============
+        if ticker == "__TWSE_TURNOVER__":
+            if tw_aggregates is None:
+                tw_aggregates = fetch_taiwan_market_aggregates(
+                    datetime.now(TW_TZ).strftime("%Y-%m-%d")
+                )
+            value = tw_aggregates.get("turnover_value")
+            change_pct = tw_aggregates.get("turnover_change_pct")
+            data_date = tw_aggregates.get("data_date")
+            if value is None:
+                cards.append({
+                    "ticker": ticker,
+                    "label": t(item["label_key"]),
+                    "last_price": float("nan"),
+                    "window_return": float("nan"),
+                    "recent_return": float("nan"),
+                    "last_price_d1": float("nan"),
+                    "last_price_d2": float("nan"),
+                    "state": t("global_market_pullback"),
+                    "trend_emoji": "↔️",
+                    "is_pending": True,
+                    "data_date": data_date,
+                })
+            else:
+                # State for turnover: increasing volume = "up" (more activity).
+                state = (
+                    t("global_market_uptrend") if (change_pct or 0) >= 5
+                    else t("global_market_downtrend") if (change_pct or 0) <= -5
+                    else t("global_market_pullback")
+                )
+                cards.append({
+                    "ticker": ticker,
+                    "label": t(item["label_key"]),
+                    "last_price": value,
+                    "last_price_unit": "億",
+                    "window_return": change_pct if change_pct is not None else float("nan"),
+                    "recent_return": float("nan"),  # not applicable
+                    "last_price_d1": tw_aggregates.get("turnover_d1") or float("nan"),
+                    "last_price_d2": tw_aggregates.get("turnover_d2") or float("nan"),
+                    "data_date_d1": tw_aggregates.get("data_date_d1"),
+                    "data_date_d2": tw_aggregates.get("data_date_d2"),
+                    "state": state,
+                    "trend_emoji": _trend_emoji_for_state(state),
+                    "is_pending": False,
+                    "data_date": data_date,
+                })
+            continue
+
+        # ============== Sentinel: TWSE foreign net ==============
+        if ticker == "__TWSE_FOREIGN_NET__":
+            if tw_aggregates is None:
+                tw_aggregates = fetch_taiwan_market_aggregates(
+                    datetime.now(TW_TZ).strftime("%Y-%m-%d")
+                )
+            value = tw_aggregates.get("foreign_net")
+            data_date = tw_aggregates.get("data_date")
+            is_today = bool(tw_aggregates.get("is_today"))
+            if value is None:
+                cards.append({
+                    "ticker": ticker,
+                    "label": t(item["label_key"]),
+                    "last_price": float("nan"),
+                    "window_return": float("nan"),
+                    "recent_return": float("nan"),
+                    "last_price_d1": float("nan"),
+                    "last_price_d2": float("nan"),
+                    "state": t("global_market_pullback"),
+                    "trend_emoji": "↔️",
+                    "is_pending": True,
+                    "data_date": data_date,
+                    "is_stale": not is_today,
+                })
+            else:
+                if value >= 0:
+                    state = t("global_market_uptrend")
+                    trend_emoji = "💰"
+                    up += 1
+                else:
+                    state = t("global_market_downtrend")
+                    trend_emoji = "💸"
+                    down += 1
+                cards.append({
+                    "ticker": ticker,
+                    "label": t(item["label_key"]),
+                    "last_price": value,
+                    "last_price_unit": "億",
+                    "window_return": float("nan"),
+                    "recent_return": float("nan"),
+                    "last_price_d1": tw_aggregates.get("foreign_net_d1") or float("nan"),
+                    "last_price_d2": tw_aggregates.get("foreign_net_d2") or float("nan"),
+                    "data_date_d1": tw_aggregates.get("data_date_d1"),
+                    "data_date_d2": tw_aggregates.get("data_date_d2"),
+                    "state": state,
+                    "trend_emoji": trend_emoji,
+                    "is_pending": False,
+                    "data_date": data_date,
+                    "is_stale": not is_today,
+                })
+            continue
+
+        # ============== Standard yfinance path (^TWII / ^IXIC / ^GSPC / ^DJI) ==============
         series, _ = get_price_series(reference_data, ticker)
         quote_snapshot = live_quotes.get(ticker, {}) if isinstance(live_quotes, dict) else {}
         live_price = coerce_float(quote_snapshot.get("price"))
@@ -9724,6 +10733,22 @@ def build_global_market_indicator(
         else:
             last_price = float("nan")
 
+        # v1.5.4: D-1 and D-2 closes pulled from the daily series.
+        # When live_price merged a today-bar onto base_series, D-1 = closes[-2]
+        # which is yesterday; D-2 = closes[-3]. When live_price is missing,
+        # series[-1] IS today's bar, so we shift D-1=series[-2], D-2=series[-3].
+        # The _hist_close_at helper handles the offset uniformly.
+        if not pd.isna(live_price) and live_series is not None:
+            # live merged: latest bar is today (from live), so D-1 is offset 1, D-2 is 2
+            last_price_d1 = _hist_close_at(live_series, 1)
+            last_price_d2 = _hist_close_at(live_series, 2)
+        else:
+            # no live bar; series[-1] is the latest available trading day
+            last_price_d1 = _hist_close_at(series, 1)
+            last_price_d2 = _hist_close_at(series, 2)
+
+        is_pending = pd.isna(last_price) and (series is None or series.empty)
+
         state = global_market_trend_state(window_return, recent_return)
         if state == t("global_market_uptrend"):
             up += 1
@@ -9735,13 +10760,18 @@ def build_global_market_indicator(
             "last_price": last_price,
             "window_return": window_return,
             "recent_return": recent_return,
+            "last_price_d1": last_price_d1,
+            "last_price_d2": last_price_d2,
             "state": state,
+            "trend_emoji": _trend_emoji_for_state(state),
+            "is_pending": is_pending,
         })
 
     total = len(cards)
-    if up >= 3:
+    threshold = 2 if total <= 3 else 3
+    if up >= threshold:
         breadth_copy = t("global_market_breadth_risk_on", up=up, total=total)
-    elif down >= 3:
+    elif down >= threshold:
         breadth_copy = t("global_market_breadth_risk_off", down=down, total=total)
     else:
         breadth_copy = t("global_market_breadth_mixed")
@@ -9761,30 +10791,136 @@ def render_global_market_indicator(indicator: dict):
     if not cards:
         return
 
-    card_html = "".join(
-        textwrap.dedent(
-            f"""
-            <div class="global-indicator-card">
-                <div class="global-indicator-card-top">
-                    <div class="global-indicator-label">{escape(card['label'])}</div>
-                    <div class="global-indicator-state-chip">{escape(card['state'])}</div>
-                </div>
-                <div class="global-indicator-value">{format_price(card['last_price'])}</div>
-                <div class="global-indicator-grid">
-                    <div>
-                        <div class="global-indicator-mini-label">{t("global_market_window_return")}</div>
-                        <div class="global-indicator-mini-value">{format_percent(card['window_return'])}</div>
-                    </div>
-                    <div>
-                        <div class="global-indicator-mini-label">{t("global_market_recent")}</div>
-                        <div class="global-indicator-mini-value">{format_percent(card['recent_return'])}</div>
-                    </div>
-                </div>
-            </div>
-            """
-        ).strip()
-        for card in cards
-    )
+    def _format_card_value(card: dict) -> str:
+        if card.get("is_pending"):
+            return f'<span class="global-indicator-pending">{escape(t("global_market_tw_data_pending"))}</span>'
+        unit = card.get("last_price_unit", "")
+        last_price = card.get("last_price")
+        if pd.isna(last_price):
+            return f'<span class="global-indicator-pending">{escape(t("global_market_tw_data_pending"))}</span>'
+        if unit:
+            try:
+                v = float(last_price)
+                sign = ""
+                if card.get("ticker") == "__TWSE_FOREIGN_NET__":
+                    sign = "+" if v > 0 else ""
+                return f"{sign}{v:,.0f} {escape(unit)}"
+            except Exception:
+                return format_price(last_price)
+        return format_price(last_price)
+
+    def _format_historical_value(value, unit: str, signed: bool = False) -> str:
+        """Format D-1/D-2 close/value, with same unit handling as the main."""
+        if pd.isna(value):
+            return "—"
+        if unit:
+            try:
+                v = float(value)
+                sign = ("+" if v > 0 else "") if signed else ""
+                return f"{sign}{v:,.0f} {escape(unit)}"
+            except Exception:
+                return format_price(value)
+        return format_price(value)
+
+    def _format_card_footer(card: dict) -> str:
+        data_date = card.get("data_date")
+        if data_date and card.get("is_stale"):
+            return (
+                f'<div class="global-indicator-stale-date">'
+                f'{escape(t("global_market_tw_as_of", date=data_date))}'
+                f'</div>'
+            )
+        if data_date and (card.get("ticker", "").startswith("__") or card.get("ticker") == "TX=F"):
+            return f'<div class="global-indicator-card-date">{escape(data_date)}</div>'
+        return ""
+
+    def _format_card_mini(card: dict, key: str, label_key: str) -> str:
+        value = card.get(key)
+        if pd.isna(value):
+            return ""
+        return (
+            f'<div>'
+            f'  <div class="global-indicator-mini-label">{t(label_key)}</div>'
+            f'  <div class="global-indicator-mini-value">{format_percent(value)}</div>'
+            f'</div>'
+        )
+
+    def _format_history_block(card: dict) -> str:
+        """v1.5.4: D-1 + D-2 closes/values shown side-by-side below the
+        window-return / recent-return mini stats.
+        """
+        d1 = card.get("last_price_d1")
+        d2 = card.get("last_price_d2")
+        if pd.isna(d1) and pd.isna(d2):
+            return ""
+        unit = card.get("last_price_unit", "")
+        signed = (card.get("ticker") == "__TWSE_FOREIGN_NET__")
+        d1_label = t("global_market_prev_day_close")
+        d2_label = t("global_market_prev2_day_close")
+        d1_date = card.get("data_date_d1")
+        d2_date = card.get("data_date_d2")
+        d1_date_html = (
+            f'<div class="global-indicator-history-date">{escape(d1_date)}</div>'
+            if d1_date else ""
+        )
+        d2_date_html = (
+            f'<div class="global-indicator-history-date">{escape(d2_date)}</div>'
+            if d2_date else ""
+        )
+        return (
+            f'<div class="global-indicator-history">'
+            f'  <div>'
+            f'    <div class="global-indicator-history-label">{escape(d1_label)}</div>'
+            f'    <div class="global-indicator-history-value">{_format_historical_value(d1, unit, signed)}</div>'
+            f'    {d1_date_html}'
+            f'  </div>'
+            f'  <div>'
+            f'    <div class="global-indicator-history-label">{escape(d2_label)}</div>'
+            f'    <div class="global-indicator-history-value">{_format_historical_value(d2, unit, signed)}</div>'
+            f'    {d2_date_html}'
+            f'  </div>'
+            f'</div>'
+        )
+
+    card_html_parts = []
+    for card in cards:
+        mini_window = _format_card_mini(card, "window_return", "global_market_window_return")
+        mini_recent = _format_card_mini(card, "recent_return", "global_market_recent")
+        grid_html = ""
+        if mini_window or mini_recent:
+            grid_html = (
+                f'<div class="global-indicator-grid">'
+                f'  {mini_window}'
+                f'  {mini_recent}'
+                f'</div>'
+            )
+        # v1.5.4: state chip now leads with trend emoji.
+        if not card.get("is_pending"):
+            emoji = card.get("trend_emoji", "")
+            emoji_prefix = f"{emoji} " if emoji else ""
+            chip_html = (
+                f'<div class="global-indicator-state-chip">'
+                f'{escape(emoji_prefix)}{escape(card["state"])}'
+                f'</div>'
+            )
+        else:
+            chip_html = ""
+        history_html = _format_history_block(card)
+        card_html_parts.append(
+            f'<div class="global-indicator-card">'
+            f'  <div class="global-indicator-card-top">'
+            f'    <div class="global-indicator-label">{escape(card["label"])}</div>'
+            f'    {chip_html}'
+            f'  </div>'
+            f'  <div class="global-indicator-value">{_format_card_value(card)}</div>'
+            f'  {grid_html}'
+            f'  {history_html}'
+            f'  {_format_card_footer(card)}'
+            f'</div>'
+        )
+    card_html = "".join(card_html_parts)
+
+    indices_summary = " · ".join(card["label"] for card in cards)
 
     shell_html = textwrap.dedent(
         f"""
@@ -9801,7 +10937,7 @@ def render_global_market_indicator(indicator: dict):
                         <span class="global-indicator-pill">{t("global_market_window")}: {escape(indicator["period"])} / {escape(indicator["interval"])}</span>
                     </div>
                     <div class="global-indicator-pill-row global-indicator-pill-row-tight">
-                        <span class="global-indicator-pill">{t("global_market_indicator")}: NASDAQ · S&P 500 · Dow · TAIEX</span>
+                        <span class="global-indicator-pill">{t("global_market_indicator")}: {escape(indices_summary)}</span>
                     </div>
                 </div>
             </div>
@@ -12731,6 +13867,53 @@ def inject_css():
             text-align: left;
         }
 
+        /* v1.5.3 additions: pending placeholder + stale-date footer */
+        .global-indicator-pending {
+            color: rgba(255,255,255,0.45);
+            font-size: 1rem;
+            font-style: italic;
+            font-weight: 500;
+        }
+        .global-indicator-stale-date {
+            font-size: 0.72rem;
+            color: rgba(245,158,11,0.72);
+            margin-top: 0.45rem;
+            font-style: italic;
+        }
+        .global-indicator-card-date {
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.38);
+            margin-top: 0.4rem;
+            text-align: right;
+        }
+
+        /* v1.5.4 additions: D-1 / D-2 history block + emoji-led chip */
+        .global-indicator-history {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.6rem;
+            margin-top: 0.65rem;
+            padding-top: 0.55rem;
+            border-top: 1px dashed rgba(255,255,255,0.08);
+        }
+        .global-indicator-history-label {
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.5);
+            margin-bottom: 0.18rem;
+            letter-spacing: 0.04em;
+        }
+        .global-indicator-history-value {
+            font-size: 0.95rem;
+            color: rgba(255,255,255,0.82);
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        .global-indicator-history-date {
+            font-size: 0.66rem;
+            color: rgba(255,255,255,0.36);
+            margin-top: 0.18rem;
+        }
+
         .scenario-single-grid {
             grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
             align-items: start;
@@ -13486,9 +14669,13 @@ def render_expander_meta(section: str, item_count: int | None, helper_base: str)
     )
     render_html_block(meta_html)
 
-# ---------------------------
-# Data Fetch
-# ---------------------------
+# ============================================================================
+# § 10. YFINANCE DATA FETCHERS
+# ============================================================================
+# Two cached fetchers feed the rest of the dashboard. fetch_daily_data is the
+# 1Y/1D backbone for trend lens charts; fetch_intraday_data is the 1D/1m feed
+# for live-quote refresh.
+#
 # v1.4.1: bumped TTL from 300s -> 1800s (30 min) for daily and 120s -> 600s
 # (10 min) for intraday. Rationale: yfinance bulk download for 30-80 tickers
 # costs 5-12 seconds cold; the previous TTL meant nearly every re-entry to
@@ -21726,6 +22913,15 @@ def render_active_etf_pair_comparison_legacy(left_ticker: str, right_ticker: str
 
 
 
+# ============================================================================
+# § 11. ACTIVE ETF LAB — DASHBOARD ENTRY
+# ============================================================================
+# Render the Active ETF Lab mode. This skips the Decision Cockpit (it's the
+# only mode that does) because the entire layout is dedicated to active-ETF
+# tracker / pair-compare / underlying-signal panels. Heavy lifting:
+#   - workspace render: per-ETF holdings panel, official payload, pair compare
+#   - prefetch restore: tries Supabase snapshots before live yfinance fetch
+#   - underlying signal: foreign net + news per top holding
 def render_active_etf_lab_dashboard(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -23596,6 +24792,13 @@ def render_supply_chain_sidebar_selector(selected_lang: str) -> tuple[list[str],
     return tickers, selected_groups
 
 
+# ============================================================================
+# § 12. SUPPLY CHAIN LAB — DASHBOARD ENTRY
+# ============================================================================
+# Render the Supply Chain Lab mode. Renders the Decision Cockpit at top, then
+# zoom-in panels per chain group (Memory / Robotics / LEO / ABF / Packaging-
+# Test). Each group has its own catalog (defined in § 2 above) and renders
+# overall stats + per-stock breakdown.
 def render_supply_chain_lab_dashboard(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -25824,6 +27027,66 @@ def _cockpit_minify_html(html_text: str) -> str:
     return " ".join(line.strip() for line in html_text.split("\n") if line.strip())
 
 
+def _build_cockpit_loading_html(lang_zh: bool, *, sub_message: str | None = None) -> str:
+    """Build the loading-placeholder HTML for the Decision Cockpit.
+
+    v1.4.7: Extracted into its own helper so it can be rendered at the
+    earliest moment of generate_dashboard (before market data fetches
+    even start) -- so the user always sees "今天市場決策主線預備中"
+    regardless of whether the slow step is yfinance, the underlying signal
+    fetch, or a TWSE flow lookup.
+
+    Args:
+        lang_zh: True for Traditional Chinese, False for English.
+        sub_message: Optional override for the sub-line under the title.
+            When None, a sensible default is shown that hints at compiling
+            top movers / chains / ETFs.
+    """
+    title_text = "今天市場決策主線預備中" if lang_zh else "Preparing today's market decision spine"
+    if sub_message is None:
+        sub_message = (
+            "整理盤前焦點、最強題材、主動權好股…請稍候 1–3 秒。"
+            if lang_zh else
+            "Compiling pre-market focus, strongest themes, and active ETFs… 1–3 seconds."
+        )
+    return (
+        f'<div class="cockpit-shell cockpit-loading-shell">'
+        f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>DECISION COCKPIT</div>'
+        f'  <div class="cockpit-loading-row">'
+        f'    <div class="cockpit-loading-spinner"></div>'
+        f'    <div class="cockpit-loading-text">'
+        f'      <div class="cockpit-loading-title">'
+        f'        {escape(title_text)}<span class="cockpit-loading-dots"><span>.</span><span>.</span><span>.</span></span>'
+        f'      </div>'
+        f'      <div class="cockpit-loading-sub">{escape(sub_message)}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="cockpit-loading-skeleton">'
+        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 90px;"></div>'
+        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 110px;"></div>'
+        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 220px;"></div>'
+        f'  </div>'
+        f'</div>'
+    )
+
+
+def render_cockpit_loading_placeholder(lang_zh: bool, *, sub_message: str | None = None):
+    """Render the cockpit loading placeholder and return the st.empty()
+    handle so callers can clear it later via .empty().
+
+    Designed to be called BEFORE any heavy data fetch so the loading
+    message is visible from the very first paint. Pair with .empty() once
+    real content is ready.
+    """
+    _cockpit_inject_css()
+    placeholder = st.empty()
+    placeholder.markdown(
+        _cockpit_minify_html(_build_cockpit_loading_html(lang_zh, sub_message=sub_message)),
+        unsafe_allow_html=True,
+    )
+    return placeholder
+
+
 def _cockpit_compute_q1_verdict(top_movers: list[dict], chain_rankings: list[dict],
                                 lang_zh: bool) -> dict:
     """Synthesise Q1 'can we trade today?' from existing dashboard signals.
@@ -27308,6 +28571,26 @@ def _cockpit_render_q5_html(reviews: list[dict], lang_zh: bool) -> str:
     return f'<div class="cockpit-q5-grid">{cards_html}</div>'
 
 
+# ============================================================================
+# § 21. DECISION COCKPIT — MAIN ENTRY
+# ============================================================================
+# render_decision_cockpit orchestrates the entire 5-question decision spine:
+#
+#   1. Show loading placeholder (or accept one passed in from caller)
+#   2. Run all builders:
+#       - top_movers     (build_home_news_top_taiwan_movers)
+#       - chain_rankings (build_home_news_supply_chain_rankings)
+#       - active_etfs    (build_home_news_active_etf_spotlight)
+#   3. Compute Q1 verdict + Q4 chase/wait/avoid signal
+#   4. Clear the loading placeholder
+#   5. Render the cockpit shell: kicker → title → onboarding → Q1-Q4
+#   6. Render Q5 (separate Streamlit text_area + observation cards)
+#
+# This function deliberately does no fetching of its own -- daily_data,
+# intraday_data, dashboard_tickers, lens_meta come from generate_dashboard.
+# The underlying-signal call inside _cockpit_pick_reasons IS a fetch (cached
+# 30 min, timeout-guarded at 1.5s) but uses already-warmed caches in steady
+# state.
 def render_decision_cockpit(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -27316,6 +28599,8 @@ def render_decision_cockpit(
     *,
     dashboard_mode: str,
     selected_supply_chain_groups: list[str],
+    existing_loading_placeholder=None,
+    skip_loading_placeholder: bool = False,
 ) -> None:
     """Render the 5-question Decision Cockpit at the top of the dashboard.
 
@@ -27325,44 +28610,35 @@ def render_decision_cockpit(
 
     v1.4.5: shows a "preparing the market decision spine" loading placeholder
     immediately on first paint, then replaces it with the real cockpit once
-    all builders return. This gives the user clear feedback that the page is
-    actively working, instead of staring at a blank space for 2-5 seconds
-    while builders + underlying-signal fetches resolve.
+    all builders return.
+
+    v1.4.7:
+        * ``existing_loading_placeholder``: reuse a placeholder created by
+          ``render_cockpit_loading_placeholder()`` earlier in the request
+          lifecycle (e.g. before market-data fetches). The cockpit will
+          .empty() this handle once builders are done.
+        * ``skip_loading_placeholder``: pass True when the caller has already
+          shown a loading state for the entire load lifecycle and cleared
+          it before calling this function. Avoids a brief second flash of
+          loading skeleton when the cockpit's own work is fast.
     """
     lang_zh = _news_briefing_is_zh()
     _cockpit_inject_css()
 
-    # ---- Loading placeholder (shown until all builders return) ----
-    # We use st.empty() so we can swap the skeleton for the real cockpit
-    # in-place rather than rendering both stacked. Important: any HTML
-    # injected via the placeholder gets cleared by .empty() at the end.
-    loading_placeholder = st.empty()
-    loading_title = "今天市場決策主線預備中" if lang_zh else "Preparing today's market decision spine"
-    loading_subtext = (
-        "整理盤前焦點、最強題材、主動權好股…請稍候 1–3 秒。"
-        if lang_zh else
-        "Compiling pre-market focus, strongest themes, and active ETFs… 1–3 seconds."
-    )
-    loading_html = (
-        f'<div class="cockpit-shell cockpit-loading-shell">'
-        f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>DECISION COCKPIT</div>'
-        f'  <div class="cockpit-loading-row">'
-        f'    <div class="cockpit-loading-spinner"></div>'
-        f'    <div class="cockpit-loading-text">'
-        f'      <div class="cockpit-loading-title">'
-        f'        {escape(loading_title)}<span class="cockpit-loading-dots"><span>.</span><span>.</span><span>.</span></span>'
-        f'      </div>'
-        f'      <div class="cockpit-loading-sub">{escape(loading_subtext)}</div>'
-        f'    </div>'
-        f'  </div>'
-        f'  <div class="cockpit-loading-skeleton">'
-        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 90px;"></div>'
-        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 110px;"></div>'
-        f'    <div class="cockpit-loading-bar shimmer" style="width: 100%; height: 220px;"></div>'
-        f'  </div>'
-        f'</div>'
-    )
-    loading_placeholder.markdown(_cockpit_minify_html(loading_html), unsafe_allow_html=True)
+    # ---- Loading placeholder ----
+    # Three modes:
+    #   1. Caller passed an existing placeholder -> reuse + clear at end
+    #   2. Caller said skip_loading_placeholder=True -> render nothing, no clear
+    #   3. Standalone use -> create our own
+    loading_placeholder = None
+    if existing_loading_placeholder is not None:
+        loading_placeholder = existing_loading_placeholder
+    elif not skip_loading_placeholder:
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown(
+            _cockpit_minify_html(_build_cockpit_loading_html(lang_zh)),
+            unsafe_allow_html=True,
+        )
 
     # ---- Heavy lifting: builders + verdict computation ----
     top_movers = build_home_news_top_taiwan_movers(
@@ -27384,7 +28660,10 @@ def render_decision_cockpit(
 
     # Now that all the heavy work is done, clear the loading placeholder
     # before rendering the real cockpit. This makes the swap feel instant.
-    loading_placeholder.empty()
+    # Guard with `if`: when skip_loading_placeholder=True the caller is
+    # responsible for the loading lifecycle and we must NOT touch it here.
+    if loading_placeholder is not None:
+        loading_placeholder.empty()
 
     onboarding_html = ""
     if not st.session_state.get(COCKPIT_ONBOARDING_FLAG_KEY, False):
@@ -27641,9 +28920,9 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
     # render_top_dashboard_selectors). We just read the session_state value
     # the top picker writes; downstream code (scope_group_options below,
     # ticker filters, etc.) is unchanged.
-    selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    selected_market_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
     if selected_market_scope not in MARKET_SCOPE_OPTIONS:
-        selected_market_scope = "Mixed (U.S. + Taiwan)"
+        selected_market_scope = "Taiwan only"
 
 
     scope_group_options = market_scope_group_options(selected_market_scope)
@@ -28487,7 +29766,7 @@ def render_active_etf_news_scoreboard(bundles: list[dict], lens_meta: dict | Non
 
 def render_active_etf_sidebar_selector(selected_lang: str) -> tuple[list[str], str, list[str], str, str]:
     is_zh = selected_lang == "繁體中文"
-    selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+    selected_market_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
     selected_groups = [
         group
         for group in st.session_state.get("dashboard_selected_groups", [])
@@ -33685,6 +34964,25 @@ TRANSLATIONS["繁體中文"].update({
     "taiwan_options_zone_unfavorable_put": "台指期仍高於履約價，賣權仍在較不利區。"
 })
 
+# ============================================================================
+# § 25. ENTRY POINT — generate_dashboard()
+# ============================================================================
+# This is the top-level Streamlit function that runs on every page render.
+# Order of operations:
+#
+#   1. Auth DB init + sidebar setup (theme, language sync)
+#   2. Top selectors (Language / Mode / Scope) [§ 7]
+#   3. Trend lens widget (period + interval) [§ 8]
+#   4. Watchlist resolution per dashboard_mode
+#   5. (non-Active-ETF-Lab modes only) Loading placeholder [§ 16]
+#   6. Snapshot restore for Active ETF Lab; otherwise live fetch [§ 10]
+#   7. (non-Active-ETF-Lab modes) Render Global Market Indicator [§ 9]
+#   8. (non-Active-ETF-Lab modes) Render Decision Cockpit [§ 21]
+#   9. (non-Active-ETF-Lab modes) Render Editor Analysis block [§ 22]
+#  10. Mode-specific layout:
+#       - Active ETF Lab        → render_active_etf_lab_dashboard [§ 11]
+#       - Supply Chain Lab      → render_supply_chain_lab_dashboard [§ 12]
+#       - General Market (else) → render_general_market_dashboard_layout [§ 4]
 def generate_dashboard():
     init_auth_db()
     with st.sidebar:
@@ -33700,41 +34998,29 @@ def generate_dashboard():
     inject_layout_profile_overrides()
 
     with st.sidebar:
-        # v1.3.9: Language and Dashboard mode pickers moved to the top of the
-        # page (see render_top_dashboard_selectors). Reading session_state
-        # here keeps downstream sidebar widgets / labels in sync.
-        selected_lang = st.session_state.get("dashboard_language", "English")
+        # v1.5.0: Theme Mode picker REMOVED -- dashboard now permanently uses
+        # Dark Horizon. The session_state key is still set so any cached CSS
+        # injection that reads it gets a sensible default.
+        st.session_state["dashboard_theme_mode"] = "Dark Horizon"
+        inject_horizon_theme_mode_overrides("Dark Horizon")
+
+        # v1.5.0: Workspace Mode picker REMOVED from sidebar -- it's now the
+        # "Experience Level" buttons in the top Hero Bar (see
+        # render_top_dashboard_selectors). Reading session_state here keeps
+        # downstream sidebar widgets / labels in sync.
+        selected_lang = st.session_state.get("dashboard_language", "繁體中文")
         if selected_lang not in LANGUAGE_OPTIONS:
             selected_lang = "English"
-
-        current_theme_mode = st.session_state.get("dashboard_theme_mode", "Dark Horizon")
-        if current_theme_mode not in THEME_MODE_OPTIONS:
-            current_theme_mode = "Dark Horizon"
-        selected_theme_mode = st.selectbox(
-            t("theme_mode"),
-            options=list(THEME_MODE_OPTIONS.keys()),
-            index=list(THEME_MODE_OPTIONS.keys()).index(current_theme_mode),
-            format_func=theme_mode_label,
-        )
-        st.session_state["dashboard_theme_mode"] = selected_theme_mode
-        st.caption(t("theme_mode_note"))
-        inject_horizon_theme_mode_overrides(selected_theme_mode)
 
         selected_dashboard_mode = st.session_state.get("dashboard_mode", "General Market")
         if selected_dashboard_mode not in DASHBOARD_MODE_OPTIONS:
             selected_dashboard_mode = "General Market"
 
-        current_layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
-        if current_layout_mode not in DASHBOARD_LAYOUT_OPTIONS:
-            current_layout_mode = "Advanced"
-        selected_layout_mode = st.selectbox(
-            dashboard_layout_kicker(),
-            options=DASHBOARD_LAYOUT_OPTIONS,
-            index=DASHBOARD_LAYOUT_OPTIONS.index(current_layout_mode),
-            format_func=dashboard_layout_label,
-        )
-        st.session_state["dashboard_layout_mode"] = selected_layout_mode
-        st.caption(dashboard_layout_note())
+        # Layout mode is driven by the Hero Bar's Experience Level buttons.
+        selected_layout_mode = st.session_state.get("dashboard_layout_mode", "Advanced")
+        if selected_layout_mode not in DASHBOARD_LAYOUT_OPTIONS:
+            selected_layout_mode = "Advanced"
+            st.session_state["dashboard_layout_mode"] = selected_layout_mode
 
         current_device_control = st.session_state.get("dashboard_device_control_mode", "Auto detect")
         if current_device_control not in DEVICE_CONTROL_OPTIONS:
@@ -33809,7 +35095,7 @@ def generate_dashboard():
             unsafe_allow_html=True,
         )
 
-        selected_market_scope = st.session_state.get("dashboard_market_scope", "Mixed (U.S. + Taiwan)")
+        selected_market_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
         selected_groups = list(st.session_state.get("dashboard_selected_groups", MARKET_SCOPE_DEFAULT_GROUPS[selected_market_scope]))
         selected_supply_chain_groups = list(st.session_state.get("dashboard_supply_chain_groups", SUPPLY_CHAIN_FOCUS_ORDER))
         custom_ticker_text = str(st.session_state.get("dashboard_custom_symbols", "")).strip()
@@ -33956,7 +35242,9 @@ def generate_dashboard():
             {
                 "mode": selected_dashboard_mode,
                 "lang": selected_lang,
-                "theme": selected_theme_mode,
+                # v1.5.0: theme picker removed; always Dark Horizon. Read from
+                # session_state which is forced to "Dark Horizon" earlier.
+                "theme": st.session_state.get("dashboard_theme_mode", "Dark Horizon"),
                 "layout": selected_layout_mode,
                 "devicectl": selected_device_control,
                 "device": selected_device_mode,
@@ -34036,6 +35324,25 @@ def generate_dashboard():
             st.warning(t("please_select_ticker"))
         return
 
+    # v1.4.7: For non-Active-ETF-Lab modes, render the cockpit loading
+    # placeholder BEFORE any heavy fetches. This guarantees the "今天市場
+    # 決策主線預備中" message is visible from the very first paint, even
+    # when the slow step is yfinance market-data fetch (5-12s on cold
+    # start) rather than the cockpit builders themselves. The placeholder
+    # is later passed into render_decision_cockpit, which reuses it and
+    # clears it once real content is ready -- so users see ONE continuous
+    # loading state, not two flashes.
+    cockpit_loading_placeholder = None
+    if dashboard_mode != "Active ETF Lab":
+        cockpit_loading_placeholder = render_cockpit_loading_placeholder(
+            lang_zh=_news_briefing_is_zh(),
+            sub_message=(
+                "正在抓取今日行情、主動式 ETF 與供應鏈訊號…請稍候 3–8 秒。"
+                if _news_briefing_is_zh() else
+                "Fetching market data, active ETF flow, and supply-chain signals… 3–8 seconds."
+            ),
+        )
+
     # v1.3.7: For Active ETF Lab, try to reconstruct daily / intraday frames
     # from prefetched workspace snapshots first. This avoids 3-8s of yfinance
     # latency on first paint when prefetch is healthy. We fall back to the
@@ -34057,10 +35364,23 @@ def generate_dashboard():
             intraday_data = fetch_intraday_data(dashboard_tickers)
 
     if daily_data is None or daily_data.empty:
+        # Clear the cockpit loading placeholder before showing the error so
+        # the user doesn't see both a "preparing..." skeleton and an error
+        # message stacked.
+        if cockpit_loading_placeholder is not None:
+            cockpit_loading_placeholder.empty()
         st.error(t("no_market_data"))
         return
 
     if dashboard_mode != "Active ETF Lab":
+        # v1.4.7: At this point market data is loaded. Clear the cockpit
+        # loading placeholder NOW so the global market indicator + cockpit
+        # render in the natural top-down order. The cockpit builders are
+        # fast (use already-loaded data + 30 min caches), so going from
+        # "loading..." to a fully-painted cockpit feels near-instant.
+        if cockpit_loading_placeholder is not None:
+            cockpit_loading_placeholder.empty()
+
         # v1.4.6: Render the Global Market Indicator ABOVE the Decision
         # Cockpit so users see baseline breadth (NASDAQ / S&P / DOW / TAIEX)
         # before the 5-question spine. This used to live inside the
@@ -34068,18 +35388,31 @@ def generate_dashboard():
         # so it's visible regardless of which tab they're on. The duplicate
         # call inside render_general_market_layout has been removed.
         global_reference_data = fetch_global_reference_data(period, interval)
-        global_reference_quotes = fetch_live_reference_quotes(
-            tuple(item["ticker"] for item in GLOBAL_REFERENCE_INDICES)
+        # v1.5.3: only fetch live quotes for tickers we'll actually display.
+        # TWSE sentinel symbols (__TWSE_*) get fetched separately inside
+        # build_global_market_indicator.
+        scope_for_indicator = st.session_state.get("dashboard_market_scope", "Taiwan only")
+        scope_indices = get_indices_for_scope(scope_for_indicator)
+        live_quote_tickers = tuple(
+            item["ticker"] for item in scope_indices
+            if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
         )
+        global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
         global_indicator = build_global_market_indicator(
             global_reference_data,
             lens_meta=lens_meta,
             live_quotes=global_reference_quotes,
+            market_scope=scope_for_indicator,
         )
         render_global_market_indicator(global_indicator)
 
-        # v1.4.0: Decision Cockpit -- the 5-question decision spine. Reuses
-        # the same builders the briefing below uses, so no extra fetches.
+        # v1.4.0: Decision Cockpit -- the 5-question decision spine.
+        # v1.4.7: We already showed AND cleared a top-of-page loading
+        # placeholder above for the entire fetch lifecycle. Pass
+        # skip_loading_placeholder=True so the cockpit doesn't briefly
+        # re-flash its own loading skeleton between the global indicator
+        # and the real cockpit content (the cockpit's own builder phase is
+        # fast since the heavy data is already in cache).
         render_decision_cockpit(
             daily_data,
             intraday_data,
@@ -34087,6 +35420,7 @@ def generate_dashboard():
             lens_meta,
             dashboard_mode=dashboard_mode,
             selected_supply_chain_groups=selected_supply_chain_groups,
+            skip_loading_placeholder=True,
         )
         # v1.4.2: News Briefing's three auto-summary cards (TOP 5 stocks /
         # supply chain / active ETF spotlight) have been absorbed into Q3 of
