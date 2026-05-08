@@ -6363,9 +6363,12 @@ GLOBAL_REFERENCE_INDICES_US = [
 
 GLOBAL_REFERENCE_INDICES_TW = [
     {"ticker": "^TWII", "label_key": "global_market_taiex"},
-    # TX=F is the active Taiwan futures continuous contract on yfinance.
-    # When yfinance doesn't return data we render a placeholder card.
-    {"ticker": "TX=F",  "label_key": "global_market_tw_futures"},
+    # v1.5.5: Use IX0126.TW (TIP TAIFEX TAIEX Futures Index) — Yahoo Finance's
+    # official Taiwan Futures rolling near-month index. Reliable and works on
+    # both Streamlit Cloud and GitHub Actions. Replaces the unreliable TX=F
+    # ticker and the brittle TAIFEX OpenAPI fetcher (kept in code as
+    # fetch_taifex_futures_quote() but no longer called from this card).
+    {"ticker": "IX0126.TW",  "label_key": "global_market_tw_futures"},
     # Synthetic markers handled below by special-case fetchers in
     # build_global_market_indicator. These tickers are NOT yfinance symbols,
     # they're sentinels we recognise to call TWSE APIs instead.
@@ -10173,12 +10176,11 @@ def benchmark_delta_label(value: float) -> str:
 
 @st.cache_data(ttl=300)
 def fetch_global_reference_data(period: str, interval: str):
-    # v1.5.3/v1.5.4: still fetch real yfinance indices (not just
-    # scope-relevant) so switching scope doesn't trigger re-fetch.
-    # Skip TWSE sentinel tickers AND TX=F (handled by fetch_taifex_futures_quote).
+    # v1.5.3-1.5.5: yfinance fetch for all real tickers; skip TWSE sentinels.
+    # IX0126.TW (台指期 Yahoo index) IS yfinance-fetchable so it stays in.
     yfinance_tickers = [
         item["ticker"] for item in GLOBAL_REFERENCE_INDICES
-        if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
+        if not item["ticker"].startswith("__")
     ]
     return fetch_daily_data(yfinance_tickers, period, interval)
 
@@ -10735,58 +10737,11 @@ def build_global_market_indicator(
     for item in indices_for_scope:
         ticker = item["ticker"]
 
-        # ============== Sentinel: TAIFEX 台指期 ==============
-        if ticker == "TX=F":
-            if taifex_quote is None:
-                taifex_quote = fetch_taifex_futures_quote(
-                    datetime.now(TW_TZ).strftime("%Y-%m-%d")
-                )
-            last_price = taifex_quote.get("last_price")
-            change_pct = taifex_quote.get("change_pct")
-            change_pct_d1 = taifex_quote.get("change_pct_d1")
-            data_date = taifex_quote.get("data_date")
-            data_date_d1 = taifex_quote.get("data_date_d1")
-            data_date_d2 = taifex_quote.get("data_date_d2")
-            is_today = bool(taifex_quote.get("is_today"))
-            if last_price is None:
-                cards.append({
-                    "ticker": ticker,
-                    "label": t(item["label_key"]),
-                    "last_price": float("nan"),
-                    "window_return": float("nan"),
-                    "recent_return": float("nan"),
-                    "last_price_d1": float("nan"),
-                    "last_price_d2": float("nan"),
-                    "state": t("global_market_pullback"),
-                    "trend_emoji": "↔️",
-                    "is_pending": True,
-                    "data_date": data_date,
-                    "is_stale": not is_today,
-                })
-            else:
-                # State derived from change_pct (today's day move) + change_pct_d1 (yesterday)
-                state = global_market_trend_state(change_pct or 0, change_pct_d1 or 0)
-                if state == t("global_market_uptrend"):
-                    up += 1
-                elif state == t("global_market_downtrend"):
-                    down += 1
-                cards.append({
-                    "ticker": ticker,
-                    "label": t(item["label_key"]),
-                    "last_price": last_price,
-                    "window_return": change_pct if change_pct is not None else float("nan"),
-                    "recent_return": change_pct_d1 if change_pct_d1 is not None else float("nan"),
-                    "last_price_d1": taifex_quote.get("last_price_d1") or float("nan"),
-                    "last_price_d2": taifex_quote.get("last_price_d2") or float("nan"),
-                    "data_date_d1": data_date_d1,
-                    "data_date_d2": data_date_d2,
-                    "state": state,
-                    "trend_emoji": _trend_emoji_for_state(state),
-                    "is_pending": False,
-                    "data_date": data_date,
-                    "is_stale": not is_today,
-                })
-            continue
+        # v1.5.5: Removed TX=F special-case branch -- the 台指期 card now uses
+        # IX0126.TW (TIP TAIFEX TAIEX Futures Index) which goes through the
+        # standard yfinance path at the bottom of this loop. The
+        # fetch_taifex_futures_quote() helper is preserved in code for future
+        # use but is no longer called here.
 
         # ============== Sentinel: TWSE turnover ==============
         if ticker == "__TWSE_TURNOVER__":
@@ -11002,7 +10957,7 @@ def render_global_market_indicator(indicator: dict):
                 f'{escape(t("global_market_tw_as_of", date=data_date))}'
                 f'</div>'
             )
-        if data_date and (card.get("ticker", "").startswith("__") or card.get("ticker") == "TX=F"):
+        if data_date and (card.get("ticker", "").startswith("__") or card.get("ticker") in ("TX=F", "IX0126.TW")):
             return f'<div class="global-indicator-card-date">{escape(data_date)}</div>'
         return ""
 
@@ -35591,7 +35546,7 @@ def generate_dashboard():
             scope_indices = get_indices_for_scope(scope_for_indicator)
             live_quote_tickers = tuple(
                 item["ticker"] for item in scope_indices
-                if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
+                if not item["ticker"].startswith("__")
             )
             global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
             global_indicator = build_global_market_indicator(
