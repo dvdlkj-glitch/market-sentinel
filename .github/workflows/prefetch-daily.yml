@@ -1,0 +1,51 @@
+name: Daily Main Dashboard Prefetch
+
+# Runs every weekday at 22:00 UTC = 06:00 Taiwan next day.
+# Workflow_dispatch allows manual trigger from the GitHub Actions tab.
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  prefetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install only what the prefetch job needs. Mirrors the dashboard's
+          # core deps; if your requirements.txt has heavy extras (jupyter,
+          # dev tools, etc.) those don't get installed.
+          pip install streamlit pandas numpy yfinance altair
+
+      - name: Run prefetch job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Override if your dashboard file has a different name:
+          DASHBOARD_MODULE_PATH: stock_dashboard_web_enhanced_v5_live_news.py
+        run: |
+          python prefetch_main_dashboard_job.py
+
+      - name: Show recent snapshots (debug)
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s "${SUPABASE_URL}/rest/v1/main_dashboard_snapshot?select=snapshot_date,market_scope,snapshot_at&order=snapshot_at.desc&limit=4" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            || echo "(snapshot read failed; that's OK for first run)"
