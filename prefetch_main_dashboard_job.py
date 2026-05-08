@@ -142,9 +142,10 @@ def build_snapshot_for_scope(mod, market_scope: str) -> dict:
         )
         # Live quotes only for the scope-relevant tickers
         scope_indices = mod.get_indices_for_scope(market_scope)
+        # v1.5.5: TX=F removed; IX0126.TW now uses standard yfinance path.
         live_tickers = tuple(
             item["ticker"] for item in scope_indices
-            if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
+            if not item["ticker"].startswith("__")
         )
         live_quotes = mod.fetch_live_reference_quotes(live_tickers)
         indicator = mod.build_global_market_indicator(
