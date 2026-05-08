@@ -6363,17 +6363,17 @@ GLOBAL_REFERENCE_INDICES_US = [
 
 GLOBAL_REFERENCE_INDICES_TW = [
     {"ticker": "^TWII", "label_key": "global_market_taiex"},
-    # v1.5.5: Use IX0126.TW (TIP TAIFEX TAIEX Futures Index) — Yahoo Finance's
-    # official Taiwan Futures rolling near-month index. Reliable and works on
-    # both Streamlit Cloud and GitHub Actions. Replaces the unreliable TX=F
-    # ticker and the brittle TAIFEX OpenAPI fetcher (kept in code as
-    # fetch_taifex_futures_quote() but no longer called from this card).
-    {"ticker": "IX0126.TW",  "label_key": "global_market_tw_futures"},
+    # v1.6.0: TX=F + IX0126.TW both removed -- 台指期 fetcher proved
+    # unreliable (TX=F empty / IX0126.TW is TR index with confusing scale).
+    # Replaced with breakdown of 三大法人 (foreign + trust + dealer) which
+    # has the same TWSE BFI82U fetcher as before but parsing all 3 rows.
     # Synthetic markers handled below by special-case fetchers in
     # build_global_market_indicator. These tickers are NOT yfinance symbols,
     # they're sentinels we recognise to call TWSE APIs instead.
-    {"ticker": "__TWSE_TURNOVER__",     "label_key": "global_market_tw_turnover"},
-    {"ticker": "__TWSE_FOREIGN_NET__",  "label_key": "global_market_tw_foreign"},
+    {"ticker": "__TWSE_TURNOVER__",         "label_key": "global_market_tw_turnover"},
+    {"ticker": "__TWSE_FOREIGN_NET__",      "label_key": "global_market_tw_foreign"},
+    {"ticker": "__TWSE_TRUST_NET__",        "label_key": "global_market_tw_trust"},
+    {"ticker": "__TWSE_DEALER_NET__",       "label_key": "global_market_tw_dealer"},
 ]
 
 # Backwards-compat: legacy code that imports GLOBAL_REFERENCE_INDICES gets the
@@ -6743,9 +6743,10 @@ TRANSLATIONS["English"].update({
     "global_market_sp500": "S&P 500",
     "global_market_dow": "Dow Jones",
     "global_market_taiex": "TAIEX",
-    "global_market_tw_futures": "TW Futures",
     "global_market_tw_turnover": "TAIEX Turnover",
-    "global_market_tw_foreign": "Foreign Net Total",
+    "global_market_tw_foreign": "Foreign Net",
+    "global_market_tw_trust": "Investment Trust Net",
+    "global_market_tw_dealer": "Dealer Net",
     "global_market_tw_data_pending": "Data pending",
     "global_market_tw_as_of": "As of {date}",
     "global_market_prev_day_close": "Prev close",
@@ -6771,9 +6772,10 @@ TRANSLATIONS["繁體中文"].update({
     "global_market_sp500": "標普 500",
     "global_market_dow": "道瓊工業指數",
     "global_market_taiex": "加權指數",
-    "global_market_tw_futures": "台指期",
     "global_market_tw_turnover": "台股交易量",
     "global_market_tw_foreign": "外資合計",
+    "global_market_tw_trust": "投信買賣超",
+    "global_market_tw_dealer": "自營商買賣超",
     "global_market_tw_data_pending": "資料準備中",
     "global_market_tw_as_of": "資料日期 {date}",
     "global_market_prev_day_close": "前一日",
@@ -10396,7 +10398,10 @@ def fetch_taiwan_market_aggregates(_cache_key: str) -> dict:
     result: dict = {
         "turnover_value": None, "turnover_d1": None, "turnover_d2": None,
         "turnover_change_pct": None,
+        # v1.6.0: now tracks all 3 institutional investors with D-1/D-2.
         "foreign_net": None, "foreign_net_d1": None, "foreign_net_d2": None,
+        "trust_net": None, "trust_net_d1": None, "trust_net_d2": None,
+        "dealer_net": None, "dealer_net_d1": None, "dealer_net_d2": None,
         "data_date": None, "data_date_d1": None, "data_date_d2": None,
         "is_today": False,
         "error": None,
@@ -10463,10 +10468,15 @@ def fetch_taiwan_market_aggregates(_cache_key: str) -> dict:
     except Exception as exc:
         result["error"] = f"turnover: {type(exc).__name__}"
 
-    # --- 2. Foreign net total from TWSE BFI82U for the latest 3 trading days ---
-    # We probe 3 dates (today + 2 prior business days). Each date returns one
-    # day of 三大法人 totals; we walk back until we have 3 successful pulls
-    # (or run out of probes after ~7 calendar days).
+    # --- 2. Institutional flows from TWSE BFI82U for the latest 3 trading days ---
+    # v1.6.0: Now extracts ALL three institutional investors:
+    #   - 外資及陸資 (foreign + China)
+    #   - 投信 (investment trusts / domestic mutual funds)
+    #   - 自營商 (proprietary dealers, both regular + hedging combined)
+    #
+    # BFI82U returns ~7 rows per day. The 自營商 has 3 sub-rows (合計, 自行
+    # 買賣, 避險); we use the first one which is the aggregate total.
+    # Walk back until we have 3 days of data (or run out of probes).
     try:
         probe_days = 0
         probe_date = today_tw
@@ -10480,24 +10490,51 @@ def fetch_taiwan_market_aggregates(_cache_key: str) -> dict:
             try:
                 payload = _twse_request_json(url)
                 rows = payload.get("data") or []
-                # Look for "外資及陸資" row
-                found_value: float | None = None
+                # Pick out the 3 investor types from the rows.
+                foreign_value: float | None = None
+                trust_value: float | None = None
+                dealer_value: float | None = None
+                seen_dealer = False  # only take the first 自營商 row (aggregate)
                 for row in rows:
                     investor = str(row[0] or "").strip() if row else ""
-                    if "外資" in investor or "Foreign" in investor:
-                        try:
-                            net_str = str(row[3] if len(row) > 3 else "0").replace(",", "").strip()
-                            found_value = float(net_str) / 1_0000_0000  # 元 -> 億
-                        except (ValueError, IndexError):
-                            pass
-                        break
-                if found_value is not None:
+                    if not investor:
+                        continue
+                    try:
+                        net_str = str(row[3] if len(row) > 3 else "0").replace(",", "").strip()
+                        net_val = float(net_str) / 1_0000_0000  # 元 -> 億
+                    except (ValueError, IndexError):
+                        continue
+                    # 自營商 first (since it appears before 投信 + 外資 in the response).
+                    # The very first 自營商 row IS the aggregate (自營商合計);
+                    # subsequent 自營商(自行買賣) / 自營商(避險) are sub-totals
+                    # that sum to the first one. We take only the first.
+                    if not seen_dealer and investor.startswith("自營商") and "(" not in investor and "（" not in investor:
+                        dealer_value = net_val
+                        seen_dealer = True
+                        continue
+                    if "投信" in investor:
+                        trust_value = net_val
+                        continue
+                    if "外資" in investor and "陸資" in investor and "外資自營商" not in investor:
+                        # Pick the main "外資及陸資" line, not the sub-line
+                        # "外資及陸資(不含外資自營商)" or "外資自營商".
+                        if "(" not in investor and "（" not in investor:
+                            foreign_value = net_val
+                            continue
+                # If we got at least one value for this day, count it as a successful probe.
+                if any(v is not None for v in (foreign_value, trust_value, dealer_value)):
                     if d_index == 0:
-                        result["foreign_net"] = found_value
+                        result["foreign_net"] = foreign_value
+                        result["trust_net"] = trust_value
+                        result["dealer_net"] = dealer_value
                     elif d_index == 1:
-                        result["foreign_net_d1"] = found_value
+                        result["foreign_net_d1"] = foreign_value
+                        result["trust_net_d1"] = trust_value
+                        result["dealer_net_d1"] = dealer_value
                     elif d_index == 2:
-                        result["foreign_net_d2"] = found_value
+                        result["foreign_net_d2"] = foreign_value
+                        result["trust_net_d2"] = trust_value
+                        result["dealer_net_d2"] = dealer_value
                     d_index += 1
             except Exception:
                 pass  # this probe day failed, try previous day
@@ -10791,13 +10828,21 @@ def build_global_market_indicator(
                 })
             continue
 
-        # ============== Sentinel: TWSE foreign net ==============
-        if ticker == "__TWSE_FOREIGN_NET__":
+        # ============== Sentinel: TWSE institutional net flows ==============
+        # v1.6.0: foreign / trust / dealer all share the same card layout.
+        # Map each sentinel ticker to its (value_key, d1_key, d2_key) trio.
+        _NET_FLOW_KEYS = {
+            "__TWSE_FOREIGN_NET__": ("foreign_net", "foreign_net_d1", "foreign_net_d2"),
+            "__TWSE_TRUST_NET__":   ("trust_net",   "trust_net_d1",   "trust_net_d2"),
+            "__TWSE_DEALER_NET__":  ("dealer_net",  "dealer_net_d1",  "dealer_net_d2"),
+        }
+        if ticker in _NET_FLOW_KEYS:
             if tw_aggregates is None:
                 tw_aggregates = fetch_taiwan_market_aggregates(
                     datetime.now(TW_TZ).strftime("%Y-%m-%d")
                 )
-            value = tw_aggregates.get("foreign_net")
+            v_key, d1_key, d2_key = _NET_FLOW_KEYS[ticker]
+            value = tw_aggregates.get(v_key)
             data_date = tw_aggregates.get("data_date")
             is_today = bool(tw_aggregates.get("is_today"))
             if value is None:
@@ -10831,8 +10876,8 @@ def build_global_market_indicator(
                     "last_price_unit": "億",
                     "window_return": float("nan"),
                     "recent_return": float("nan"),
-                    "last_price_d1": tw_aggregates.get("foreign_net_d1") or float("nan"),
-                    "last_price_d2": tw_aggregates.get("foreign_net_d2") or float("nan"),
+                    "last_price_d1": tw_aggregates.get(d1_key) if tw_aggregates.get(d1_key) is not None else float("nan"),
+                    "last_price_d2": tw_aggregates.get(d2_key) if tw_aggregates.get(d2_key) is not None else float("nan"),
                     "data_date_d1": tw_aggregates.get("data_date_d1"),
                     "data_date_d2": tw_aggregates.get("data_date_d2"),
                     "state": state,
@@ -10921,6 +10966,8 @@ def render_global_market_indicator(indicator: dict):
     def _format_card_value(card: dict) -> str:
         if card.get("is_pending"):
             return f'<span class="global-indicator-pending">{escape(t("global_market_tw_data_pending"))}</span>'
+        # v1.6.0: IX0126.TW special handling removed -- 台指期 cards retired,
+        # replaced by 三大法人 net-flow cards. Same render path as other cards.
         unit = card.get("last_price_unit", "")
         last_price = card.get("last_price")
         if pd.isna(last_price):
@@ -10929,7 +10976,8 @@ def render_global_market_indicator(indicator: dict):
             try:
                 v = float(last_price)
                 sign = ""
-                if card.get("ticker") == "__TWSE_FOREIGN_NET__":
+                # v1.6.0: all three institutional net-flow cards display signed
+                if card.get("ticker") in ("__TWSE_FOREIGN_NET__", "__TWSE_TRUST_NET__", "__TWSE_DEALER_NET__"):
                     sign = "+" if v > 0 else ""
                 return f"{sign}{v:,.0f} {escape(unit)}"
             except Exception:
@@ -10957,7 +11005,7 @@ def render_global_market_indicator(indicator: dict):
                 f'{escape(t("global_market_tw_as_of", date=data_date))}'
                 f'</div>'
             )
-        if data_date and (card.get("ticker", "").startswith("__") or card.get("ticker") in ("TX=F", "IX0126.TW")):
+        if data_date and card.get("ticker", "").startswith("__"):
             return f'<div class="global-indicator-card-date">{escape(data_date)}</div>'
         return ""
 
@@ -10975,13 +11023,18 @@ def render_global_market_indicator(indicator: dict):
     def _format_history_block(card: dict) -> str:
         """v1.5.4: D-1 + D-2 closes/values shown side-by-side below the
         window-return / recent-return mini stats.
+
+        v1.5.6: For IX0126.TW (台指期 TR 指數) where the headline card value
+        is "today's % change", display D-1/D-2 as their own % daily change
+        instead of raw values. Computed from the close-to-close ratio of
+        the last_price / last_price_d1 / last_price_d2 trio.
         """
         d1 = card.get("last_price_d1")
         d2 = card.get("last_price_d2")
         if pd.isna(d1) and pd.isna(d2):
             return ""
         unit = card.get("last_price_unit", "")
-        signed = (card.get("ticker") == "__TWSE_FOREIGN_NET__")
+        signed = (card.get("ticker") in ("__TWSE_FOREIGN_NET__", "__TWSE_TRUST_NET__", "__TWSE_DEALER_NET__"))
         d1_label = t("global_market_prev_day_close")
         d2_label = t("global_market_prev2_day_close")
         d1_date = card.get("data_date_d1")
@@ -10994,16 +11047,19 @@ def render_global_market_indicator(indicator: dict):
             f'<div class="global-indicator-history-date">{escape(d2_date)}</div>'
             if d2_date else ""
         )
+        # v1.6.0: IX0126.TW special handling removed (card retired in v1.6.0).
+        d1_value = _format_historical_value(d1, unit, signed)
+        d2_value = _format_historical_value(d2, unit, signed)
         return (
             f'<div class="global-indicator-history">'
             f'  <div>'
             f'    <div class="global-indicator-history-label">{escape(d1_label)}</div>'
-            f'    <div class="global-indicator-history-value">{_format_historical_value(d1, unit, signed)}</div>'
+            f'    <div class="global-indicator-history-value">{d1_value}</div>'
             f'    {d1_date_html}'
             f'  </div>'
             f'  <div>'
             f'    <div class="global-indicator-history-label">{escape(d2_label)}</div>'
-            f'    <div class="global-indicator-history-value">{_format_historical_value(d2, unit, signed)}</div>'
+            f'    <div class="global-indicator-history-value">{d2_value}</div>'
             f'    {d2_date_html}'
             f'  </div>'
             f'</div>'
