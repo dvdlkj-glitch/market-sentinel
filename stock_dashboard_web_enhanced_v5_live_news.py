@@ -27835,7 +27835,7 @@ def _cockpit_render_pick_card_chain(row: dict, rank: int, lang_zh: bool) -> str:
     tag_parts: list[str] = []
     tag_parts.append(
         f'<span class="cockpit-pick-tag theme">'
-        f'{escape(f"{rising}/{total} {("上漲" if lang_zh else "risers")}")}'
+        f'{escape(f"{rising}/{total} " + ("上漲" if lang_zh else "risers"))}'
         f'</span>'
     )
     leader_move_value = _safe_float(row.get("leader_move"))
@@ -27897,16 +27897,18 @@ def _cockpit_render_pick_card_etf(item: dict, rank: int, lang_zh: bool) -> str:
         tag_parts.append(f'<span class="cockpit-pick-tag flow">{escape(signal_label)}</span>')
     volume_ratio = _safe_float(item.get("volume_ratio"))
     if pd.notna(volume_ratio) and float(volume_ratio) >= 1.3:
+        _vol_label = "量能爆" if lang_zh else "Vol burst"
         tag_parts.append(
             f'<span class="cockpit-pick-tag">'
-            f'{escape(f"{("量能爆" if lang_zh else "Vol burst")} {float(volume_ratio):.1f}×")}'
+            f'{escape(f"{_vol_label} {float(volume_ratio):.1f}×")}'
             f'</span>'
         )
     score = _safe_float(item.get("attention_score"))
     if pd.notna(score):
+        _att_label = "關注度" if lang_zh else "Attention"
         tag_parts.append(
             f'<span class="cockpit-pick-tag">'
-            f'{escape(f"{("關注度" if lang_zh else "Attention")} {float(score):.1f}")}'
+            f'{escape(f"{_att_label} {float(score):.1f}")}'
             f'</span>'
         )
     reasons_html = "".join(tag_parts)
