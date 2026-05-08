@@ -10183,6 +10183,178 @@ def fetch_global_reference_data(period: str, interval: str):
     return fetch_daily_data(yfinance_tickers, period, interval)
 
 
+# ============================================================================
+# v1.6.0  Main Dashboard Snapshot — Supabase prefetch / restore
+# ============================================================================
+# Daily prefetch job (.github/workflows/prefetch-daily.yml +
+# prefetch_main_dashboard_job.py) writes a JSON snapshot of the global
+# indicator + cockpit Q1-Q4 to the Supabase main_dashboard_snapshot table
+# every weekday at 06:00 Taiwan time. On page entry, generate_dashboard()
+# tries to load the snapshot and render instantly. The user sees a
+# "📅 資料 YYYY-MM-DD" badge + a "🔄 抓今天最新" button to force a live
+# refetch when they want fresh numbers.
+SUPABASE_MAIN_DASHBOARD_SNAPSHOT_TABLE = "main_dashboard_snapshot"
+
+
+def _supabase_main_dashboard_snapshot_enabled() -> bool:
+    """We require the URL + a service role key to do anything."""
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_main_dashboard_snapshot(market_scope: str) -> dict | None:
+    """Load the most recent snapshot for the given market_scope.
+
+    Returns the row as a dict (with payload columns parsed from JSON), or
+    None when:
+      - Supabase is not configured (no URL / key)
+      - No row exists for this scope yet
+      - Network / parse failure (silently degrades to live fetch)
+
+    Cached 10 min: refreshing the page repeatedly within 10 min hits cache,
+    but the user-driven "🔄 抓今天最新" button bypasses by clearing cache.
+    """
+    if not _supabase_main_dashboard_snapshot_enabled():
+        return None
+    market_scope = _normalize_market_scope(market_scope)
+    url = (
+        f"{SUPABASE_URL}/rest/v1/{SUPABASE_MAIN_DASHBOARD_SNAPSHOT_TABLE}"
+        f"?market_scope=eq.{quote_plus(market_scope)}"
+        f"&order=snapshot_at.desc&limit=1"
+    )
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Accept": "application/json",
+    }
+    try:
+        req = Request(url, headers=headers, method="GET")
+        with urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data or not isinstance(data, list):
+            return None
+        row = data[0]
+        # Each *_payload column comes back as already-parsed JSON (PostgREST).
+        return row
+    except Exception:
+        return None
+
+
+def _format_snapshot_age_label(snapshot_at_iso: str | None, lang_zh: bool) -> str:
+    """Friendly age label: '今天 06:00' / '昨天 06:00' / '5/5 06:00'."""
+    if not snapshot_at_iso:
+        return ""
+    try:
+        # snapshot_at is ISO 8601 with TZ; reduce to TW timezone for display
+        dt = datetime.fromisoformat(snapshot_at_iso.replace("Z", "+00:00"))
+        dt_tw = dt.astimezone(TW_TZ)
+        today_tw = datetime.now(TW_TZ).date()
+        delta_days = (today_tw - dt_tw.date()).days
+        time_str = dt_tw.strftime("%H:%M")
+        if delta_days == 0:
+            prefix = "今天" if lang_zh else "Today"
+        elif delta_days == 1:
+            prefix = "昨天" if lang_zh else "Yesterday"
+        else:
+            prefix = dt_tw.strftime("%-m/%-d") if hasattr(dt_tw, "strftime") else dt_tw.strftime("%m/%d")
+            try:
+                # %-m / %-d not on Windows; fall back manually
+                prefix = f"{dt_tw.month}/{dt_tw.day}"
+            except Exception:
+                pass
+        return f"{prefix} {time_str}"
+    except Exception:
+        return snapshot_at_iso[:16]
+
+
+def render_snapshot_freshness_bar(snapshot_row: dict | None, lang_zh: bool) -> None:
+    """Render the '📅 資料日期' badge + '🔄 抓今天最新' button between the
+    Hero Bar and the Global Market Indicator. v1.6.0."""
+    inject_snapshot_freshness_bar_css()
+    cols = st.columns([3, 1], gap="small")
+    with cols[0]:
+        if snapshot_row:
+            age_label = _format_snapshot_age_label(
+                snapshot_row.get("snapshot_at"), lang_zh
+            )
+            errors = (snapshot_row.get("fetch_metadata") or {}).get("errors") or []
+            err_chip = ""
+            if errors:
+                # Minor visual chip if any builder failed during prefetch
+                err_chip = (
+                    f' <span class="snapshot-freshness-err-chip">'
+                    f'{escape("部分資料抓取失敗" if lang_zh else "Some data missing")}'
+                    f'</span>'
+                )
+            label = "📅 " + (
+                f"資料 {age_label}（自動抓取）" if lang_zh
+                else f"Data {age_label} (auto-fetched)"
+            )
+            st.markdown(
+                f'<div class="snapshot-freshness-badge">{escape(label)}{err_chip}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div class="snapshot-freshness-badge snapshot-freshness-badge-live">'
+                f'{escape("⚡ 即時抓取" if lang_zh else "⚡ Live fetch")}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    with cols[1]:
+        btn_label = "🔄 抓今天最新" if lang_zh else "🔄 Refresh now"
+        if st.button(btn_label, key="snapshot_refresh_btn", use_container_width=True):
+            # Clear caches that feed the cockpit/global indicator so the
+            # live path runs on the next rerun.
+            try:
+                load_main_dashboard_snapshot.clear()
+            except Exception:
+                pass
+            try:
+                fetch_global_reference_data.clear()
+                fetch_live_reference_quotes.clear()
+                fetch_taiwan_market_aggregates.clear()
+                fetch_taifex_futures_quote.clear()
+                fetch_daily_data.clear()
+                fetch_intraday_data.clear()
+            except Exception:
+                pass
+            st.session_state["_force_live_main_dashboard"] = True
+            st.rerun()
+
+
+def inject_snapshot_freshness_bar_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .snapshot-freshness-badge {
+            background: rgba(11,18,32,0.62);
+            border: 1px solid rgba(94,234,212,0.22);
+            border-radius: 10px;
+            padding: 0.65rem 1.1rem;
+            font-size: 0.92rem;
+            color: rgba(255,255,255,0.85);
+            display: flex; align-items: center; gap: 0.7rem;
+            min-height: 42px;
+        }
+        .snapshot-freshness-badge-live {
+            border-color: rgba(250,204,21,0.32);
+            color: rgba(250,204,21,0.9);
+        }
+        .snapshot-freshness-err-chip {
+            font-size: 0.78rem;
+            padding: 0.18rem 0.5rem;
+            border-radius: 6px;
+            background: rgba(245,158,11,0.18);
+            color: rgba(245,158,11,0.92);
+            margin-left: 0.4rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # v1.5.3: Taiwan-specific market aggregates (total turnover + foreign-net total)
 # fetched via TWSE BWIBBU/MI_INDEX endpoints. These are the underlying
 # datasets behind the "台股交易量" and "外資合計" indicator cards.
@@ -28601,26 +28773,20 @@ def render_decision_cockpit(
     selected_supply_chain_groups: list[str],
     existing_loading_placeholder=None,
     skip_loading_placeholder: bool = False,
+    prefetched_snapshot: dict | None = None,
 ) -> None:
     """Render the 5-question Decision Cockpit at the top of the dashboard.
 
-    Reuses build_home_news_top_taiwan_movers and
-    build_home_news_supply_chain_rankings (the same data the News Briefing
-    section uses), so adding the cockpit does NOT trigger any extra fetches.
+    v1.6.0: When ``prefetched_snapshot`` is provided (a row from the
+    Supabase main_dashboard_snapshot table containing pre-computed Q1-Q4
+    payloads), the cockpit renders directly from those payloads and skips
+    its own heavy builder chain. This makes the page paint in <500ms when
+    the daily prefetch job has run.
 
-    v1.4.5: shows a "preparing the market decision spine" loading placeholder
-    immediately on first paint, then replaces it with the real cockpit once
-    all builders return.
-
-    v1.4.7:
-        * ``existing_loading_placeholder``: reuse a placeholder created by
-          ``render_cockpit_loading_placeholder()`` earlier in the request
-          lifecycle (e.g. before market-data fetches). The cockpit will
-          .empty() this handle once builders are done.
-        * ``skip_loading_placeholder``: pass True when the caller has already
-          shown a loading state for the entire load lifecycle and cleared
-          it before calling this function. Avoids a brief second flash of
-          loading skeleton when the cockpit's own work is fast.
+    The freshness/refresh control is rendered above the cockpit by
+    generate_dashboard() via render_snapshot_freshness_bar(). When the user
+    presses 'refresh', generate_dashboard sets _force_live_main_dashboard
+    in session_state and we never receive a prefetched_snapshot here.
     """
     lang_zh = _news_briefing_is_zh()
     _cockpit_inject_css()
@@ -28641,22 +28807,39 @@ def render_decision_cockpit(
         )
 
     # ---- Heavy lifting: builders + verdict computation ----
-    top_movers = build_home_news_top_taiwan_movers(
-        daily_data, intraday_data, dashboard_tickers, selected_supply_chain_groups
-    )
-    chain_rankings = build_home_news_supply_chain_rankings(
-        selected_supply_chain_groups, lens_meta=lens_meta
-    )
-    # v1.4.2: Q3 now absorbs the active ETF spotlight that used to live in
-    # the News Briefing block. Pull the same builder.
-    active_etfs = build_home_news_active_etf_spotlight(
-        daily_data, intraday_data, dashboard_tickers, lens_meta, dashboard_mode
-    )
+    # v1.6.0: When the prefetched snapshot is available, restore Q1-Q4
+    # payloads from JSON instead of re-running the builders. Q3 needs
+    # top_movers / chain_rankings / active_etfs lists which the snapshot
+    # already stores under cockpit_q3_payload.
+    snapshot_q1 = (prefetched_snapshot or {}).get("cockpit_q1_payload") if prefetched_snapshot else None
+    snapshot_q2 = (prefetched_snapshot or {}).get("cockpit_q2_payload") if prefetched_snapshot else None
+    snapshot_q3 = (prefetched_snapshot or {}).get("cockpit_q3_payload") if prefetched_snapshot else None
+    snapshot_q4 = (prefetched_snapshot or {}).get("cockpit_q4_payload") if prefetched_snapshot else None
+    use_snapshot = bool(snapshot_q1 and snapshot_q3)
 
-    verdict = _cockpit_compute_q1_verdict(top_movers, chain_rankings, lang_zh)
-
-    # Q4: chase / wait / avoid based on the strongest theme's leader as proxy
-    q4 = _cockpit_compute_q4_signal(daily_data, intraday_data, chain_rankings, top_movers, lang_zh)
+    if use_snapshot:
+        # Snapshot path
+        top_movers = snapshot_q3.get("top_movers", [])
+        chain_rankings = snapshot_q3.get("chain_rankings", [])
+        active_etfs = snapshot_q3.get("active_etfs", [])
+        verdict = snapshot_q1
+        q4 = snapshot_q4 or _cockpit_compute_q4_signal(
+            daily_data, intraday_data, chain_rankings, top_movers, lang_zh
+        )
+    else:
+        top_movers = build_home_news_top_taiwan_movers(
+            daily_data, intraday_data, dashboard_tickers, selected_supply_chain_groups
+        )
+        chain_rankings = build_home_news_supply_chain_rankings(
+            selected_supply_chain_groups, lens_meta=lens_meta
+        )
+        active_etfs = build_home_news_active_etf_spotlight(
+            daily_data, intraday_data, dashboard_tickers, lens_meta, dashboard_mode
+        )
+        verdict = _cockpit_compute_q1_verdict(top_movers, chain_rankings, lang_zh)
+        q4 = _cockpit_compute_q4_signal(
+            daily_data, intraday_data, chain_rankings, top_movers, lang_zh
+        )
 
     # Now that all the heavy work is done, clear the loading placeholder
     # before rendering the real cockpit. This makes the swap feel instant.
@@ -35375,44 +35558,50 @@ def generate_dashboard():
     if dashboard_mode != "Active ETF Lab":
         # v1.4.7: At this point market data is loaded. Clear the cockpit
         # loading placeholder NOW so the global market indicator + cockpit
-        # render in the natural top-down order. The cockpit builders are
-        # fast (use already-loaded data + 30 min caches), so going from
-        # "loading..." to a fully-painted cockpit feels near-instant.
+        # render in the natural top-down order.
         if cockpit_loading_placeholder is not None:
             cockpit_loading_placeholder.empty()
 
-        # v1.4.6: Render the Global Market Indicator ABOVE the Decision
-        # Cockpit so users see baseline breadth (NASDAQ / S&P / DOW / TAIEX)
-        # before the 5-question spine. This used to live inside the
-        # General Market layout's overview tab; we surfaced it to the top
-        # so it's visible regardless of which tab they're on. The duplicate
-        # call inside render_general_market_layout has been removed.
-        global_reference_data = fetch_global_reference_data(period, interval)
-        # v1.5.3: only fetch live quotes for tickers we'll actually display.
-        # TWSE sentinel symbols (__TWSE_*) get fetched separately inside
-        # build_global_market_indicator.
-        scope_for_indicator = st.session_state.get("dashboard_market_scope", "Taiwan only")
-        scope_indices = get_indices_for_scope(scope_for_indicator)
-        live_quote_tickers = tuple(
-            item["ticker"] for item in scope_indices
-            if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
+        # v1.6.0: SNAPSHOT-FIRST PATH
+        # Try to render from the daily-prefetched Supabase snapshot. When the
+        # snapshot exists, the page paints in <500ms (no yfinance/TWSE calls).
+        # The user-facing "🔄 抓今天最新" button forces a live refetch when
+        # they want fresh numbers; we detect that via the
+        # _force_live_main_dashboard session_state flag.
+        scope_for_indicator = st.session_state.get(
+            "dashboard_market_scope", "Taiwan only"
         )
-        global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
-        global_indicator = build_global_market_indicator(
-            global_reference_data,
-            lens_meta=lens_meta,
-            live_quotes=global_reference_quotes,
-            market_scope=scope_for_indicator,
-        )
-        render_global_market_indicator(global_indicator)
+        force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
+        snapshot_row = None
+        if not force_live:
+            snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
 
-        # v1.4.0: Decision Cockpit -- the 5-question decision spine.
-        # v1.4.7: We already showed AND cleared a top-of-page loading
-        # placeholder above for the entire fetch lifecycle. Pass
-        # skip_loading_placeholder=True so the cockpit doesn't briefly
-        # re-flash its own loading skeleton between the global indicator
-        # and the real cockpit content (the cockpit's own builder phase is
-        # fast since the heavy data is already in cache).
+        # Always render the freshness bar so the user knows what data
+        # they're looking at and can refresh.
+        render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
+
+        if snapshot_row and snapshot_row.get("global_indicator_payload"):
+            # Snapshot path: render directly from the stored payload.
+            render_global_market_indicator(snapshot_row["global_indicator_payload"])
+        else:
+            # Live path (snapshot missing OR user pressed refresh).
+            global_reference_data = fetch_global_reference_data(period, interval)
+            scope_indices = get_indices_for_scope(scope_for_indicator)
+            live_quote_tickers = tuple(
+                item["ticker"] for item in scope_indices
+                if not item["ticker"].startswith("__") and item["ticker"] != "TX=F"
+            )
+            global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
+            global_indicator = build_global_market_indicator(
+                global_reference_data,
+                lens_meta=lens_meta,
+                live_quotes=global_reference_quotes,
+                market_scope=scope_for_indicator,
+            )
+            render_global_market_indicator(global_indicator)
+
+        # Decision Cockpit — pass the snapshot (if any) into render so it can
+        # short-circuit the heavy builders.
         render_decision_cockpit(
             daily_data,
             intraday_data,
@@ -35421,6 +35610,7 @@ def generate_dashboard():
             dashboard_mode=dashboard_mode,
             selected_supply_chain_groups=selected_supply_chain_groups,
             skip_loading_placeholder=True,
+            prefetched_snapshot=snapshot_row if not force_live else None,
         )
         # v1.4.2: News Briefing's three auto-summary cards (TOP 5 stocks /
         # supply chain / active ETF spotlight) have been absorbed into Q3 of
