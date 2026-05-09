@@ -177,7 +177,8 @@ def build_snapshot_for_scope(mod, market_scope: str) -> dict:
             us_daily = mod.fetch_daily_data(us_tickers, "3mo", "1d")
             us_intraday = mod.fetch_intraday_data(us_tickers)
             us_radar = mod.build_us_theme_radar(
-                us_daily, us_intraday, top_n_per_theme=3, lang_zh=True
+                us_daily, us_intraday, top_n_per_theme=3, lang_zh=True,
+                auto_fetch=False,
             )
             payload["cockpit_q1_payload"] = None
             payload["cockpit_q2_payload"] = None
