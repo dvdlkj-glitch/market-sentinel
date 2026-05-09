@@ -25450,6 +25450,7 @@ def build_us_theme_radar(
     *,
     top_n_per_theme: int = 3,
     lang_zh: bool = True,
+    auto_fetch: bool = True,
 ) -> list[dict]:
     """Build the 5-theme US market radar bundle.
 
@@ -25471,9 +25472,33 @@ def build_us_theme_radar(
         ]
 
     "leaders" are the top_n_per_theme tickers sorted by today's % move
-    descending. The fetcher caller must have already pulled daily/intraday
-    data for at least all_us_theme_tickers().
+    descending.
+
+    v1.7.1: When auto_fetch=True (default), if the provided daily_data
+    doesn't already contain the US theme tickers (common case: dashboard
+    is in TW watchlist mode but user switched scope to U.S. only), this
+    function will call fetch_daily_data() with all 28 US theme tickers to
+    get fresh data. This makes US-only mode work even when the snapshot
+    isn't available (Streamlit cache-cold startup, refresh button pressed,
+    etc.). Set auto_fetch=False to keep the v1.7.0 behavior of relying
+    purely on the caller-provided dataframe.
     """
+    # v1.7.1: detect "no US tickers in daily_data" and auto-fetch.
+    # Cheap probe: try to get_price_series for one MAG 7 ticker.
+    if auto_fetch:
+        probe_ticker = US_THEME_GROUPS[0]["tickers"][0]  # NVDA
+        probe_series, _ = get_price_series(daily_data, probe_ticker)
+        if probe_series is None or probe_series.empty:
+            # daily_data missing US tickers; fetch our own slice.
+            us_tickers = all_us_theme_tickers()
+            try:
+                fetched_daily = fetch_daily_data(us_tickers, "3mo", "1d")
+                if fetched_daily is not None and not fetched_daily.empty:
+                    daily_data = fetched_daily
+                # intraday is optional; skip auto-fetch for simplicity.
+            except Exception:
+                pass  # graceful: keep going with whatever daily_data we had
+
     radar: list[dict] = []
     for theme in US_THEME_GROUPS:
         rows: list[dict] = []
