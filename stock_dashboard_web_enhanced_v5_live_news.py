@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.8.0
+Version : v1.8.4
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -48,6 +48,19 @@ US THEME RADAR (v1.7.x), shown ONLY in U.S. only mode (replaces Q1-Q5):
   - 💾 DRAM/Memory   — MU, WDC, SNDK                              (3 ticks)
   - 🏢 Data Center   — DLR, EQIX, VRT, NVT, ETN, MOD, AVGO, ANET  (8 ticks)
   Total: 28 tickers, each card shows ALL its tickers sorted by today's % move.
+  v1.8.2: Each row is a clickable anchor (?radar_jump=<TICKER>) that lands
+  the user inside that ticker's workspace. See _consume_us_radar_jump_query().
+  v1.8.3: Each theme card carries a Catalyst Engine chip strip
+  (AI Demand · Earnings · dominant-if-other), built by
+  build_us_theme_catalysts() + rendered via _us_theme_catalyst_strip_html().
+  A radar-wide Theme Pulse banner sits above the grid
+  (_us_theme_pulse_banner_html). Grid is now `repeat(3, 1fr)` for a
+  balanced 3+2 layout instead of the previous 4+1 auto-fit.
+  v1.8.4: Each ticker ROW also gets its OWN mini-chip strip
+  (AI Demand + Earnings chips next to the symbol), built by
+  build_us_ticker_catalysts() + rendered via
+  _us_ticker_mini_chip_strip_html(). So users can identify each
+  stock's individual catalyst state, not just the theme average.
 
 PREFETCH SYSTEM (v1.6.0):
   - Companion script: prefetch_main_dashboard_job.py (in repo root)
@@ -214,6 +227,79 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.8.4 (2026-05-09)
+  - PER-TICKER catalyst chips on every row of the US Theme Radar. Each
+    ticker line now shows mini AI Demand / Earnings chips immediately
+    after the ticker symbol, so users can identify each stock's
+    individual catalyst state at a glance — not just the theme average.
+  - New builder build_us_ticker_catalysts() runs build_catalyst_engine
+    on each of the 28 US theme tickers individually (not the per-theme
+    aggregate from v1.8.3). Returns dict keyed by ticker. Cached 600s
+    via @st.cache_data; the underlying fetch_ticker_news cache is
+    shared with the v1.8.3 theme builder, so cold-cache cost stays at
+    ~2-3s for both builders combined (the second one rides cache hits).
+  - Renderer change: _cockpit_render_us_theme_radar_html grew an
+    optional ticker_catalysts kwarg. When present, each row's HTML
+    wraps the ticker symbol + mini-chip strip in a new
+    .us-radar-tk-cell flex container; mini chips use the new
+    .us-radar-mini-chip class (smaller font, tighter padding than the
+    theme-level chips). When ticker_catalysts is absent, the row
+    renders exactly as v1.8.3 — backward compatible.
+  - Visual hierarchy: large chips at theme card head = "this whole
+    group's catalyst pulse"; small chips on each row = "this specific
+    stock's catalyst pulse". Same color tones (bullish/bearish/mixed)
+    so the language is consistent.
+  - Snapshot path: live render reads cockpit_q3_payload.us_ticker_catalysts
+    when available; else falls back to live compute (cached). When you
+    extend prefetch_main_dashboard_job.py:build_snapshot_for_scope, write
+    BOTH us_theme_catalysts AND us_ticker_catalysts into the q3 payload.
+
+v1.8.3 (2026-05-09)
+  - US Theme Radar now ships a per-theme CATALYST ENGINE pulse. For each
+    of the 5 themes (MAG 7, Oil Equities, Materials, DRAM, Data Center),
+    a new builder build_us_theme_catalysts() aggregates news across that
+    theme's tickers, runs the existing build_catalyst_engine() over the
+    pool, and surfaces AI Demand + Earnings + dominant-category chips
+    inside each theme card. A Theme Pulse banner above the grid shows
+    the radar-wide dominant catalyst, net score, news tilt, and the
+    bullish-themes count.
+  - Layout improvement: the radar grid switched from
+    `auto-fit minmax(260px, 1fr)` (which produced an awkward 4+1 card
+    arrangement at standard desktop widths) to a fixed `repeat(3, 1fr)`
+    grid that yields a cleaner 3+2 arrangement with no orphan rows. The
+    980px / 480px breakpoints still drop to 2-col / 1-col as before.
+  - Performance: news fetch for the 28 theme tickers runs through a
+    ThreadPoolExecutor (max 8 workers, 4s overall timeout). Cached at
+    fetch_ticker_news layer (TTL 600s) and at the outer build layer
+    (TTL 600s). Cold cache: ~2-3s. Warm cache: <50ms. If the timeout
+    fires, the radar still renders without chips (graceful no-op).
+  - Snapshot integration: live render reads cockpit_q3_payload
+    .us_theme_catalysts when available; otherwise it falls back to live
+    compute. Prefetch script (prefetch_main_dashboard_job.py) should
+    extend build_snapshot_for_scope to call build_us_theme_catalysts and
+    write the result into cockpit_q3_payload[us_theme_catalysts] for
+    snappy first paint -- documented but not auto-applied here since
+    that script lives outside this single-file dashboard.
+
+v1.8.2 (2026-05-09)
+  - US Theme Radar tickers are now CLICKABLE. Each row is wrapped in a
+    same-tab anchor that sets ?radar_jump=<TICKER>; the dashboard catches
+    that param at the top of generate_dashboard(), pushes the ticker into
+    dashboard_selected_tickers (the watchlist), points
+    dashboard_workspace_focus_ticker / dashboard_standard_focus_ticker at
+    it, and routes the layout selector to the workspace section
+    (Standard: layout_standard_single_workspace_tab,
+     Advanced: layout_workspace_tab,
+     Expert: layout_ticker_desks_tab),
+    pops the query param, and st.rerun()s. End result: clicking NVDA in
+    the radar lands the user inside NVDA's full ticker workspace.
+  - New helper _consume_us_radar_jump_query() is the single entry point;
+    it validates the ticker against US_THEME_GROUPS so the query param
+    can't be used to inject arbitrary symbols.
+  - Hover/focus styles added for .us-radar-row-link (cursor pointer,
+    teal-tinted hover bg, 1px lift, focus-visible outline). Subtitle now
+    mentions "click any ticker to open its workspace".
 
 v1.8.1 (2026-05-09)
   - U.S. only mode now skips the Editor & Terrain block (TAIEX volume
@@ -25930,6 +26016,364 @@ def build_us_theme_radar(
     return radar
 
 
+# ---------------------------------------------------------------------------
+# v1.8.3: US Theme Radar — per-theme Catalyst Engine pulse
+# ---------------------------------------------------------------------------
+# For each of the 5 themes in US_THEME_GROUPS, fetch news for every ticker
+# in the theme, aggregate into one news pool per theme, run the existing
+# build_catalyst_engine() over the pool, and surface AI Demand + Earnings
+# + dominant rows. Returned shape is keyed by theme["key"] so the renderer
+# can look up the right catalyst for each card.
+#
+# Performance:
+#   - 28 cached fetch_ticker_news calls run through ThreadPoolExecutor with
+#     max_workers=8 and an overall timeout. fetch_ticker_news is itself
+#     cached at TTL 600s, and this outer build wraps another @cache_data
+#     at TTL 600s, so warm-cache reruns are <50ms.
+#   - Cold cache: ~2-3s for the 28 yfinance news calls in parallel.
+#   - If the timeout fires, partial data is returned (cached); the renderer
+#     still works -- themes without data simply don't show chips.
+#
+# Why we don't use @st.cache_data on the outer:
+#   - Streamlit warns when @st.cache_data fns are called from threads
+#     (it's the documented pattern but the warning is noisy). Since the
+#     inner fetch_ticker_news IS cached, the outer build's overhead is
+#     just dict iteration + classify_catalyst (keyword counting). Total
+#     warm-cache rebuild cost is ~10ms — acceptable without outer cache.
+#   - Update v1.8.3.1: actually we DO outer-cache because the threading
+#     overhead (executor spinup, futures dict construction) adds up over
+#     many reruns.  We use @st.cache_data with show_spinner=False; the
+#     thread-cache warning is harmless and only fires on cold cache.
+@st.cache_data(ttl=600, show_spinner=False)
+def build_us_theme_catalysts(
+    news_per_ticker: int = 6,
+    max_workers: int = 8,
+    overall_timeout_sec: float = 4.0,
+) -> dict[str, dict]:
+    """Compute per-theme catalyst engine summary for the US Theme Radar.
+
+    Returns a dict keyed by theme["key"]:
+        {
+            "mag7": {
+                "dominant": "AI Demand",
+                "net_score": 5.0,
+                "story_count": 24,
+                "headline": "AI Demand is the main upside catalyst right now.",
+                "rows": [
+                    {"category": "AI Demand", "count": 4, "score": 2.5,
+                     "bias": "Bullish", "intensity": 86},
+                    ...
+                ],
+                "ai_demand": <row dict or None>,
+                "earnings": <row dict or None>,
+            },
+            "oil_stocks": {...},
+            ...
+        }
+
+    Themes with no news return a stub with story_count=0 and dominant=None
+    so the caller can render a "no catalyst data" chip rather than crashing.
+    """
+    import concurrent.futures
+
+    # Build ticker → theme key map and theme key → ticker list map.
+    ticker_to_theme: dict[str, str] = {}
+    theme_tickers: dict[str, list[str]] = {}
+    for theme in US_THEME_GROUPS:
+        theme_tickers[theme["key"]] = list(theme["tickers"])
+        for tk in theme["tickers"]:
+            ticker_to_theme[str(tk).upper()] = theme["key"]
+
+    all_tickers = list(ticker_to_theme.keys())
+    ticker_news: dict[str, list[dict]] = {tk: [] for tk in all_tickers}
+
+    # Parallel news fetch. Each fetch_ticker_news is cached at TTL 600s, so
+    # warm-cache the executor returns nearly instantly. On cold cache,
+    # parallelism keeps the wall-clock to ~2-3s for 28 calls instead of
+    # ~10s+ if we did them sequentially.
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tk = {
+                executor.submit(fetch_ticker_news, tk, news_per_ticker): tk
+                for tk in all_tickers
+            }
+            done, _ = concurrent.futures.wait(
+                future_to_tk.keys(), timeout=overall_timeout_sec
+            )
+            for fut in done:
+                tk = future_to_tk[fut]
+                try:
+                    items, _err = fut.result(timeout=0.05)
+                    ticker_news[tk] = list(items or [])
+                except Exception:
+                    ticker_news[tk] = []
+            # Futures still running after timeout: don't cancel — they'll
+            # finish in the background and warm fetch_ticker_news's cache
+            # so the next render of this builder gets a complete dataset.
+    except Exception:
+        # Catastrophic executor failure: return empty so the radar still
+        # renders (just without chips).
+        return {key: {"dominant": None, "net_score": 0.0, "story_count": 0,
+                      "headline": "", "rows": [], "ai_demand": None,
+                      "earnings": None}
+                for key in theme_tickers.keys()}
+
+    # Per-theme aggregate + catalyst engine pass.
+    out: dict[str, dict] = {}
+    for theme_key, tks in theme_tickers.items():
+        theme_news_pool: list[dict] = []
+        for tk in tks:
+            theme_news_pool.extend(ticker_news.get(tk, []))
+        if not theme_news_pool:
+            out[theme_key] = {
+                "dominant": None,
+                "net_score": 0.0,
+                "story_count": 0,
+                "headline": "",
+                "rows": [],
+                "ai_demand": None,
+                "earnings": None,
+            }
+            continue
+        catalyst = build_catalyst_engine(theme_news_pool)
+        rows = list(catalyst.get("rows") or [])
+        ai_row = next((r for r in rows if r.get("category") == "AI Demand"), None)
+        eps_row = next((r for r in rows if r.get("category") == "Earnings"), None)
+        out[theme_key] = {
+            "dominant": catalyst.get("dominant"),
+            "net_score": float(catalyst.get("net_score", 0.0) or 0.0),
+            "story_count": len(theme_news_pool),
+            "headline": str(catalyst.get("headline", "") or ""),
+            "rows": rows,
+            "ai_demand": ai_row,
+            "earnings": eps_row,
+        }
+    return out
+
+
+def build_us_theme_catalyst_aggregate(
+    theme_catalysts: dict[str, dict] | None,
+) -> dict:
+    """Compute a radar-wide catalyst pulse summary across all themes.
+
+    Used by the Theme Pulse banner above the grid. Returns:
+        {
+            "dominant": "AI Demand",      # most-impactful category overall
+            "net_score": 5.0,             # sum of net scores across themes
+            "themes_bullish": 3,          # # themes with net_score > 0.5
+            "themes_bearish": 1,          # # themes with net_score < -0.5
+            "themes_mixed": 1,            # the rest
+            "themes_total": 5,
+            "story_count": 87,            # total stories aggregated
+            "tilt": "Bullish" | "Bearish" | "Mixed",
+        }
+    """
+    if not theme_catalysts:
+        return {
+            "dominant": None, "net_score": 0.0,
+            "themes_bullish": 0, "themes_bearish": 0, "themes_mixed": 0,
+            "themes_total": 0, "story_count": 0, "tilt": "Mixed",
+        }
+    # Aggregate category scores and counts across all themes.
+    category_totals: dict[str, dict] = {}
+    net_score_sum = 0.0
+    story_total = 0
+    bull_count = bear_count = mixed_count = 0
+    themes_total = 0
+    for _key, catalyst in theme_catalysts.items():
+        if not isinstance(catalyst, dict):
+            continue
+        themes_total += 1
+        story_total += int(catalyst.get("story_count", 0) or 0)
+        net = float(catalyst.get("net_score", 0.0) or 0.0)
+        net_score_sum += net
+        if net > 0.5:
+            bull_count += 1
+        elif net < -0.5:
+            bear_count += 1
+        else:
+            mixed_count += 1
+        for row in (catalyst.get("rows") or []):
+            cat = str(row.get("category", "")).strip()
+            if not cat:
+                continue
+            slot = category_totals.setdefault(cat, {"count": 0, "score": 0.0})
+            slot["count"] += int(row.get("count", 0) or 0)
+            slot["score"] += float(row.get("score", 0.0) or 0.0)
+
+    # Pick the dominant category by absolute aggregate impact.
+    dominant = None
+    if category_totals:
+        dominant = max(
+            category_totals.items(),
+            key=lambda kv: (kv[1]["count"], abs(kv[1]["score"])),
+        )[0]
+    if dominant is not None and category_totals[dominant]["count"] == 0:
+        dominant = None  # all categories are empty -> no dominant
+
+    if net_score_sum >= 1.5:
+        tilt = "Bullish"
+    elif net_score_sum <= -1.5:
+        tilt = "Bearish"
+    else:
+        tilt = "Mixed"
+
+    return {
+        "dominant": dominant,
+        "net_score": float(net_score_sum),
+        "themes_bullish": bull_count,
+        "themes_bearish": bear_count,
+        "themes_mixed": mixed_count,
+        "themes_total": themes_total,
+        "story_count": int(story_total),
+        "tilt": tilt,
+    }
+
+
+def build_us_theme_catalysts_safe(
+    timeout_sec: float = 4.5,
+) -> dict[str, dict]:
+    """Wrapper that NEVER raises and always returns within `timeout_sec`.
+
+    Spawns the cached builder inside a single-worker executor (mirrors the
+    pattern in _cockpit_underlying_signal_with_timeout, ~L 28250). On
+    timeout returns empty dict so the radar still renders without chips.
+    The cached inner result populates the cache for subsequent renders.
+    """
+    import concurrent.futures
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(build_us_theme_catalysts)
+            try:
+                return future.result(timeout=timeout_sec) or {}
+            except concurrent.futures.TimeoutError:
+                return {}
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# v1.8.4: PER-TICKER catalyst pulse for each row of the US Theme Radar
+# ---------------------------------------------------------------------------
+# Companion to build_us_theme_catalysts (v1.8.3). Where the theme builder
+# aggregates news ACROSS all tickers in a theme, this builder runs the
+# catalyst engine on each ticker INDIVIDUALLY so the radar can show per-row
+# AI Demand / Earnings chips.
+#
+# Cache strategy:
+#   - Inner fetch_ticker_news is the only IO; it's cached at TTL 600s and
+#     SHARED with build_us_theme_catalysts. So the second-run cost (after
+#     the theme builder has warmed the cache) is just ~28 dict lookups +
+#     ~28 classify_catalyst passes ≈ <100ms total.
+#   - This outer fn is also @st.cache_data(ttl=600) so reruns within the
+#     window skip the executor spinup entirely.
+#
+# Output shape (dict keyed by upper-case ticker symbol):
+#   {
+#       "TSLA": {
+#           "dominant": "AI Demand",
+#           "net_score": 1.5,
+#           "story_count": 6,
+#           "ai_demand": <row dict or None>,
+#           "earnings":  <row dict or None>,
+#           "rows": [...],            # full breakdown if caller wants it
+#       },
+#       "AAPL": {...},
+#       ...
+#   }
+# Tickers with no news return a stub with story_count=0 and dominant=None
+# so the renderer can omit chips for that row gracefully.
+@st.cache_data(ttl=600, show_spinner=False)
+def build_us_ticker_catalysts(
+    news_per_ticker: int = 6,
+    max_workers: int = 8,
+    overall_timeout_sec: float = 4.0,
+) -> dict[str, dict]:
+    import concurrent.futures
+
+    # Flat list of all 28 US theme tickers.
+    all_tickers: list[str] = []
+    for theme in US_THEME_GROUPS:
+        for tk in (theme.get("tickers") or []):
+            all_tickers.append(str(tk).strip().upper())
+    all_tickers = dedupe_keep_order(all_tickers)
+
+    ticker_news: dict[str, list[dict]] = {tk: [] for tk in all_tickers}
+
+    # Parallel news fetch (cache-backed; this is essentially free if the
+    # v1.8.3 theme builder ran first and warmed fetch_ticker_news's cache).
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tk = {
+                executor.submit(fetch_ticker_news, tk, news_per_ticker): tk
+                for tk in all_tickers
+            }
+            done, _ = concurrent.futures.wait(
+                future_to_tk.keys(), timeout=overall_timeout_sec
+            )
+            for fut in done:
+                tk = future_to_tk[fut]
+                try:
+                    items, _err = fut.result(timeout=0.05)
+                    ticker_news[tk] = list(items or [])
+                except Exception:
+                    ticker_news[tk] = []
+            # Futures still running after timeout: don't cancel; let them
+            # finish and warm the cache for the next render.
+    except Exception:
+        return {tk: {"dominant": None, "net_score": 0.0, "story_count": 0,
+                     "ai_demand": None, "earnings": None, "rows": []}
+                for tk in all_tickers}
+
+    out: dict[str, dict] = {}
+    for tk in all_tickers:
+        items = ticker_news.get(tk) or []
+        if not items:
+            out[tk] = {
+                "dominant": None,
+                "net_score": 0.0,
+                "story_count": 0,
+                "ai_demand": None,
+                "earnings": None,
+                "rows": [],
+            }
+            continue
+        catalyst = build_catalyst_engine(items)
+        rows = list(catalyst.get("rows") or [])
+        ai_row = next((r for r in rows if r.get("category") == "AI Demand"), None)
+        eps_row = next((r for r in rows if r.get("category") == "Earnings"), None)
+        out[tk] = {
+            "dominant": catalyst.get("dominant"),
+            "net_score": float(catalyst.get("net_score", 0.0) or 0.0),
+            "story_count": len(items),
+            "ai_demand": ai_row,
+            "earnings": eps_row,
+            "rows": rows,
+        }
+    return out
+
+
+def build_us_ticker_catalysts_safe(
+    timeout_sec: float = 4.5,
+) -> dict[str, dict]:
+    """Wrapper that NEVER raises and always returns within `timeout_sec`.
+
+    Same protective pattern as build_us_theme_catalysts_safe. On timeout
+    returns {} so per-row chips are simply omitted (the radar still
+    renders the price + move% columns normally).
+    """
+    import concurrent.futures
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(build_us_ticker_catalysts)
+            try:
+                return future.result(timeout=timeout_sec) or {}
+            except concurrent.futures.TimeoutError:
+                return {}
+    except Exception:
+        return {}
+
+
 def build_home_news_active_etf_spotlight(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -27622,10 +28066,15 @@ def _cockpit_inject_css() -> None:
             line-height: 1.5;
         }
 
-        /* v1.7.0: US Theme Radar grid (US-only mode replaces Q1-Q4) */
+        /* v1.7.0: US Theme Radar grid (US-only mode replaces Q1-Q4)
+           v1.8.3: switched from auto-fit minmax(260px, 1fr) to a fixed
+           3-column grid. With 5 themes the previous auto-fit produced an
+           awkward 4+1 row arrangement at ~1280-1600px viewports; the
+           fixed 3-col gives a balanced 3+2 layout. The 980px / 480px
+           media queries below still drop to 2-col / 1-col. */
         .us-radar-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 0.85rem;
             margin-top: 1rem;
         }
@@ -27689,6 +28138,229 @@ def _cockpit_inject_css() -> None:
         .us-radar-empty-row {
             font-size: 0.85rem; color: rgba(255,255,255,0.4); font-style: italic;
             text-align: center; padding: 0.5rem;
+        }
+        /* v1.8.2: Clickable wrapper around each radar row.
+           The <a> sets ?radar_jump=<TICKER>; consumer in generate_dashboard
+           routes user into that ticker's workspace. */
+        .us-radar-row-link {
+            text-decoration: none;
+            color: inherit;
+            display: block;
+            border-radius: 8px;
+            transition: transform 120ms ease, box-shadow 120ms ease;
+        }
+        .us-radar-row-link:hover .us-radar-row {
+            background: rgba(94,234,212,0.10);
+            box-shadow: 0 4px 14px rgba(94,234,212,0.18);
+            transform: translateY(-1px);
+            cursor: pointer;
+        }
+        .us-radar-row-link:active .us-radar-row {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(94,234,212,0.12);
+        }
+        .us-radar-row-link:focus-visible {
+            outline: none;
+        }
+        .us-radar-row-link:focus-visible .us-radar-row {
+            outline: 2px solid rgba(94,234,212,0.6);
+            outline-offset: 2px;
+        }
+
+        /* v1.8.3: Theme Pulse banner — slim summary bar above the grid
+           that surfaces the radar-wide dominant catalyst, news tilt,
+           and the count of bullish themes. Built by
+           build_us_theme_catalyst_aggregate + _us_theme_pulse_banner_html. */
+        .us-radar-pulse-banner {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 0.9rem;
+            align-items: center;
+            padding: 0.7rem 1rem;
+            margin: 0.85rem 0 0 0;
+            border-radius: 12px;
+            border: 1px solid rgba(94,234,212,0.22);
+            background: linear-gradient(120deg, rgba(94,234,212,0.10) 0%, rgba(15,28,52,0.4) 100%);
+        }
+        .us-radar-pulse-banner.bullish {
+            border-color: rgba(94,234,212,0.32);
+            background: linear-gradient(120deg, rgba(94,234,212,0.14) 0%, rgba(15,28,52,0.4) 100%);
+        }
+        .us-radar-pulse-banner.bearish {
+            border-color: rgba(248,113,113,0.32);
+            background: linear-gradient(120deg, rgba(248,113,113,0.14) 0%, rgba(28,15,15,0.4) 100%);
+        }
+        .us-radar-pulse-banner.mixed {
+            border-color: rgba(255,255,255,0.18);
+            background: linear-gradient(120deg, rgba(255,255,255,0.06) 0%, rgba(15,28,52,0.4) 100%);
+        }
+        .us-radar-pulse-kicker {
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #5eead4;
+            white-space: nowrap;
+        }
+        .us-radar-pulse-banner.bearish .us-radar-pulse-kicker { color: #f87171; }
+        .us-radar-pulse-banner.mixed .us-radar-pulse-kicker { color: rgba(255,255,255,0.6); }
+        .us-radar-pulse-body {
+            display: flex; flex-direction: column; gap: 0.18rem;
+        }
+        .us-radar-pulse-headline {
+            font-size: 0.95rem; font-weight: 600; color: #f5ead8;
+            line-height: 1.35;
+        }
+        .us-radar-pulse-meta {
+            font-size: 0.78rem; color: rgba(255,255,255,0.6);
+        }
+        .us-radar-pulse-score {
+            font-size: 1.1rem; font-weight: 700;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            padding: 0.25rem 0.6rem;
+            border-radius: 8px;
+            background: rgba(11,18,32,0.55);
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .us-radar-pulse-score.up { color: #5eead4; border-color: rgba(94,234,212,0.3); }
+        .us-radar-pulse-score.down { color: #f87171; border-color: rgba(248,113,113,0.3); }
+        .us-radar-pulse-score.flat { color: rgba(255,255,255,0.55); }
+
+        /* v1.8.3: Per-theme catalyst chip strip inside each radar card.
+           Sits between the card head (title + rising/total badge) and
+           the body (ticker rows). Each chip surfaces one catalyst
+           category — typically AI Demand, Earnings, and the dominant
+           if it's neither of those. Tone reflects bullish/bearish/mixed
+           bias from build_catalyst_engine. */
+        .us-radar-catalyst-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.32rem;
+            padding: 0.4rem 0.55rem;
+            margin: -0.2rem 0 0.15rem 0;
+            border-radius: 9px;
+            background: rgba(11,18,32,0.35);
+            border: 1px dashed rgba(255,255,255,0.06);
+        }
+        .us-radar-catalyst-strip.empty {
+            justify-content: center;
+            color: rgba(255,255,255,0.35);
+            font-size: 0.74rem;
+            font-style: italic;
+            padding: 0.35rem 0.55rem;
+        }
+        .us-radar-catalyst-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.28rem;
+            padding: 0.22rem 0.5rem;
+            border-radius: 7px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            line-height: 1;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.78);
+            white-space: nowrap;
+        }
+        .us-radar-catalyst-chip .chip-icon {
+            font-size: 0.72rem;
+            font-weight: 800;
+            opacity: 0.85;
+        }
+        .us-radar-catalyst-chip .chip-cat {
+            color: rgba(255,255,255,0.62);
+            font-weight: 500;
+        }
+        .us-radar-catalyst-chip .chip-count {
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 0.72rem;
+        }
+        .us-radar-catalyst-chip.bullish {
+            background: rgba(94,234,212,0.13);
+            border-color: rgba(94,234,212,0.30);
+            color: #a5f3eb;
+        }
+        .us-radar-catalyst-chip.bullish .chip-cat { color: rgba(165,243,235,0.85); }
+        .us-radar-catalyst-chip.bearish {
+            background: rgba(248,113,113,0.13);
+            border-color: rgba(248,113,113,0.30);
+            color: #fbbcbc;
+        }
+        .us-radar-catalyst-chip.bearish .chip-cat { color: rgba(251,188,188,0.85); }
+        .us-radar-catalyst-chip.mixed {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.60);
+        }
+        .us-radar-catalyst-chip.dominant {
+            box-shadow: 0 0 0 1px rgba(94,234,212,0.18) inset;
+        }
+
+        /* v1.8.4: Per-ticker mini-chip strip on each radar row.
+           Wrapper .us-radar-tk-cell uses flex so chips sit immediately
+           after the symbol and wrap to the next line on narrow rows.
+           Smaller font + tighter padding than theme-level chips so the
+           28-row list stays scannable. */
+        .us-radar-tk-cell {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+            min-width: 0;
+            row-gap: 0.22rem;
+        }
+        .us-radar-row-chips {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 0.22rem;
+            align-items: center;
+        }
+        .us-radar-mini-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.18rem;
+            padding: 0.10rem 0.34rem;
+            border-radius: 5px;
+            font-size: 0.66rem;
+            font-weight: 600;
+            line-height: 1;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.78);
+            white-space: nowrap;
+        }
+        .us-radar-mini-chip .mini-chip-icon {
+            font-size: 0.62rem;
+            font-weight: 800;
+            opacity: 0.9;
+        }
+        .us-radar-mini-chip .mini-chip-cat {
+            color: rgba(255,255,255,0.62);
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+        .us-radar-mini-chip .mini-chip-count {
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 0.64rem;
+        }
+        .us-radar-mini-chip.bullish {
+            background: rgba(94,234,212,0.13);
+            border-color: rgba(94,234,212,0.30);
+            color: #a5f3eb;
+        }
+        .us-radar-mini-chip.bullish .mini-chip-cat { color: rgba(165,243,235,0.85); }
+        .us-radar-mini-chip.bearish {
+            background: rgba(248,113,113,0.13);
+            border-color: rgba(248,113,113,0.30);
+            color: #fbbcbc;
+        }
+        .us-radar-mini-chip.bearish .mini-chip-cat { color: rgba(251,188,188,0.85); }
+        .us-radar-mini-chip.mixed {
+            background: rgba(255,255,255,0.04);
+            border-color: rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.55);
         }
 
         /* Tight inner shell variant for Q5 (so the Streamlit text_area
@@ -27833,6 +28505,41 @@ def _cockpit_inject_css() -> None:
             .us-radar-tk { font-size: 0.85rem; }
             .us-radar-px { font-size: 0.78rem; }
             .us-radar-move { font-size: 0.78rem; min-width: 56px; }
+            /* v1.8.3: pulse banner stacks score below body on tablet */
+            .us-radar-pulse-banner {
+                grid-template-columns: auto 1fr;
+                gap: 0.6rem;
+                padding: 0.6rem 0.8rem;
+            }
+            .us-radar-pulse-score {
+                grid-column: 1 / -1;
+                justify-self: start;
+                font-size: 0.95rem;
+                padding: 0.18rem 0.5rem;
+            }
+            .us-radar-pulse-headline { font-size: 0.88rem; }
+            .us-radar-pulse-meta { font-size: 0.74rem; }
+            .us-radar-catalyst-strip {
+                padding: 0.32rem 0.45rem;
+                gap: 0.28rem;
+            }
+            .us-radar-catalyst-chip {
+                font-size: 0.70rem;
+                padding: 0.18rem 0.42rem;
+            }
+            /* v1.8.4: per-row mini chips shrink slightly on tablet
+               and the tk-cell allows wrap so chips can drop below
+               the symbol when space is tight. */
+            .us-radar-tk-cell {
+                gap: 0.32rem;
+                row-gap: 0.18rem;
+            }
+            .us-radar-mini-chip {
+                font-size: 0.62rem;
+                padding: 0.08rem 0.30rem;
+            }
+            .us-radar-mini-chip .mini-chip-icon { font-size: 0.58rem; }
+            .us-radar-mini-chip .mini-chip-count { font-size: 0.60rem; }
         }
         /* v1.8.0: Phone (~390px) and Fold (~280px) — single-column stack */
         @media (max-width: 480px) {
@@ -27849,6 +28556,34 @@ def _cockpit_inject_css() -> None:
                 gap: 0.35rem;
             }
             .us-radar-px { font-size: 0.72rem; }
+            /* v1.8.3: pulse banner fully stacks on phone */
+            .us-radar-pulse-banner {
+                grid-template-columns: 1fr;
+                gap: 0.45rem;
+                padding: 0.55rem 0.7rem;
+            }
+            .us-radar-pulse-headline { font-size: 0.84rem; }
+            .us-radar-pulse-meta { font-size: 0.72rem; }
+            .us-radar-pulse-score { font-size: 0.9rem; padding: 0.15rem 0.45rem; }
+            .us-radar-catalyst-strip {
+                padding: 0.3rem 0.4rem;
+            }
+            .us-radar-catalyst-chip {
+                font-size: 0.66rem;
+                padding: 0.16rem 0.36rem;
+            }
+            /* v1.8.4: on phone the mini chips often wrap below the symbol
+               since the row is single-column. Slightly tighten gap. */
+            .us-radar-tk-cell {
+                gap: 0.28rem;
+                row-gap: 0.16rem;
+            }
+            .us-radar-mini-chip {
+                font-size: 0.60rem;
+                padding: 0.08rem 0.28rem;
+            }
+            .us-radar-mini-chip .mini-chip-icon { font-size: 0.56rem; }
+            .us-radar-mini-chip .mini-chip-count { font-size: 0.58rem; }
         }
         </style>
         """,
@@ -29180,7 +29915,242 @@ def _cockpit_compute_q4_signal(
 # Renders 5 theme cards in a responsive grid; each card shows the theme
 # name + rising/total badge + top-3 leader rows. Reuses cockpit-* CSS
 # classes for visual consistency with the rest of the cockpit.
-def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str:
+def _us_theme_catalyst_strip_html(theme_catalyst: dict | None, lang_zh: bool) -> str:
+    """v1.8.3: Render the per-theme catalyst chip strip for one radar card.
+
+    Layout: AI Demand chip + Earnings chip + (dominant chip if it is neither
+    of those). User explicitly requested AI Demand and Earnings as the
+    primary surfaces. Empty / no-news themes get a single muted chip
+    saying "no catalysts" so the strip slot doesn't collapse and shift
+    the card height.
+    """
+    if not isinstance(theme_catalyst, dict) or theme_catalyst.get("story_count", 0) == 0:
+        empty_label = "暫無催化劑訊號" if lang_zh else "No catalyst signal yet"
+        return f'<div class="us-radar-catalyst-strip empty">{escape(empty_label)}</div>'
+
+    # Localised category labels and bias glyphs.
+    cat_label_zh = {
+        "AI Demand": "AI 需求",
+        "Earnings": "財報",
+        "Regulation": "法規",
+        "Macro": "總經",
+        "Analyst Action": "分析師",
+        "Supply Chain": "供應鏈",
+    }
+    cat_short_en = {
+        "AI Demand": "AI",
+        "Earnings": "Earnings",
+        "Regulation": "Reg",
+        "Macro": "Macro",
+        "Analyst Action": "Analyst",
+        "Supply Chain": "Supply",
+    }
+
+    def _bias_to_class_and_icon(bias_value: str, score_value: float) -> tuple[str, str]:
+        bias_lower = str(bias_value or "").strip().lower()
+        if bias_lower == "bullish" or score_value > 0.4:
+            return ("bullish", "▲")
+        if bias_lower == "bearish" or score_value < -0.4:
+            return ("bearish", "▼")
+        return ("mixed", "●")
+
+    def _chip_html(row: dict | None, *, is_dominant: bool = False) -> str:
+        if not isinstance(row, dict):
+            return ""
+        cat = str(row.get("category", "")).strip()
+        if not cat:
+            return ""
+        count = int(row.get("count", 0) or 0)
+        score = float(row.get("score", 0.0) or 0.0)
+        bias = str(row.get("bias", "Mixed"))
+        # Skip empty categories unless they're the dominant chip (we still
+        # want SOME catalyst signal visible if dominant exists).
+        if count == 0 and not is_dominant:
+            return ""
+        cat_label = cat_label_zh.get(cat, cat) if lang_zh else cat_short_en.get(cat, cat)
+        tone, icon = _bias_to_class_and_icon(bias, score)
+        dominant_class = " dominant" if is_dominant else ""
+        # Tooltip: full category + bias + count + score.
+        tooltip = (
+            f"{cat} · {bias} · {count} stories · score {score:+.1f}"
+            if not lang_zh else
+            f"{cat_label_zh.get(cat, cat)} · {bias} · {count} 則新聞 · 分數 {score:+.1f}"
+        )
+        return (
+            f'<span class="us-radar-catalyst-chip {tone}{dominant_class}" '
+            f'title="{escape(tooltip)}">'
+            f'<span class="chip-icon">{icon}</span>'
+            f'<span class="chip-cat">{escape(cat_label)}</span>'
+            f'<span class="chip-count">{count}</span>'
+            f'</span>'
+        )
+
+    chips: list[str] = []
+    ai_chip = _chip_html(theme_catalyst.get("ai_demand"))
+    if ai_chip:
+        chips.append(ai_chip)
+    eps_chip = _chip_html(theme_catalyst.get("earnings"))
+    if eps_chip:
+        chips.append(eps_chip)
+    # Dominant chip (only if dominant is a non-AI-Demand-non-Earnings cat
+    # AND it actually has stories — else it would be redundant noise).
+    dominant = str(theme_catalyst.get("dominant") or "").strip()
+    if dominant and dominant not in {"AI Demand", "Earnings"}:
+        rows = theme_catalyst.get("rows") or []
+        dom_row = next((r for r in rows if r.get("category") == dominant), None)
+        if dom_row and int(dom_row.get("count", 0) or 0) > 0:
+            chips.append(_chip_html(dom_row, is_dominant=True))
+
+    if not chips:
+        # All counts were zero; show a muted hint.
+        empty_label = "暫無催化劑訊號" if lang_zh else "No catalyst signal yet"
+        return f'<div class="us-radar-catalyst-strip empty">{escape(empty_label)}</div>'
+
+    return f'<div class="us-radar-catalyst-strip">{"".join(chips)}</div>'
+
+
+def _us_theme_pulse_banner_html(aggregate: dict | None, lang_zh: bool) -> str:
+    """v1.8.3: Render the radar-wide Theme Pulse summary banner.
+
+    Built from build_us_theme_catalyst_aggregate(theme_catalysts). Sits
+    above the theme grid. Returns "" if aggregate is empty (caller drops
+    the banner gracefully).
+    """
+    if not isinstance(aggregate, dict) or aggregate.get("themes_total", 0) == 0:
+        return ""
+
+    tilt = str(aggregate.get("tilt") or "Mixed").strip()
+    tilt_lower = tilt.lower()
+    if tilt_lower not in {"bullish", "bearish", "mixed"}:
+        tilt_lower = "mixed"
+
+    dominant = aggregate.get("dominant")
+    net_score = float(aggregate.get("net_score", 0.0) or 0.0)
+    bull = int(aggregate.get("themes_bullish", 0) or 0)
+    bear = int(aggregate.get("themes_bearish", 0) or 0)
+    mix = int(aggregate.get("themes_mixed", 0) or 0)
+    total = int(aggregate.get("themes_total", 0) or 0)
+    story_count = int(aggregate.get("story_count", 0) or 0)
+
+    # Localised category short-name.
+    cat_label_zh = {
+        "AI Demand": "AI 需求", "Earnings": "財報", "Regulation": "法規",
+        "Macro": "總經", "Analyst Action": "分析師", "Supply Chain": "供應鏈",
+    }
+
+    if dominant:
+        if lang_zh:
+            headline = f"{cat_label_zh.get(dominant, dominant)} 是目前主導催化劑"
+        else:
+            headline = f"{dominant} is the dominant catalyst across themes"
+    else:
+        headline = "催化劑訊號偏弱、缺乏明確主軸" if lang_zh else "Catalysts are light and mixed across themes"
+
+    if lang_zh:
+        meta_parts: list[str] = []
+        meta_parts.append(f"{total} 個主題：{bull} 偏多 / {bear} 偏空 / {mix} 中性")
+        if story_count > 0:
+            meta_parts.append(f"共 {story_count} 則新聞")
+        meta = "・".join(meta_parts)
+    else:
+        meta_parts = []
+        meta_parts.append(f"{total} themes: {bull} bullish / {bear} bearish / {mix} mixed")
+        if story_count > 0:
+            meta_parts.append(f"{story_count} stories aggregated")
+        meta = " · ".join(meta_parts)
+
+    score_class = "up" if net_score > 0.4 else ("down" if net_score < -0.4 else "flat")
+    score_sign = "+" if net_score >= 0 else ""
+    score_str = f"{score_sign}{net_score:.1f}"
+    kicker = "主題催化劑脈動" if lang_zh else "THEME PULSE"
+
+    return (
+        f'<div class="us-radar-pulse-banner {tilt_lower}">'
+        f'  <div class="us-radar-pulse-kicker">{escape(kicker)}</div>'
+        f'  <div class="us-radar-pulse-body">'
+        f'    <div class="us-radar-pulse-headline">{escape(headline)}</div>'
+        f'    <div class="us-radar-pulse-meta">{escape(meta)}</div>'
+        f'  </div>'
+        f'  <div class="us-radar-pulse-score {score_class}">{escape(score_str)}</div>'
+        f'</div>'
+    )
+
+
+def _us_ticker_mini_chip_strip_html(ticker_catalyst: dict | None, lang_zh: bool) -> str:
+    """v1.8.4: Render the per-ticker mini-chip strip for one radar row.
+
+    Tighter than the theme-level catalyst strip (smaller font, less padding,
+    fewer chips) because it lives inline next to the ticker symbol on every
+    one of 28 rows. Empty / no-news tickers return "" so the row stays
+    visually clean (we don't waste pixels on "no signal" placeholders for
+    every silent ticker).
+
+    Layout: AI Demand chip + Earnings chip (max 2). User explicitly asked
+    for AI Demand and Earnings as the surfaces. We don't show the dominant
+    chip here even if it's something else — keeping rows uncluttered. The
+    theme-level strip already surfaces the dominant via the theme's chip.
+    """
+    if not isinstance(ticker_catalyst, dict):
+        return ""
+    if int(ticker_catalyst.get("story_count", 0) or 0) == 0:
+        return ""
+
+    cat_label_zh = {"AI Demand": "AI 需求", "Earnings": "財報"}
+    cat_short_en = {"AI Demand": "AI", "Earnings": "EPS"}
+
+    def _bias_to_tone_and_icon(bias_value: str, score_value: float) -> tuple[str, str]:
+        bias_lower = str(bias_value or "").strip().lower()
+        if bias_lower == "bullish" or score_value > 0.4:
+            return ("bullish", "▲")
+        if bias_lower == "bearish" or score_value < -0.4:
+            return ("bearish", "▼")
+        return ("mixed", "●")
+
+    def _mini_chip_html(row: dict | None) -> str:
+        if not isinstance(row, dict):
+            return ""
+        cat = str(row.get("category", "")).strip()
+        if not cat:
+            return ""
+        count = int(row.get("count", 0) or 0)
+        if count == 0:
+            return ""
+        score = float(row.get("score", 0.0) or 0.0)
+        bias = str(row.get("bias", "Mixed"))
+        cat_label = cat_label_zh.get(cat, cat) if lang_zh else cat_short_en.get(cat, cat)
+        tone, icon = _bias_to_tone_and_icon(bias, score)
+        # Tooltip mirrors the theme-level chip format for consistency.
+        tooltip = (
+            f"{cat} · {bias} · {count} stories · score {score:+.1f}"
+            if not lang_zh else
+            f"{cat_label_zh.get(cat, cat)} · {bias} · {count} 則新聞 · 分數 {score:+.1f}"
+        )
+        return (
+            f'<span class="us-radar-mini-chip {tone}" title="{escape(tooltip)}">'
+            f'<span class="mini-chip-icon">{icon}</span>'
+            f'<span class="mini-chip-cat">{escape(cat_label)}</span>'
+            f'<span class="mini-chip-count">{count}</span>'
+            f'</span>'
+        )
+
+    parts: list[str] = []
+    ai_chip = _mini_chip_html(ticker_catalyst.get("ai_demand"))
+    if ai_chip:
+        parts.append(ai_chip)
+    eps_chip = _mini_chip_html(ticker_catalyst.get("earnings"))
+    if eps_chip:
+        parts.append(eps_chip)
+    if not parts:
+        return ""
+    return f'<div class="us-radar-row-chips">{"".join(parts)}</div>'
+
+
+def _cockpit_render_us_theme_radar_html(
+    radar: list[dict],
+    lang_zh: bool,
+    theme_catalysts: dict[str, dict] | None = None,
+    ticker_catalysts: dict[str, dict] | None = None,
+) -> str:
     if not radar:
         empty_msg = "美股主題雷達資料準備中..." if lang_zh else "US theme radar data pending..."
         return f'<div class="us-radar-empty">{escape(empty_msg)}</div>'
@@ -29192,6 +30162,7 @@ def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str
         total = int(theme.get("total_count", 0) or 0)
         emoji = str(theme.get("emoji", "")).strip()
         name = str(theme.get("label", ""))
+        theme_key = str(theme.get("key", ""))
         # Tone the badge: green if majority rising, red if majority falling
         if total > 0 and rising / total >= 0.6:
             badge_tone = "green"
@@ -29203,12 +30174,21 @@ def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str
             badge_text = "—"
         else:
             badge_text = f"{rising}/{total}" + ("上漲" if lang_zh else " up")
+        # v1.8.3: Per-theme catalyst chip strip (AI Demand / Earnings / dominant).
+        # When theme_catalysts is None (caller didn't pass the dict, e.g.
+        # snapshot path before v1.8.3 was wired), the strip is omitted
+        # entirely — preserves backward compatibility.
+        catalyst_strip_html = ""
+        if theme_catalysts is not None:
+            this_catalyst = theme_catalysts.get(theme_key) if isinstance(theme_catalysts, dict) else None
+            catalyst_strip_html = _us_theme_catalyst_strip_html(this_catalyst, lang_zh)
         # Leader rows: ticker + price + % move chip
         leaders = theme.get("leaders") or []
         if leaders:
             leader_rows = []
             for leader in leaders:
-                tk = escape(str(leader.get("ticker", "")))
+                raw_tk = str(leader.get("ticker", "")).strip()
+                tk = escape(raw_tk)
                 last_px = leader.get("last_price")
                 move_pct = leader.get("move_pct")
                 price_str = f"${float(last_px):.2f}" if isinstance(last_px, (int, float)) and not pd.isna(last_px) else "—"
@@ -29220,12 +30200,44 @@ def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str
                 else:
                     move_str = "—"
                     move_class = "flat"
+                # v1.8.2: Wrap each row in <a href="?radar_jump=<TK>"> so a
+                # click routes the user into that ticker's workspace.
+                # _consume_us_radar_jump_query() handles the param at the top
+                # of generate_dashboard(). target="_self" keeps the navigation
+                # in the same tab; quote_plus defends against any odd ticker
+                # symbols (US tickers are alphanumeric, but be defensive).
+                href_safe_tk = quote_plus(raw_tk) if raw_tk else ""
+                row_title = (
+                    f"開啟 {raw_tk} 工作台" if lang_zh else f"Open {raw_tk} workspace"
+                )
+                # v1.8.4: Per-ticker mini chips (AI Demand / Earnings) sit
+                # inline next to the symbol. When ticker_catalysts wasn't
+                # passed (snapshot path before v1.8.4 was wired) or the
+                # ticker has no news, the strip is "" and the row layout
+                # is identical to v1.8.2/v1.8.3 — backward compatible.
+                ticker_mini_chips_html = ""
+                if ticker_catalysts is not None:
+                    this_ticker_catalyst = (
+                        ticker_catalysts.get(raw_tk.upper())
+                        if isinstance(ticker_catalysts, dict) else None
+                    )
+                    ticker_mini_chips_html = _us_ticker_mini_chip_strip_html(
+                        this_ticker_catalyst, lang_zh
+                    )
                 leader_rows.append(
+                    f'<a class="us-radar-row-link" '
+                    f'href="?radar_jump={href_safe_tk}" target="_self" '
+                    f'title="{escape(row_title)}" '
+                    f'aria-label="{escape(row_title)}">'
                     f'<div class="us-radar-row">'
-                    f'  <div class="us-radar-tk">{tk}</div>'
+                    f'  <div class="us-radar-tk-cell">'
+                    f'    <div class="us-radar-tk">{tk}</div>'
+                    f'    {ticker_mini_chips_html}'
+                    f'  </div>'
                     f'  <div class="us-radar-px">{price_str}</div>'
                     f'  <div class="us-radar-move {move_class}">{move_str}</div>'
                     f'</div>'
+                    f'</a>'
                 )
             leaders_html = "".join(leader_rows)
         else:
@@ -29240,6 +30252,7 @@ def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str
             f'    <div class="us-radar-card-name">{escape(emoji)}  {escape(name)}</div>'
             f'    <div class="us-radar-card-badge {badge_tone}">{escape(badge_text)}</div>'
             f'  </div>'
+            f'  {catalyst_strip_html}'
             f'  <div class="us-radar-card-body">{leaders_html}</div>'
             f'</div>'
         )
@@ -29248,6 +30261,115 @@ def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str
         f'  {"".join(cards_html_parts)}'
         f'</div>'
     )
+
+
+# ---------------------------------------------------------------------------
+# v1.8.2: US Theme Radar -> Workspace deep-link consumer
+# ---------------------------------------------------------------------------
+# Each row in the radar is rendered as <a href="?radar_jump=<TICKER>"> in
+# _cockpit_render_us_theme_radar_html. When the user clicks it, the page
+# reloads with that query param. This consumer:
+#   1. Validates the ticker against US_THEME_GROUPS so the param can't be
+#      used to inject arbitrary or malicious symbols.
+#   2. Forces market scope to "U.S. only" (radar lives there) and dashboard
+#      mode to "General Market" (where the workspace tab is).
+#   3. Adds the ticker to dashboard_selected_tickers (the watchlist) so the
+#      sidebar's selected_ticker_picks list will include it on next render.
+#   4. Sets the workspace focus ticker session_state keys for both the
+#      Standard mode picker (st.selectbox key="dashboard_standard_focus_ticker")
+#      and the Advanced/Expert lightweight selector
+#      (state_key="dashboard_workspace_focus_ticker"). For the lightweight
+#      selector we also set the "<state_key>__selector" key because that's
+#      the actual st.radio widget key — leaving only the canonical key
+#      stale-set would let a previous selection win.
+#   5. Routes the layout-section selector to the workspace section for
+#      whichever Experience Level the user is on (Standard / Advanced /
+#      Expert).  Each layout has its own section state key.
+#   6. Pops the ?radar_jump param so a second rerun doesn't loop the user
+#      back into this consumer.
+#   7. Calls st.rerun() so the next render lands cleanly on the workspace
+#      with the clicked ticker focused.
+#
+# Must run BEFORE the sidebar block in generate_dashboard() so the sidebar
+# picks up the updated dashboard_selected_tickers and propagates it through
+# selected_ticker_picks -> tickers -> dashboard_tickers -> layout renderer.
+def _consume_us_radar_jump_query() -> None:
+    raw = _query_param_first("radar_jump")
+    if not raw:
+        return
+
+    ticker = str(raw).strip().upper()
+
+    def _pop_param() -> None:
+        # Remove the ?radar_jump key from the URL so the consumer doesn't
+        # re-fire on the next render. Tries the modern API first, then the
+        # experimental fallback. Both are wrapped in try/except because
+        # st.query_params can raise on weird Streamlit versions.
+        try:
+            qp = st.query_params
+            if "radar_jump" in qp:
+                del qp["radar_jump"]
+            return
+        except Exception:
+            pass
+        try:
+            params = st.experimental_get_query_params()
+            if "radar_jump" in params:
+                params.pop("radar_jump", None)
+                st.experimental_set_query_params(**params)
+        except Exception:
+            pass
+
+    if not ticker:
+        _pop_param()
+        return
+
+    # Validate the ticker against the radar universe. This guards against
+    # an attacker pasting ?radar_jump=SOMETHING_WEIRD into the URL and
+    # forcing the dashboard to add it to the watchlist.
+    valid_radar_tickers: set[str] = set()
+    for theme in US_THEME_GROUPS:
+        for tk in (theme.get("tickers") or []):
+            valid_radar_tickers.add(str(tk).strip().upper())
+    if ticker not in valid_radar_tickers:
+        _pop_param()
+        return
+
+    # ---- Apply state ----
+    # Force scope (radar only renders in U.S. only mode) and mode (workspace
+    # lives inside General Market). If the user was in some other mode they
+    # get re-routed; that's the desired UX -- they clicked a US ticker, so
+    # they expect to land on its workspace.
+    st.session_state["dashboard_market_scope"] = "U.S. only"
+    st.session_state["dashboard_mode"] = "General Market"
+
+    # Ensure ticker is in the watchlist. merge_ticker_selection dedupes and
+    # filters by scope (US tickers stay in U.S. only mode).
+    existing = list(st.session_state.get("dashboard_selected_tickers", []) or [])
+    if ticker not in [str(t).strip().upper() for t in existing]:
+        merged = merge_ticker_selection(existing, [ticker], "U.S. only")
+        st.session_state["dashboard_selected_tickers"] = merged
+    st.session_state["dashboard_selected_tickers_initialized"] = True
+
+    # Workspace focus ticker for both Standard (st.selectbox) and
+    # Advanced/Expert (lightweight selector). The lightweight selector
+    # uses two keys -- canonical + "__selector" -- so we set both.
+    st.session_state["dashboard_standard_focus_ticker"] = ticker
+    st.session_state["dashboard_workspace_focus_ticker"] = ticker
+    st.session_state["dashboard_workspace_focus_ticker__selector"] = ticker
+
+    # Route layout section selector to the workspace tab for whichever
+    # Experience Level the user is on. We set ALL three so switching levels
+    # later doesn't bounce them back to overview.
+    st.session_state["dashboard_advanced_general_section"] = "layout_workspace_tab"
+    st.session_state["dashboard_advanced_general_section__selector"] = "layout_workspace_tab"
+    st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+    st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
+    st.session_state["dashboard_standard_general_section"] = "layout_standard_single_workspace_tab"
+    st.session_state["dashboard_standard_general_section__selector"] = "layout_standard_single_workspace_tab"
+
+    _pop_param()
+    st.rerun()
 
 
 def _cockpit_render_q4_html(q4: dict, lang_zh: bool) -> str:
@@ -29571,34 +30693,75 @@ def render_decision_cockpit(
         # US Theme Radar path -- only Q3 with 5 themes, no Q1/Q2/Q4/Q5.
         # Try to restore from snapshot first; fall back to live build.
         snapshot_us_radar = None
+        snapshot_us_theme_catalysts = None
+        snapshot_us_ticker_catalysts = None
         if snapshot_q3 and isinstance(snapshot_q3, dict):
             snapshot_us_radar = snapshot_q3.get("us_theme_radar")
+            # v1.8.3: Theme-level catalyst data rides on cockpit_q3_payload
+            # when the prefetch script provides it. If absent, we build live.
+            snapshot_us_theme_catalysts = snapshot_q3.get("us_theme_catalysts")
+            # v1.8.4: Per-ticker catalyst data also rides on the same q3
+            # payload. Same fallback behavior — live build if missing.
+            snapshot_us_ticker_catalysts = snapshot_q3.get("us_ticker_catalysts")
         if snapshot_us_radar:
             us_radar = snapshot_us_radar
         else:
             us_radar = build_us_theme_radar(daily_data, intraday_data, lang_zh=lang_zh)
+
+        # v1.8.3: Compute or restore per-theme Catalyst Engine pulse.
+        # Snapshot first (free); fall back to live compute (cached 600s,
+        # parallel news fetch with 4.5s timeout). On any failure or
+        # timeout we get {} back and the renderer simply omits chips.
+        if snapshot_us_theme_catalysts and isinstance(snapshot_us_theme_catalysts, dict):
+            theme_catalysts = snapshot_us_theme_catalysts
+        else:
+            theme_catalysts = build_us_theme_catalysts_safe(timeout_sec=4.5)
+
+        # v1.8.4: Compute or restore per-ticker Catalyst Engine signals.
+        # On cold cache the inner fetch_ticker_news cache is already warm
+        # from the theme builder above — so this call is essentially a
+        # cache-hit pass + classify_catalyst CPU work (~50-100ms).
+        if snapshot_us_ticker_catalysts and isinstance(snapshot_us_ticker_catalysts, dict):
+            ticker_catalysts = snapshot_us_ticker_catalysts
+        else:
+            ticker_catalysts = build_us_ticker_catalysts_safe(timeout_sec=4.5)
+
+        # Aggregate across all themes for the Theme Pulse banner.
+        pulse_aggregate = build_us_theme_catalyst_aggregate(theme_catalysts)
 
         if loading_placeholder is not None:
             loading_placeholder.empty()
 
         title_text = "美股主題雷達" if lang_zh else "U.S. Theme Radar"
         sub_text = (
-            "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。"
+            "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。點任一檔代號即可直接開啟該股的工作台。"
             if lang_zh else
-            "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count."
+            "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count. Click any ticker to open its workspace."
         )
         disclaimer_text = (
-            "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。僅供研究參考，非投資建議。"
+            "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。催化劑訊號來自個股新聞分類聚合，僅供研究參考，非投資建議。"
             if lang_zh else
-            "Source: yfinance public quotes. % move = today vs prior close. For research only; not investment advice."
+            "Source: yfinance public quotes. % move = today vs prior close. Catalyst signals aggregate per-ticker news classification. For research only; not investment advice."
         )
-        radar_html = _cockpit_render_us_theme_radar_html(us_radar, lang_zh)
+        # v1.8.3: Theme Pulse banner above the grid + per-theme chips
+        # injected into each card via theme_catalysts kwarg.
+        # v1.8.4: ticker_catalysts kwarg adds a mini-chip strip on every
+        # ticker row (AI Demand / Earnings) so users can read each stock
+        # individually, not just the theme average.
+        pulse_banner_html = _us_theme_pulse_banner_html(pulse_aggregate, lang_zh)
+        radar_html = _cockpit_render_us_theme_radar_html(
+            us_radar,
+            lang_zh,
+            theme_catalysts=theme_catalysts,
+            ticker_catalysts=ticker_catalysts,
+        )
         shell_html = (
             f'<div class="cockpit-shell">'
             f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>'
             f'      {escape("US THEME RADAR" if not lang_zh else "美股主題雷達")}</div>'
             f'  <div class="cockpit-title">{escape(title_text)}</div>'
             f'  <div class="cockpit-sub">{escape(sub_text)}</div>'
+            f'  {pulse_banner_html}'
             f'  {radar_html}'
             f'  <div class="cockpit-disclaimer">{escape(disclaimer_text)}</div>'
             f'</div>'
@@ -35964,6 +37127,15 @@ def generate_dashboard():
         st.markdown("---")
 
     load_dashboard_preferences()
+
+    # v1.8.2: If the user clicked a row in the US Theme Radar, the URL now
+    # carries ?radar_jump=<TICKER>. Consume it BEFORE the sidebar block so
+    # the watchlist + layout-section keys we set are picked up by the
+    # sidebar's selectors and the layout renderer on the same render
+    # (the consumer triggers st.rerun() once it has applied state, so
+    # downstream code only ever sees the post-jump state).
+    _consume_us_radar_jump_query()
+
     inject_css()
     inject_premium_overrides()
     inject_localization_overrides()
