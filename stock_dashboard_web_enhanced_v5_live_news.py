@@ -3,10 +3,10 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.4.7
-Updated : 2026-05-06
+Version : v1.8.0
+Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
-Lines   : ~37,250
+Lines   : ~39,290
 
 --------------------------------------------------------------------------------
 WHAT THIS FILE DOES
@@ -20,6 +20,95 @@ The Decision Cockpit (Q1-Q5) sits at the top of every non-ETF-Lab mode and
 synthesises today's market into a single decision spine:
   Q1 today's tradeability    Q2 strongest theme    Q3 worth watching
   Q4 chase / wait / avoid    Q5 holdings observation notes
+
+================================================================================
+v1.8.0 STRUCTURE QUICK REFERENCE  (read this first if you're new to this file)
+================================================================================
+
+MAIN ENTRY FLOW (top-down on every page):
+  1. Hero Bar           (~ L 9100)  — Mode / Scope / Lang / Experience-level
+  2. Freshness Bar      (~ L10300)  — Supabase snapshot date + force-refresh
+  3. Global Indicator   (~ L10800)  — TW: 5 cards, US: 3 cards
+  4. Decision Cockpit   (~ L29050)  — TW: Q1-Q5 / US: Theme Radar
+  5. Editor Analysis + Watchlist + Mode-specific layouts
+
+MARKET SCOPES:
+  - "Taiwan only"  (default)
+  - "U.S. only"
+  Switching scope changes:
+   * Global indicator cards          (TW: 加權/量能/外資/投信/自營商 vs US: NASDAQ/SP500/DOW)
+   * Cockpit content                 (TW: Q1-Q5 / US: 5-theme radar only)
+   * Default watchlist tickers
+   * Snapshot loaded from Supabase   (UNIQUE on snapshot_date + market_scope)
+
+US THEME RADAR (v1.7.x), shown ONLY in U.S. only mode (replaces Q1-Q5):
+  - 🌟 MAG 7         — NVDA, META, AAPL, AMZN, GOOGL, MSFT, TSLA  (7 ticks)
+  - 🛢️ Oil Equities  — XLE, XOM, CVX, OXY, COP                    (5 ticks)
+  - 🏗️ Materials     — LIN, SHW, FCX, NEM, APD                    (5 ticks)
+  - 💾 DRAM/Memory   — MU, WDC, SNDK                              (3 ticks)
+  - 🏢 Data Center   — DLR, EQIX, VRT, NVT, ETN, MOD, AVGO, ANET  (8 ticks)
+  Total: 28 tickers, each card shows ALL its tickers sorted by today's % move.
+
+PREFETCH SYSTEM (v1.6.0):
+  - Companion script: prefetch_main_dashboard_job.py (in repo root)
+  - GitHub Actions workflow: .github/workflows/prefetch-daily.yml
+  - Schedule: 22:00 UTC weekdays = 06:00 Taiwan next day
+  - Writes to Supabase main_dashboard_snapshot table for both scopes
+  - Dashboard tries snapshot-first; falls back to live yfinance fetch
+  - "🔄 抓今天最新" button in freshness bar forces live re-fetch
+
+KEY SESSION_STATE KEYS:
+  - dashboard_market_scope          : "Taiwan only" | "U.S. only"
+  - dashboard_language              : "繁體中文" | "English"
+  - dashboard_layout_mode           : "Standard" | "Advanced" | "Expert"
+  - dashboard_experience_level      : "beginner" | "intermediate" | "advanced" | "expert"
+  - dashboard_mode                  : "General Market" | "Active ETF Lab" |
+                                      "Supply Chain Lab" | "Taiwan Futures Lab"
+  - _force_live_main_dashboard      : bool — set by refresh button to bypass snapshot
+
+KEY GLOBAL CONSTANTS:
+  - GLOBAL_REFERENCE_INDICES_US     : NASDAQ / SP500 / DOW (3 entries)
+  - GLOBAL_REFERENCE_INDICES_TW     : ^TWII + 4 sentinels (5 cards total)
+  - US_THEME_GROUPS                 : 5 themes × 28 tickers
+  - SUPPLY_CHAIN_FOCUS_CONFIGS      : Taiwan supply-chain master registry
+
+KEY HELPERS:
+  - _normalize_market_scope(value)  : Coerces legacy "Mixed" values to "Taiwan only"
+  - get_indices_for_scope(scope)    : Returns scope-relevant indicator list
+  - default_tickers_for_market_scope(scope) : Default watchlist for scope
+  - load_main_dashboard_snapshot(scope) : Supabase reader (10-min cache)
+  - render_snapshot_freshness_bar(row, lang_zh) : Snapshot age badge + refresh btn
+  - build_us_theme_radar(daily, intraday, *, top_n_per_theme=0, auto_fetch=True)
+      auto_fetch=True self-fetches 28 US tickers when daily_data is empty
+      top_n_per_theme=0 means show ALL tickers (no slice)
+
+MOBILE RWD (v1.8.0):
+  Breakpoints layered top-to-bottom across 5 critical sections:
+   * 1100px — Hero Bar exp-button grid drops from 4-col to 2-col
+   * 980px  — Scenario grids stack
+   *  768px — Hero Bar fonts shrink, global indicator goes 2-col,
+              cockpit row stacks, US radar goes 2-col
+   *  480px — All grids 1-col, padding tighter, freshness err-chip hidden
+  Universal utilities: stDataFrame horizontal scroll, st.button 42px tap
+  target, stTabs horizontal scroll, sidebar padding compaction.
+
+KNOWN OPEN BUGS (as of v1.8.0):
+  - Language switching while in default scope or after switching to U.S. only
+    causes the dashboard to NOT reflect the correct market scope's content.
+    Likely: snapshot cache key doesn't include language, OR the language
+    selectbox triggers st.rerun() before the new scope writes to session_state.
+
+WHEN MAKING CHANGES TO THIS FILE:
+  - DO NOT REFACTOR. This is intentionally a single 39k-line file; splitting
+    into modules will break the import path used by prefetch_main_dashboard_job.py.
+  - Search before adding: this file already has helpers for most common ops.
+  - Translation keys live in _TRANSLATIONS_ZH / _TRANSLATIONS_EN (~L 6200-7200).
+  - For new global indicator cards, extend GLOBAL_REFERENCE_INDICES_TW or
+    GLOBAL_REFERENCE_INDICES_US, NOT a parallel structure.
+  - For new prefetched data, add to main_dashboard_snapshot table schema +
+    update prefetch_main_dashboard_job.py:build_snapshot_for_scope().
+  - For mobile RWD on a new component, extend existing @media queries (768/480)
+    rather than creating new breakpoints — keeps behavior consistent.
 
 ================================================================================
 TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
@@ -125,6 +214,87 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.8.0 (2026-05-09)
+  - Mobile RWD audit phase 1: layered @media breakpoints (1100/980/768/480)
+    across Hero Bar, Freshness Bar, Global Indicator, Decision Cockpit, and
+    US Theme Radar. Touch-friendly 42px+ tap targets, stTabs horizontal
+    scroll, sidebar padding compaction at <480px. ~100 lines new CSS;
+    no Python logic changes.
+
+v1.7.2 (2026-05-09)
+  - US Theme Radar: each theme card now displays ALL its tickers (not just
+    TOP 3). Sort by today's % move descending. Subtitle updated.
+  - top_n_per_theme=0 means "show all"; positive int still slices.
+
+v1.7.1 (2026-05-09)
+  - build_us_theme_radar gains auto_fetch=True kwarg. When daily_data lacks
+    US tickers (typical: TW watchlist active when user switches to U.S. only),
+    the function self-fetches all 28 US theme tickers via fetch_daily_data.
+    Prefetch script passes auto_fetch=False to skip the redundant fetch.
+
+v1.7.0 (2026-05-09)
+  - US Theme Radar (replaces Q1-Q5 in U.S. only mode). 5 themes × 28 tickers:
+    MAG 7 / Oil Equities / Materials / DRAM / Data Center.
+  - New build_us_theme_radar() builder + _cockpit_render_us_theme_radar_html().
+  - render_decision_cockpit short-circuits to radar-only path when scope=US.
+  - Prefetch script's build_snapshot_for_scope() branches on market_scope:
+    US → fetch 28 US tickers + build radar (3mo period).
+    TW → existing Q1-Q4 builders.
+
+v1.6.0 (2026-05-08)
+  - Main dashboard prefetch system (Supabase main_dashboard_snapshot table):
+    GitHub Actions workflow @ 06:00 TW time daily. Companion script
+    prefetch_main_dashboard_job.py imports this dashboard module via
+    importlib.spec_from_file_location, patches streamlit cache_data + session_state
+    with no-op stubs, runs build_snapshot_for_scope() for both TW and US scopes,
+    and PostgREST upserts on (snapshot_date, market_scope) UNIQUE constraint.
+  - Snapshot-first render path: load_main_dashboard_snapshot(scope) tried before
+    live fetch. "🔄 抓今天最新" button forces live re-fetch by clearing caches.
+  - render_snapshot_freshness_bar shows snapshot age badge.
+  - Three-investor breakdown (外資 / 投信 / 自營商):
+    fetch_taiwan_market_aggregates extended to parse all 3 BFI82U rows.
+    GLOBAL_REFERENCE_INDICES_TW now has 4 sentinels (turnover + 3 net-flow)
+    yielding 5 indicator cards total in TW mode.
+  - 台指期 card (TX=F + IX0126.TW) retired permanently; both proved unreliable.
+  - _NET_FLOW_KEYS map dedupes the 3 institutional handlers in
+    build_global_market_indicator into one generic branch.
+
+v1.5.6 (2026-05-08)  [partially superseded by v1.6.0]
+  - Brief experiment with IX0126.TW (TIP TAIFEX TR Index) for 台指期 card,
+    showing daily-change % as headline. Retired in same release after user
+    confirmed the TR-index value (e.g. 22,986) was confusing. Replaced
+    with 三大法人 cards in v1.6.0.
+
+v1.5.5 (2026-05-08)
+  - PEP 701 fix: 3 nested f-strings using same-quote inner literals fail on
+    Python 3.11 (GitHub Actions runtime). Refactored to extract intermediate
+    variables. ast.parse(feature_version=(3,11)) does NOT catch this; use
+    importlib.spec_from_file_location for real-import verification.
+
+v1.5.4 (2026-05-08)
+  - Global indicator: D-1 / D-2 close values shown side-by-side under the
+    main metric, with date labels and trend emojis (📈 / 📉 / ↔️ / 💰 / 💸).
+  - fetch_taiwan_market_aggregates walk-back probe up to 7 calendar days.
+  - _trend_emoji_for_state(state) helper.
+
+v1.5.3 (2026-05-08)
+  - "Mixed (U.S. + Taiwan)" market scope removed from MARKET_SCOPE_OPTIONS.
+    _LEGACY_MARKET_SCOPE_REDIRECTS migration shim coerces legacy strings.
+  - Default language → 繁體中文 (5 places).
+  - Global indicator scope-aware split: GLOBAL_REFERENCE_INDICES_US
+    (NASDAQ/SP500/DOW) and GLOBAL_REFERENCE_INDICES_TW (^TWII + sentinels).
+  - get_indices_for_scope(scope) helper.
+  - fetch_taiwan_market_aggregates: TWSE FMTQIK turnover + BFI82U foreign
+    net (latest day only at this stage; v1.6.0 extended to 3 investors).
+  - build_global_market_indicator gains market_scope kwarg.
+
+v1.5.0–v1.5.2 (2026-05-08)
+  - Hero Bar replaces top selector bar. EXPERIENCE_LEVEL_TO_LAYOUT mapping
+    drives layout from 4 buttons (新手/初級/進階/資深).
+  - Theme Mode forced "Dark Horizon" (selector removed).
+  - CSS tweaks: button alignment via ★ marker pattern,
+    [aria-label$="★"] selector for stable styling.
 
 v1.4.7 (2026-05-06)
   - Loading placeholder shows from FIRST PAINT, before any market-data fetch.
