@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.8.4
+Version : v1.8.7
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -61,6 +61,12 @@ US THEME RADAR (v1.7.x), shown ONLY in U.S. only mode (replaces Q1-Q5):
   build_us_ticker_catalysts() + rendered via
   _us_ticker_mini_chip_strip_html(). So users can identify each
   stock's individual catalyst state, not just the theme average.
+  v1.8.5: SMART ROUTING — the radar is the entry point of the
+  dashboard's research flow. 1st click → Workspace, 2nd+ → Compare.
+  Tracked via session_state key _us_radar_picks. Compare-queue
+  strip rendered above the grid via _us_radar_compare_queue_html().
+  ?radar_clear=1 resets the queue (consumer:
+  _consume_us_radar_clear_query()).
 
 PREFETCH SYSTEM (v1.6.0):
   - Companion script: prefetch_main_dashboard_job.py (in repo root)
@@ -78,6 +84,10 @@ KEY SESSION_STATE KEYS:
   - dashboard_mode                  : "General Market" | "Active ETF Lab" |
                                       "Supply Chain Lab" | "Taiwan Futures Lab"
   - _force_live_main_dashboard      : bool — set by refresh button to bypass snapshot
+  - _us_radar_picks                 : list[str] — v1.8.5: radar-driven ticker
+                                      queue. 1 entry → Workspace; 2+ → Compare.
+                                      Validated against dashboard_selected_tickers
+                                      on every consume; capped at 6.
 
 KEY GLOBAL CONSTANTS:
   - GLOBAL_REFERENCE_INDICES_US     : NASDAQ / SP500 / DOW (3 entries)
@@ -227,6 +237,86 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.8.7 (2026-05-09)  [UX polish — eliminate the double-rerun flash]
+  - Removed the explicit st.rerun() from BOTH consumers
+    (_consume_us_radar_jump_query and _consume_us_radar_clear_query).
+    Each radar click was triggering two reruns: (1) the browser
+    navigation rerun caused by <a href="?radar_jump=..."> and (2) the
+    consumer's own st.rerun() to "make the new state visible". The
+    second rerun was unnecessary -- the consumer fires AT THE TOP of
+    generate_dashboard, before the sidebar block, the cockpit, and
+    the layout dispatch. Mutating session_state inside the consumer
+    and then letting the script continue means the sidebar reads the
+    updated watchlist, the cockpit reads the updated _us_radar_picks,
+    and the layout reads the updated section selectors -- all on the
+    SAME render. Result: clicks now feel additive (one short rerun)
+    instead of a heavy double-flash.
+  - The radar-jump param is still popped from the URL inside the
+    consumer for defense in depth; save_dashboard_preferences would
+    have cleared it anyway via its query_params.clear() pass, but
+    popping early keeps the address bar tidy if the user is watching.
+  - Browser-level navigation itself is not eliminated by this patch
+    (that would require a custom Streamlit component to intercept
+    clicks before they hit the browser). v1.8.7 is the cheap UX win;
+    a true SPA-style update is tracked as a future option.
+
+v1.8.6 (2026-05-09)  [BUGFIX for v1.8.5 smart routing]
+  - Bug: clicking a 2nd ticker in the radar produced a single-ticker
+    workspace instead of switching to Compare. Root cause: the radar
+    link was `<a href="?radar_jump=NVDA">`, which REPLACES the entire
+    query string on browser navigation. The previous `picks=...` and
+    every other dashboard URL state was wiped out. When session_state
+    persistence didn't kick in (Streamlit hosting / browser combos
+    sometimes reset session_state on full-URL navigation), the
+    subsequent load_dashboard_preferences() saw an empty `picks` URL
+    param and reset dashboard_selected_tickers to []. The radar's
+    smart router then operated on an empty queue/watchlist and
+    routed every click as the 1st-click case → Workspace.
+  - Fix #1: radar links now PRESERVE every existing URL param.
+    New helpers _build_radar_jump_href(ticker) and
+    _build_radar_clear_href() snapshot _current_query_param_map(),
+    add the radar action key, and emit a fully-encoded href.
+  - Fix #2: the smart-routing queue is now PERSISTED to URL via a
+    new `radar_picks` param. _current_query_param_map() includes it,
+    save_dashboard_preferences() writes it, and
+    load_dashboard_preferences() restores _us_radar_picks from it on
+    cold session start. Result: even if session_state resets on a
+    full URL navigation, the queue survives via the URL.
+  - Fix #3: load_dashboard_preferences() now also re-publishes
+    _us_radar_picks back into session_state every time it runs, so
+    a fresh-session re-init still preserves the radar queue.
+  - No behaviour change for users who never had the bug: the queue
+    state remains in session_state as before; the URL persistence is
+    purely a fallback for environments where session_state resets.
+
+v1.8.5 (2026-05-09)
+  - SMART ROUTING: the US Theme Radar is now the entry point for the
+    dashboard's full ticker-research flow. Click pattern:
+      * 1st ticker click  -> lands in WORKSPACE focused on that ticker
+                             (preserves v1.8.2 behavior).
+      * 2nd ticker click  -> auto-switches to COMPARE with both tickers
+                             (and any subsequent radar picks accumulate).
+      * 3rd+ ticker click -> stays in COMPARE, queue extends further.
+    All routes work in Standard / Advanced / Expert layout modes -- the
+    correct section key is set per layout (Standard:
+    layout_standard_compare_plan_tab, Advanced: layout_compare_tab,
+    Expert: layout_comparison_desk_tab).
+  - New session_state key _us_radar_picks tracks the radar-driven queue
+    (deduped, capped at 6, validated against the current watchlist on
+    every consume so manually-removed tickers fall out of the queue).
+  - New ?radar_clear=1 query param + matching consumer
+    _consume_us_radar_clear_query() lets the user reset the queue from
+    the UI.  A "Clear queue" link appears next to the queue display.
+  - Compare Queue strip rendered inline above the radar grid via
+    _us_radar_compare_queue_html(): shows queued tickers as clickable
+    chips and a clear link.  Strip is hidden when the queue has 0 or 1
+    pick (Workspace mode is implicit; no UI noise).
+  - Subtitle copy updated to communicate the click pattern:
+    1st = open workspace, 2nd+ = auto-compare.
+  - Both consumers (jump + clear) hooked into generate_dashboard()
+    immediately after load_dashboard_preferences(), same pattern as
+    v1.8.2.
 
 v1.8.4 (2026-05-09)
   - PER-TICKER catalyst chips on every row of the US Theme Radar. Each
@@ -9763,6 +9853,11 @@ def _current_query_param_map() -> dict[str, str]:
         "txpremium",
         "txtarget",
         "txdelta",
+        # v1.8.6: radar smart-routing queue persisted to URL so it
+        # survives full-URL navigation (the radar's <a href> links
+        # otherwise replace all params, which can reset session_state
+        # on some Streamlit hosting + browser combos).
+        "radar_picks",
     ]
     return {key: _query_param_first(key) for key in keys if _query_param_first(key)}
 
@@ -10377,6 +10472,35 @@ def load_dashboard_preferences() -> None:
     st.session_state["dashboard_txf_premium_points"] = float(tx_premium_points)
     st.session_state["dashboard_txf_target_points"] = float(tx_target_points)
     st.session_state["dashboard_txf_delta_assumption"] = float(tx_delta_assumption)
+
+    # v1.8.6: Restore the radar smart-routing queue from URL. The radar's
+    # <a href> links replace all query params on click; if session_state
+    # also got reset by the navigation (some Streamlit hosting + browser
+    # combos do this), the queue would be lost without this URL-backed
+    # fallback. We always re-publish to session_state on every loader run
+    # so the queue survives both warm reruns and cold session re-inits.
+    radar_picks_csv = _query_param_first("radar_picks") or _profile_value("radar_picks") or ""
+    radar_picks_restored: list[str] = []
+    seen_radar_picks: set[str] = set()
+    valid_us_radar_tickers: set[str] = set()
+    for theme in US_THEME_GROUPS:
+        for tk in (theme.get("tickers") or []):
+            valid_us_radar_tickers.add(str(tk).strip().upper())
+    for raw_pick in _csv_decode(radar_picks_csv):
+        pk = str(raw_pick).strip().upper()
+        if not pk or pk in seen_radar_picks:
+            continue
+        # Drop unknown tickers (defensive against URL tampering).
+        if pk not in valid_us_radar_tickers:
+            continue
+        seen_radar_picks.add(pk)
+        radar_picks_restored.append(pk)
+    # Cap to the same size as the live consumer's cap so URL-restored
+    # state never blows past the consumer's invariants.
+    if len(radar_picks_restored) > _US_RADAR_PICK_QUEUE_CAP:
+        radar_picks_restored = radar_picks_restored[-_US_RADAR_PICK_QUEUE_CAP:]
+    st.session_state["_us_radar_picks"] = radar_picks_restored
+
     st.session_state["_dashboard_prefs_loaded"] = True
 
 
@@ -28363,6 +28487,112 @@ def _cockpit_inject_css() -> None:
             color: rgba(255,255,255,0.55);
         }
 
+        /* v1.8.5: Compare-queue strip — sits between the Theme Pulse
+           banner and the theme grid. Surfaces the radar-driven smart
+           routing queue (1 pick = Workspace; 2+ = Compare). The strip
+           only renders when the queue has 2+ entries; at 1 entry the
+           Workspace state is implicit (no UI noise). */
+        .us-radar-compare-queue {
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            padding: 0.72rem 0.95rem;
+            margin-top: 0.7rem;
+            border-radius: 12px;
+            border: 1px solid rgba(180,160,255,0.32);
+            background: linear-gradient(120deg, rgba(120,100,220,0.14) 0%, rgba(15,28,52,0.45) 100%);
+            box-shadow: 0 2px 14px rgba(120,100,220,0.10);
+        }
+        .us-radar-queue-head {
+            display: flex;
+            align-items: baseline;
+            gap: 0.55rem;
+        }
+        .us-radar-queue-label {
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #c4b5fd;
+        }
+        .us-radar-queue-count {
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.58);
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+        }
+        .us-radar-queue-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.36rem;
+            align-items: center;
+        }
+        .us-radar-queue-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.30rem 0.65rem;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            text-decoration: none;
+            color: #f5ead8;
+            background: rgba(11,18,32,0.55);
+            border: 1px solid rgba(180,160,255,0.32);
+            transition: background-color 120ms ease,
+                        transform 120ms ease,
+                        border-color 120ms ease;
+        }
+        .us-radar-queue-chip:hover {
+            background: rgba(180,160,255,0.20);
+            border-color: rgba(180,160,255,0.55);
+            transform: translateY(-1px);
+            color: #fff;
+        }
+        .us-radar-queue-chip:active {
+            transform: translateY(0);
+        }
+        .us-radar-queue-chip:focus-visible {
+            outline: 2px solid rgba(180,160,255,0.7);
+            outline-offset: 2px;
+        }
+        .us-radar-queue-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }
+        .us-radar-queue-helper {
+            font-size: 0.74rem;
+            color: rgba(255,255,255,0.55);
+            line-height: 1.4;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .us-radar-queue-clear {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.26rem 0.65rem;
+            border-radius: 7px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: rgba(255,255,255,0.72);
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.16);
+            transition: background-color 120ms ease, color 120ms ease;
+            white-space: nowrap;
+        }
+        .us-radar-queue-clear:hover {
+            background: rgba(248,113,113,0.16);
+            border-color: rgba(248,113,113,0.40);
+            color: #fbbcbc;
+        }
+        .us-radar-queue-clear:focus-visible {
+            outline: 2px solid rgba(248,113,113,0.6);
+            outline-offset: 2px;
+        }
+
         /* Tight inner shell variant for Q5 (so the Streamlit text_area
            doesn't sit inside a too-wide cockpit padding) */
         .cockpit-shell.cockpit-shell-tight {
@@ -28540,6 +28770,17 @@ def _cockpit_inject_css() -> None:
             }
             .us-radar-mini-chip .mini-chip-icon { font-size: 0.58rem; }
             .us-radar-mini-chip .mini-chip-count { font-size: 0.60rem; }
+            /* v1.8.5: compare queue tightens at tablet breakpoint */
+            .us-radar-compare-queue {
+                padding: 0.6rem 0.78rem;
+                gap: 0.38rem;
+            }
+            .us-radar-queue-chip {
+                font-size: 0.74rem;
+                padding: 0.24rem 0.55rem;
+            }
+            .us-radar-queue-helper { font-size: 0.70rem; }
+            .us-radar-queue-clear { font-size: 0.70rem; padding: 0.22rem 0.55rem; }
         }
         /* v1.8.0: Phone (~390px) and Fold (~280px) — single-column stack */
         @media (max-width: 480px) {
@@ -28584,6 +28825,27 @@ def _cockpit_inject_css() -> None:
             }
             .us-radar-mini-chip .mini-chip-icon { font-size: 0.56rem; }
             .us-radar-mini-chip .mini-chip-count { font-size: 0.58rem; }
+            /* v1.8.5: compare queue actions stack vertically on phone */
+            .us-radar-compare-queue {
+                padding: 0.55rem 0.7rem;
+                gap: 0.36rem;
+            }
+            .us-radar-queue-chip {
+                font-size: 0.70rem;
+                padding: 0.22rem 0.50rem;
+            }
+            .us-radar-queue-actions {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.4rem;
+            }
+            .us-radar-queue-helper { font-size: 0.68rem; }
+            .us-radar-queue-clear {
+                font-size: 0.68rem;
+                padding: 0.20rem 0.50rem;
+                align-self: stretch;
+                justify-content: center;
+            }
         }
         </style>
         """,
@@ -30145,6 +30407,74 @@ def _us_ticker_mini_chip_strip_html(ticker_catalyst: dict | None, lang_zh: bool)
     return f'<div class="us-radar-row-chips">{"".join(parts)}</div>'
 
 
+def _us_radar_compare_queue_html(
+    queue: list[str] | None,
+    lang_zh: bool,
+) -> str:
+    """v1.8.5: Render the radar's smart-routing queue strip.
+
+    Sits between the Theme Pulse banner and the theme grid. Communicates:
+      - which tickers the user has clicked from the radar
+      - the routing implication ("compare mode active")
+      - a "Clear" link to reset the queue
+
+    Hidden when the queue has 0 or 1 picks — at queue length 1, the user
+    is in Workspace mode (implicit; no UI noise needed). The strip only
+    appears once Compare mode is engaged.
+    """
+    if not queue or len(queue) < 2:
+        return ""
+
+    # Build clickable ticker chips (same href pattern as radar rows so
+    # clicking a queued chip jumps the workspace focus to that ticker
+    # without dropping the queue — the consumer dedupes the pick).
+    # v1.8.6: hrefs preserve all current dashboard URL params so
+    # navigating doesn't wipe picks/scope/mode/etc.
+    chip_items: list[str] = []
+    for tk in queue:
+        raw_tk = str(tk).strip().upper()
+        if not raw_tk:
+            continue
+        chip_href = _build_radar_jump_href(raw_tk)
+        chip_title = (
+            f"重新聚焦於 {raw_tk}" if lang_zh else f"Refocus on {raw_tk}"
+        )
+        chip_items.append(
+            f'<a class="us-radar-queue-chip" '
+            f'href="{escape(chip_href)}" target="_self" '
+            f'title="{escape(chip_title)}">'
+            f'{escape(raw_tk)}'
+            f'</a>'
+        )
+
+    label = "比較佇列" if lang_zh else "Compare queue"
+    helper = (
+        "點任一檔可重新聚焦；繼續從雷達點選會延伸佇列。"
+        if lang_zh else
+        "Click a chip to refocus. Click another radar ticker to extend the queue."
+    )
+    clear_label = "清除佇列" if lang_zh else "Clear queue"
+    count_text = (
+        f"{len(queue)} 檔" if lang_zh else f"{len(queue)} picks"
+    )
+    clear_href = _build_radar_clear_href()  # v1.8.6: preserves params
+
+    return (
+        f'<div class="us-radar-compare-queue" data-count="{len(queue)}">'
+        f'  <div class="us-radar-queue-head">'
+        f'    <span class="us-radar-queue-label">{escape(label)}</span>'
+        f'    <span class="us-radar-queue-count">{escape(count_text)}</span>'
+        f'  </div>'
+        f'  <div class="us-radar-queue-chips">{"".join(chip_items)}</div>'
+        f'  <div class="us-radar-queue-actions">'
+        f'    <span class="us-radar-queue-helper">{escape(helper)}</span>'
+        f'    <a class="us-radar-queue-clear" href="{escape(clear_href)}" target="_self" '
+        f'       title="{escape(clear_label)}">{escape(clear_label)}</a>'
+        f'  </div>'
+        f'</div>'
+    )
+
+
 def _cockpit_render_us_theme_radar_html(
     radar: list[dict],
     lang_zh: bool,
@@ -30204,9 +30534,14 @@ def _cockpit_render_us_theme_radar_html(
                 # click routes the user into that ticker's workspace.
                 # _consume_us_radar_jump_query() handles the param at the top
                 # of generate_dashboard(). target="_self" keeps the navigation
-                # in the same tab; quote_plus defends against any odd ticker
-                # symbols (US tickers are alphanumeric, but be defensive).
-                href_safe_tk = quote_plus(raw_tk) if raw_tk else ""
+                # in the same tab.
+                # v1.8.6: href now PRESERVES all current dashboard query
+                # params (mode/scope/picks/etc) so a full-URL navigation
+                # doesn't wipe user state -- a naked `?radar_jump=NVDA`
+                # was replacing the entire URL, which on some Streamlit
+                # hosting + browser combos also reset session_state and
+                # made the smart-routing queue fall back to length 1.
+                row_href = _build_radar_jump_href(raw_tk)
                 row_title = (
                     f"開啟 {raw_tk} 工作台" if lang_zh else f"Open {raw_tk} workspace"
                 )
@@ -30226,7 +30561,7 @@ def _cockpit_render_us_theme_radar_html(
                     )
                 leader_rows.append(
                     f'<a class="us-radar-row-link" '
-                    f'href="?radar_jump={href_safe_tk}" target="_self" '
+                    f'href="{escape(row_href)}" target="_self" '
                     f'title="{escape(row_title)}" '
                     f'aria-label="{escape(row_title)}">'
                     f'<div class="us-radar-row">'
@@ -30293,6 +30628,56 @@ def _cockpit_render_us_theme_radar_html(
 # Must run BEFORE the sidebar block in generate_dashboard() so the sidebar
 # picks up the updated dashboard_selected_tickers and propagates it through
 # selected_ticker_picks -> tickers -> dashboard_tickers -> layout renderer.
+#
+# v1.8.5: The consumer now implements SMART ROUTING — the radar is the
+# entry point of the research flow. Behaviour by click pattern:
+#   * 1st ticker click  -> Workspace (single-ticker focus)
+#   * 2nd ticker click  -> Compare (auto-switch, with both queued)
+#   * 3rd+ ticker click -> Compare (queue extends; capped at 6)
+# State lives in session_state["_us_radar_picks"]. The queue is validated
+# against the current watchlist on every consume so a manually-removed
+# ticker drops out automatically.
+_US_RADAR_PICK_QUEUE_CAP = 6
+
+
+# v1.8.6: Build URLs that PRESERVE all current dashboard query params.
+# A naked `<a href="?radar_jump=NVDA">` replaces the entire query string
+# on browser navigation; combined with the chance that session_state
+# resets on full-URL navigation in some Streamlit hosting + browser
+# combos, that wiped the watchlist and the radar pick queue. These
+# helpers snapshot the current URL state, layer the radar action key on
+# top, and emit a fully-encoded href so navigation never silently drops
+# user state.
+def _build_radar_action_href(action_key: str, action_value: str) -> str:
+    """Return a same-tab href that preserves all current dashboard URL
+    params and adds (or overrides) the given action key. Caller is
+    expected to use this as `href="..."` on an <a target="_self">.
+    """
+    try:
+        params = dict(_current_query_param_map() or {})
+    except Exception:
+        params = {}
+    # Strip transient radar action params from the snapshot so we never
+    # double-stack them on the URL.
+    for transient_key in ("radar_jump", "radar_clear"):
+        params.pop(transient_key, None)
+    params[str(action_key)] = str(action_value)
+    encoded = "&".join(
+        f"{quote_plus(str(k))}={quote_plus(str(v))}"
+        for k, v in params.items()
+        if str(v) != ""
+    )
+    return f"?{encoded}" if encoded else f"?{quote_plus(str(action_key))}={quote_plus(str(action_value))}"
+
+
+def _build_radar_jump_href(ticker: str) -> str:
+    return _build_radar_action_href("radar_jump", str(ticker).strip().upper())
+
+
+def _build_radar_clear_href() -> str:
+    return _build_radar_action_href("radar_clear", "1")
+
+
 def _consume_us_radar_jump_query() -> None:
     raw = _query_param_first("radar_jump")
     if not raw:
@@ -30351,25 +30736,116 @@ def _consume_us_radar_jump_query() -> None:
         st.session_state["dashboard_selected_tickers"] = merged
     st.session_state["dashboard_selected_tickers_initialized"] = True
 
+    # ---- v1.8.5: Smart routing via _us_radar_picks queue ----
+    # 1) Read existing queue, validate each pick is still in the watchlist
+    #    (covers the "user manually removed a ticker" case so the queue
+    #    decays naturally without a separate listener).
+    # 2) Append the new pick (deduped, original-position-stable).
+    # 3) Cap at 6 to keep Compare manageable.
+    # 4) Decide route from the queue length: 1 = Workspace, 2+ = Compare.
+    current_watchlist_set = {
+        str(t).strip().upper()
+        for t in st.session_state.get("dashboard_selected_tickers", []) or []
+    }
+    raw_queue = st.session_state.get("_us_radar_picks", []) or []
+    seen: set[str] = set()
+    queue: list[str] = []
+    for pick in raw_queue:
+        pk = str(pick).strip().upper()
+        if not pk or pk in seen:
+            continue
+        if pk not in current_watchlist_set:
+            # Pick was removed from watchlist (manually or by scope change).
+            # Drop it from the queue.
+            continue
+        seen.add(pk)
+        queue.append(pk)
+    if ticker not in seen:
+        queue.append(ticker)
+    # Cap at the most-recent N (newest entries kept; oldest drop out).
+    if len(queue) > _US_RADAR_PICK_QUEUE_CAP:
+        queue = queue[-_US_RADAR_PICK_QUEUE_CAP:]
+    st.session_state["_us_radar_picks"] = queue
+    route_to_compare = len(queue) >= 2
+
     # Workspace focus ticker for both Standard (st.selectbox) and
     # Advanced/Expert (lightweight selector). The lightweight selector
     # uses two keys -- canonical + "__selector" -- so we set both.
+    # We always set these (even when routing to Compare) so that if the
+    # user later switches back to Workspace, the latest-clicked ticker
+    # is the focus rather than whatever stale value was there before.
     st.session_state["dashboard_standard_focus_ticker"] = ticker
     st.session_state["dashboard_workspace_focus_ticker"] = ticker
     st.session_state["dashboard_workspace_focus_ticker__selector"] = ticker
 
-    # Route layout section selector to the workspace tab for whichever
-    # Experience Level the user is on. We set ALL three so switching levels
-    # later doesn't bounce them back to overview.
-    st.session_state["dashboard_advanced_general_section"] = "layout_workspace_tab"
-    st.session_state["dashboard_advanced_general_section__selector"] = "layout_workspace_tab"
-    st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
-    st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
-    st.session_state["dashboard_standard_general_section"] = "layout_standard_single_workspace_tab"
-    st.session_state["dashboard_standard_general_section__selector"] = "layout_standard_single_workspace_tab"
+    if route_to_compare:
+        # Compare path: set the layout-section selector for ALL three
+        # Experience Levels to the appropriate Compare key. Each layout
+        # has its own key:
+        #   Standard: layout_standard_compare_plan_tab (combines plan+compare)
+        #   Advanced: layout_compare_tab
+        #   Expert:   layout_comparison_desk_tab
+        st.session_state["dashboard_advanced_general_section"] = "layout_compare_tab"
+        st.session_state["dashboard_advanced_general_section__selector"] = "layout_compare_tab"
+        st.session_state["dashboard_expert_general_section"] = "layout_comparison_desk_tab"
+        st.session_state["dashboard_expert_general_section__selector"] = "layout_comparison_desk_tab"
+        st.session_state["dashboard_standard_general_section"] = "layout_standard_compare_plan_tab"
+        st.session_state["dashboard_standard_general_section__selector"] = "layout_standard_compare_plan_tab"
+    else:
+        # Workspace path (1st pick): preserve the v1.8.2 routing -- land
+        # the user on the single-ticker workspace tab.
+        st.session_state["dashboard_advanced_general_section"] = "layout_workspace_tab"
+        st.session_state["dashboard_advanced_general_section__selector"] = "layout_workspace_tab"
+        st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+        st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
+        st.session_state["dashboard_standard_general_section"] = "layout_standard_single_workspace_tab"
+        st.session_state["dashboard_standard_general_section__selector"] = "layout_standard_single_workspace_tab"
 
     _pop_param()
-    st.rerun()
+    # v1.8.7: NO st.rerun() here. The consumer fires at the top of
+    # generate_dashboard, before the sidebar block / cockpit / layout
+    # dispatch all read session_state. Mutating session_state and
+    # letting the script continue lets the new state propagate on the
+    # SAME render — no second-rerun flash. The browser-navigation
+    # rerun (caused by the <a href> link) still happens; we just
+    # don't compound it with another forced rerun.
+
+
+# ---------------------------------------------------------------------------
+# v1.8.5: Compare-queue clearing companion to _consume_us_radar_jump_query
+# ---------------------------------------------------------------------------
+# The "Clear queue" link in _us_radar_compare_queue_html sets ?radar_clear=1.
+# This consumer wipes _us_radar_picks (NOT the watchlist itself; clearing the
+# queue just resets the radar's smart-routing memory) and reruns. Subsequent
+# radar clicks behave as a fresh sequence again: 1st → Workspace, 2nd → Compare.
+def _consume_us_radar_clear_query() -> None:
+    raw = _query_param_first("radar_clear")
+    if not raw:
+        return
+
+    def _pop_param() -> None:
+        try:
+            qp = st.query_params
+            if "radar_clear" in qp:
+                del qp["radar_clear"]
+            return
+        except Exception:
+            pass
+        try:
+            params = st.experimental_get_query_params()
+            if "radar_clear" in params:
+                params.pop("radar_clear", None)
+                st.experimental_set_query_params(**params)
+        except Exception:
+            pass
+
+    # Wipe the queue. Watchlist is untouched -- users may want the tickers
+    # to remain in the dashboard but with the smart-routing memory reset.
+    st.session_state["_us_radar_picks"] = []
+    _pop_param()
+    # v1.8.7: same logic as the jump consumer — no st.rerun() needed,
+    # the empty queue propagates naturally to the cockpit's queue-strip
+    # render (which hides itself when len < 2).
 
 
 def _cockpit_render_q4_html(q4: dict, lang_zh: bool) -> str:
@@ -30734,9 +31210,11 @@ def render_decision_cockpit(
 
         title_text = "美股主題雷達" if lang_zh else "U.S. Theme Radar"
         sub_text = (
-            "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。點任一檔代號即可直接開啟該股的工作台。"
+            "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。"
+            "點第 1 檔即進入該股工作台；點第 2 檔起自動切換為比較模式。"
             if lang_zh else
-            "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count. Click any ticker to open its workspace."
+            "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count. "
+            "Click 1 ticker to open its workspace; click a 2nd ticker to auto-switch to compare mode."
         )
         disclaimer_text = (
             "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。催化劑訊號來自個股新聞分類聚合，僅供研究參考，非投資建議。"
@@ -30748,7 +31226,13 @@ def render_decision_cockpit(
         # v1.8.4: ticker_catalysts kwarg adds a mini-chip strip on every
         # ticker row (AI Demand / Earnings) so users can read each stock
         # individually, not just the theme average.
+        # v1.8.5: compare-queue strip surfaces the radar-driven pick queue
+        # (1 pick = Workspace mode implicit; 2+ = Compare mode active).
         pulse_banner_html = _us_theme_pulse_banner_html(pulse_aggregate, lang_zh)
+        compare_queue_html = _us_radar_compare_queue_html(
+            list(st.session_state.get("_us_radar_picks", []) or []),
+            lang_zh=lang_zh,
+        )
         radar_html = _cockpit_render_us_theme_radar_html(
             us_radar,
             lang_zh,
@@ -30762,6 +31246,7 @@ def render_decision_cockpit(
             f'  <div class="cockpit-title">{escape(title_text)}</div>'
             f'  <div class="cockpit-sub">{escape(sub_text)}</div>'
             f'  {pulse_banner_html}'
+            f'  {compare_queue_html}'
             f'  {radar_html}'
             f'  <div class="cockpit-disclaimer">{escape(disclaimer_text)}</div>'
             f'</div>'
@@ -37134,7 +37619,14 @@ def generate_dashboard():
     # sidebar's selectors and the layout renderer on the same render
     # (the consumer triggers st.rerun() once it has applied state, so
     # downstream code only ever sees the post-jump state).
+    # v1.8.5: smart routing — consumer now also tracks the radar pick
+    # queue so 1 pick → Workspace, 2+ picks → Compare.
     _consume_us_radar_jump_query()
+
+    # v1.8.5: Companion consumer for the "Clear queue" link in the radar's
+    # compare-queue strip. ?radar_clear=1 wipes _us_radar_picks (NOT the
+    # watchlist) so the next radar click starts a fresh sequence.
+    _consume_us_radar_clear_query()
 
     inject_css()
     inject_premium_overrides()
@@ -37427,6 +37919,13 @@ def generate_dashboard():
                 "txpremium": str(st.session_state.get("dashboard_txf_premium_points", 0.0)),
                 "txtarget": str(st.session_state.get("dashboard_txf_target_points", 0.0)),
                 "txdelta": str(st.session_state.get("dashboard_txf_delta_assumption", 0.05)),
+                # v1.8.6: persist the radar smart-routing queue to URL so
+                # it survives full-URL navigation (radar <a href> links
+                # otherwise replace all params, which can reset
+                # session_state on some Streamlit hosting + browser combos).
+                "radar_picks": _csv_encode(
+                    list(st.session_state.get("_us_radar_picks", []) or [])
+                ),
             }
         )
 
