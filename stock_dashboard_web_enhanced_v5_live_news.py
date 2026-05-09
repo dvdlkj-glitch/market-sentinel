@@ -9069,7 +9069,27 @@ def _inject_top_selector_bar_css() -> None:
         @media (max-width: 720px) {
             .hero-bar-shell { padding: 1.1rem 1rem 0.85rem 1rem; }
             .hero-bar-title { font-size: 1.15rem; }
+            .hero-bar-sub { font-size: 0.82rem; }
+            .hero-bar-kicker { font-size: 0.7rem; }
             .hero-bar-exp-group { grid-template-columns: 1fr 1fr; }
+            .hero-bar-shell .stButton > button {
+                font-size: 0.85rem;
+                min-height: 44px;  /* iOS tap-target minimum */
+                padding: 0.55rem 0.4rem;
+            }
+            .hero-bar-tip { font-size: 0.78rem; padding: 0.5rem 0.7rem; }
+            .hero-bar-shell [data-testid="stSelectbox"] > div > div {
+                font-size: 0.88rem !important;
+            }
+        }
+        /* v1.8.0: Fold device (~280px wide). Stack experience-level buttons
+           into a single column so labels don't truncate. */
+        @media (max-width: 480px) {
+            .hero-bar-shell { padding: 0.9rem 0.7rem 0.75rem 0.7rem; }
+            .hero-bar-title { font-size: 1rem; }
+            .hero-bar-sub { font-size: 0.76rem; line-height: 1.4; }
+            .hero-bar-exp-group { grid-template-columns: 1fr; gap: 0.4rem; }
+            .hero-exp-hint { font-size: 0.7rem; min-height: 1.2em; }
         }
         /* ===== end v1.5.0 Hero Bar ===== */
         </style>
@@ -10352,6 +10372,33 @@ def inject_snapshot_freshness_bar_css() -> None:
             background: rgba(245,158,11,0.18);
             color: rgba(245,158,11,0.92);
             margin-left: 0.4rem;
+        }
+        /* v1.8.0: mobile responsive for freshness bar. Streamlit's st.columns
+           does NOT auto-stack reliably below ~640px in some browsers, but
+           we shrink padding + font so the [3,1] layout still fits. */
+        @media (max-width: 720px) {
+            .snapshot-freshness-badge {
+                padding: 0.55rem 0.85rem;
+                font-size: 0.85rem;
+                min-height: 40px;
+                gap: 0.4rem;
+            }
+            .snapshot-freshness-err-chip {
+                font-size: 0.7rem;
+                padding: 0.15rem 0.4rem;
+            }
+        }
+        @media (max-width: 480px) {
+            .snapshot-freshness-badge {
+                padding: 0.5rem 0.7rem;
+                font-size: 0.78rem;
+                min-height: 36px;
+            }
+            /* On Fold/very narrow, hide the err-chip text and keep just the
+               warning color rim on the badge — saves precious horizontal space. */
+            .snapshot-freshness-err-chip {
+                display: none;
+            }
         }
         </style>
         """,
@@ -14148,6 +14195,7 @@ def inject_css():
             }
         }
 
+        /* v1.8.0: tighter mobile responsiveness for global market indicator */
         @media (max-width: 768px) {
             .target-tracking-focus {
                 align-items: flex-start;
@@ -14160,6 +14208,72 @@ def inject_css():
 
             .target-tracking-focus-name {
                 font-size: 20px;
+            }
+
+            .global-indicator-card-grid {
+                grid-template-columns: 1fr 1fr;  /* 2-col on tablet/large mobile */
+                gap: 0.6rem;
+            }
+            .global-indicator-card {
+                padding: 0.85rem 0.95rem;
+            }
+            .global-indicator-value {
+                font-size: 1.3rem;
+            }
+            .global-indicator-label {
+                font-size: 0.85rem;
+            }
+            .global-indicator-state-chip {
+                font-size: 0.72rem;
+                padding: 0.2rem 0.5rem;
+            }
+            .global-indicator-mini-label {
+                font-size: 0.7rem;
+            }
+            .global-indicator-mini-value {
+                font-size: 0.9rem;
+            }
+            .global-indicator-history-label {
+                font-size: 0.65rem;
+            }
+            .global-indicator-history-value {
+                font-size: 0.85rem;
+            }
+            .global-indicator-history-date {
+                font-size: 0.62rem;
+            }
+            .global-indicator-shell {
+                padding: 1rem 1rem;
+            }
+            .global-indicator-title {
+                font-size: 1.05rem !important;
+            }
+            .global-indicator-copy {
+                font-size: 0.85rem;
+            }
+            .global-indicator-pill {
+                font-size: 0.7rem !important;
+                padding: 0.18rem 0.55rem !important;
+            }
+        }
+        /* v1.8.0: Phone / Fold devices — single-column card stack */
+        @media (max-width: 480px) {
+            .global-indicator-card-grid {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+            .global-indicator-shell {
+                padding: 0.85rem 0.7rem;
+            }
+            .global-indicator-header {
+                flex-direction: column;
+                gap: 0.6rem;
+            }
+            .global-indicator-side {
+                align-items: flex-start;
+            }
+            .global-indicator-pill-row {
+                flex-wrap: wrap;
             }
         }
 
@@ -14748,6 +14862,95 @@ def inject_premium_overrides():
             .compare-copy, .winner-copy, .catalyst-copy, .alert-copy, .lab-copy,
             .trend-sub, .chart-copy, .explorer-nav-copy {
                 font-size: 13px !important;
+            }
+        }
+
+        /* v1.8.0: Universal mobile responsive utilities for Streamlit
+           primitives. Targets common patterns that appear across multiple
+           dashboard modes (tables, dataframes, expanders, tab lists,
+           buttons). Applied via class targeting so existing mode-specific
+           styles still take precedence. */
+        @media (max-width: 768px) {
+            /* Streamlit dataframes: ensure horizontal scroll smooth on touch */
+            [data-testid="stDataFrame"] {
+                overflow-x: auto !important;
+                -webkit-overflow-scrolling: touch;
+            }
+            [data-testid="stDataFrame"] table {
+                font-size: 0.82rem !important;
+            }
+            /* All st.button: ensure 44pt minimum tap target on mobile */
+            .stButton > button {
+                min-height: 42px;
+                padding: 0.55rem 0.85rem;
+            }
+            /* Tab list: smaller font, tighter gap, allow horizontal scroll */
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 0.3rem;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                white-space: nowrap;
+                flex-wrap: nowrap;
+            }
+            .stTabs [data-baseweb="tab"] {
+                font-size: 0.85rem;
+                padding: 0.5rem 0.7rem;
+                flex-shrink: 0;
+            }
+            /* Streamlit selectbox: ensure label doesn't truncate weirdly */
+            [data-testid="stSelectbox"] label {
+                font-size: 0.85rem;
+            }
+            [data-testid="stSelectbox"] > div > div {
+                font-size: 0.92rem !important;
+            }
+            /* Input fields - same font scaling */
+            [data-testid="stTextInput"] input,
+            [data-testid="stNumberInput"] input {
+                font-size: 0.95rem !important;
+            }
+            /* Reduce sidebar padding on mobile */
+            [data-testid="stSidebar"] > div:first-child {
+                padding: 1rem 0.75rem;
+            }
+            /* Expanders: tighter padding */
+            [data-testid="stExpander"] [data-testid="stExpanderToggleIcon"] {
+                font-size: 1rem;
+            }
+            details summary {
+                font-size: 0.92rem;
+            }
+            /* Plotly / Altair chart container: guarantee they don't overflow */
+            .stPlotlyChart, .stVegaLiteChart, [data-testid="stVegaLiteChart"] {
+                max-width: 100vw;
+                overflow-x: auto;
+            }
+            /* Section headers: shrink */
+            .section-header {
+                font-size: 0.95rem !important;
+            }
+        }
+        @media (max-width: 480px) {
+            /* Fold + smallest phones: even tighter compaction */
+            [data-testid="stDataFrame"] table {
+                font-size: 0.75rem !important;
+            }
+            .stTabs [data-baseweb="tab"] {
+                font-size: 0.78rem;
+                padding: 0.4rem 0.55rem;
+            }
+            .stButton > button {
+                font-size: 0.85rem;
+                padding: 0.45rem 0.7rem;
+            }
+            [data-testid="stSidebar"] > div:first-child {
+                padding: 0.75rem 0.5rem;
+            }
+            /* Reduce overall main column padding so we don't waste horizontal pixels */
+            .main .block-container {
+                padding-left: 0.75rem !important;
+                padding-right: 0.75rem !important;
+                padding-top: 1rem !important;
             }
         }
         
@@ -27429,6 +27632,45 @@ def _cockpit_inject_css() -> None:
                 text-align: left;
             }
             .cockpit-pick-detail-btn { justify-self: start; }
+            /* v1.8.0: cockpit titles + sub copy shrink on mobile */
+            .cockpit-title { font-size: 1.3rem; }
+            .cockpit-sub { font-size: 0.85rem; }
+            .cockpit-kicker { font-size: 0.75rem; }
+            /* US Theme Radar — 2-col grid on tablet/large mobile */
+            .us-radar-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 0.6rem;
+            }
+            .us-radar-card {
+                padding: 0.7rem 0.8rem;
+            }
+            .us-radar-card-name {
+                font-size: 0.88rem;
+            }
+            .us-radar-row {
+                grid-template-columns: 1fr auto auto;
+                gap: 0.4rem;
+                padding: 0.35rem 0.5rem;
+            }
+            .us-radar-tk { font-size: 0.85rem; }
+            .us-radar-px { font-size: 0.78rem; }
+            .us-radar-move { font-size: 0.78rem; min-width: 56px; }
+        }
+        /* v1.8.0: Phone (~390px) and Fold (~280px) — single-column stack */
+        @media (max-width: 480px) {
+            .cockpit-shell { padding: 0.9rem 0.7rem 1rem 0.7rem; }
+            .cockpit-title { font-size: 1.1rem; }
+            .cockpit-sub { font-size: 0.78rem; line-height: 1.45; }
+            .cockpit-onboarding { font-size: 0.8rem; }
+            .cockpit-q1-breakdown { grid-template-columns: 1fr; }
+            .cockpit-q4-triggers { grid-template-columns: 1fr; }
+            .us-radar-grid { grid-template-columns: 1fr; }
+            .us-radar-card-head { gap: 0.4rem; }
+            .us-radar-row {
+                grid-template-columns: 1fr auto auto;
+                gap: 0.35rem;
+            }
+            .us-radar-px { font-size: 0.72rem; }
         }
         </style>
         """,
