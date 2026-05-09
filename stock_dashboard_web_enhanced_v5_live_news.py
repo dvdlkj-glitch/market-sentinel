@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.8.7
+Version : v1.8.9
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -67,6 +67,13 @@ US THEME RADAR (v1.7.x), shown ONLY in U.S. only mode (replaces Q1-Q5):
   strip rendered above the grid via _us_radar_compare_queue_html().
   ?radar_clear=1 resets the queue (consumer:
   _consume_us_radar_clear_query()).
+  v1.8.8: NATIVE RENDER — render_us_theme_radar_native() replaces
+  the HTML-blob path. Uses st.columns + st.button instead of
+  <a href> so clicks travel via WebSocket (no browser navigation,
+  no flash, just like side-panel buttons). URL consumer kept for
+  backward compat with shared ?radar_jump= URLs. Mini per-ticker
+  chips (v1.8.4) dropped in native render (Streamlit buttons take
+  text-only labels); theme-level catalyst chips kept.
 
 PREFETCH SYSTEM (v1.6.0):
   - Companion script: prefetch_main_dashboard_job.py (in repo root)
@@ -237,6 +244,73 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.8.9 (2026-05-09)  [REVERT v1.8.8 cockpit dispatch — investigation pending]
+  - User-facing behavior is back to v1.8.7 (single-rerun flash on
+    radar click, but state-correct). Reverting because v1.8.8 caused
+    the watchlist to be cleared on the very first radar click,
+    leaving the user staring at a "請至少選擇一個股票代號" warning.
+  - The render_decision_cockpit() US-only branch was rolled back to
+    the v1.8.7 HTML-blob path: <a href="?radar_jump=...">,
+    _cockpit_render_us_theme_radar_html(), _us_radar_compare_queue_html(),
+    _us_theme_pulse_banner_html() composed into a single
+    st.markdown(shell_html). The v1.8.6 URL persistence (radar_picks)
+    still works.
+  - The v1.8.8 native code (render_us_theme_radar_native +
+    _handle_radar_click_native + _render_theme_card_native +
+    _render_compare_queue_native) and the v1.8.8 :has()-scoped CSS
+    are LEFT IN PLACE but no longer invoked. They will be reactivated
+    in a future release once the regression's root cause is
+    identified — current hypothesis is the :has() selector matches
+    parent stVerticalBlocks (page root, etc.), so the radar's button
+    overrides leak onto sidebar buttons including 'Clear selected',
+    which, when accidentally re-fired during a Streamlit widget
+    snapshot, could nuke dashboard_selected_tickers. Needs
+    confirmation via Streamlit logs + browser DevTools.
+  - The v1.8.6 fix (radar_picks URL persistence + URL-preserving
+    href builders) and v1.8.7 (no extra st.rerun in consumers) are
+    BOTH retained — they are independent of v1.8.8's dispatch swap.
+
+v1.8.8 (2026-05-09)  [Native Streamlit-button radar — eliminate click flash]
+  - Replaced the US Theme Radar's HTML <a href> click mechanism with
+    native Streamlit st.button widgets, matching the side panel's
+    smooth click behavior. The browser-level URL navigation that
+    caused v1.8.7's residual flash is gone — clicks now travel via
+    Streamlit's WebSocket as widget events, triggering React DOM
+    diffs instead of a full page reload.
+  - New entry point render_us_theme_radar_native() is called from the
+    cockpit's US-only branch in place of the old single-blob
+    st.markdown(shell_html). Internally:
+      * Header (kicker / title / sub) — HTML
+      * Pulse banner — HTML (no buttons inside, unchanged)
+      * Compare-queue strip — HTML head + Streamlit buttons for each
+        chip + Streamlit "Clear queue" button (was 4 <a> links)
+      * Theme grid — st.columns(3) with each card as an
+        st.container(); inside each container, HTML card head +
+        catalyst chip strip + N st.button rows (one per ticker)
+      * Disclaimer — HTML
+  - New click handler _handle_radar_click_native() mirrors the URL
+    consumer's logic but skips query-param mechanics. Mutates state
+    + calls st.rerun() to trigger a fast Streamlit-native rerun.
+    Click → ~50-100ms WebSocket roundtrip → DOM diff → done.
+  - URL-based fallback PRESERVED: the radar_jump / radar_clear
+    consumer is still wired in generate_dashboard. Old shared URLs
+    (?radar_jump=NVDA) continue to work; only the live UI no longer
+    emits those URLs. v1.8.6's URL persistence (radar_picks) remains
+    so cross-session sharing of compare queues works.
+  - Visual change: per-ticker mini chips (v1.8.4: AI / EPS chips
+    inline next to symbol) are DROPPED in the native render because
+    Streamlit buttons accept only plain-text labels. Theme-level
+    catalyst chips on each card head (v1.8.3) still render — they
+    sit in the HTML portion above the buttons. The button label
+    format includes a tone emoji (🟢/🔴/⚪) to preserve the at-a-glance
+    bullish/bearish cue from the move%.
+  - CSS: heavily customised st.button styling scoped to the radar
+    shell via a marker div + :has() selector. Override Streamlit's
+    default button look to match the dark + teal-hover row theme.
+    Browsers without :has() (older Safari, etc.) get default
+    Streamlit button styling — clicks still work, just look
+    plain. ~95% of users have :has() support.
 
 v1.8.7 (2026-05-09)  [UX polish — eliminate the double-rerun flash]
   - Removed the explicit st.rerun() from BOTH consumers
@@ -28593,6 +28667,171 @@ def _cockpit_inject_css() -> None:
             outline-offset: 2px;
         }
 
+        /* v1.8.8: Native Streamlit-button radar styling.
+           ----------------------------------------------------------------
+           The native render uses a marker div (.us-radar-native-shell) inside
+           a st.container() to scope CSS, plus per-card and per-queue marker
+           divs (.us-radar-card-native-marker, .us-radar-queue-native-marker)
+           to recreate the card / queue rectangles around mixed Streamlit
+           widgets. CSS targets the markers' parent stVerticalBlock via the
+           :has() selector, supported in modern browsers (~95% of users).
+           Browsers without :has() get default Streamlit button styling --
+           clicks still work, just look unstyled. */
+
+        /* Outer shell (kicker / header / pulse / queue / grid / disclaimer
+           all live inside this single container). Recreates the visual of
+           the old .cockpit-shell rectangle without needing one wrapping
+           HTML div. */
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) {
+            background: linear-gradient(180deg, rgba(8,12,22,0.85) 0%, rgba(8,12,22,0.55) 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 18px;
+            padding: 1.1rem 1.25rem 1.0rem 1.25rem;
+            margin-top: 0.5rem;
+        }
+        /* Hide the marker divs themselves (they're only for CSS scoping). */
+        .us-radar-native-shell,
+        .us-radar-card-native-marker,
+        .us-radar-queue-native-marker {
+            display: none;
+        }
+
+        /* Header inside the native shell (kicker / title / sub). */
+        .us-radar-native-header {
+            display: flex; flex-direction: column;
+            gap: 0.35rem;
+            margin-bottom: 0.65rem;
+        }
+        .us-radar-native-header .cockpit-title {
+            font-size: 1.18rem;
+            font-weight: 700;
+            color: #f5ead8;
+            line-height: 1.3;
+        }
+        .us-radar-native-header .cockpit-sub {
+            font-size: 0.85rem;
+            color: rgba(245,234,216,0.72);
+            line-height: 1.5;
+        }
+
+        /* Theme card (one per st.column slot, wrapped in st.container with
+           a .us-radar-card-native-marker). Recreates the dark gradient +
+           teal border rectangle around the card head and ticker buttons. */
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-card-native-marker) {
+            background: linear-gradient(160deg, rgba(15,28,52,0.65) 0%, rgba(8,14,28,0.45) 100%);
+            border: 1px solid rgba(94,234,212,0.18);
+            border-radius: 14px;
+            padding: 0.95rem 1.05rem 0.85rem 1.05rem;
+            margin-bottom: 0.85rem;
+        }
+
+        /* Compare-queue strip (st.container with .us-radar-queue-native-marker).
+           Mirrors the v1.8.5 purple-gradient look. */
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-queue-native-marker) {
+            background: linear-gradient(135deg, rgba(99,102,241,0.10) 0%, rgba(168,85,247,0.05) 100%);
+            border: 1px solid rgba(168,85,247,0.30);
+            border-radius: 12px;
+            padding: 0.7rem 0.85rem 0.6rem 0.85rem;
+            margin-bottom: 0.85rem;
+        }
+        /* Helper text below the queue's chip row. */
+        .us-radar-queue-helper {
+            margin-top: 0.4rem;
+            font-size: 0.74rem;
+            color: rgba(255,255,255,0.62);
+            line-height: 1.45;
+        }
+
+        /* Streamlit button overrides scoped to the radar shell.
+           Targets ALL buttons within the outer shell (ticker rows,
+           queue chips, clear button) and styles them as compact rows. */
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button {
+            background: rgba(11,18,32,0.45);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 8px;
+            color: #f5ead8;
+            padding: 0.45rem 0.7rem;
+            font-family: 'JetBrains Mono', 'Consolas', 'SFMono-Regular', monospace;
+            font-size: 0.84rem;
+            font-weight: 600;
+            text-align: left;
+            line-height: 1.2;
+            letter-spacing: 0;
+            transition: background-color 120ms ease, transform 120ms ease, border-color 120ms ease;
+            min-height: unset;
+            height: auto;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin: 0.18rem 0 0 0;
+            box-shadow: none;
+        }
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button:hover {
+            background: rgba(94,234,212,0.10);
+            border-color: rgba(94,234,212,0.32);
+            color: #ffffff;
+            transform: translateY(-1px);
+        }
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button:active {
+            transform: translateY(0);
+            background: rgba(94,234,212,0.16);
+        }
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button:focus,
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button:focus-visible {
+            outline: 2px solid rgba(94,234,212,0.45);
+            outline-offset: 2px;
+            box-shadow: none;
+        }
+
+        /* Queue chip + clear button: distinct visual cue.
+           Clear button gets the red-tinted hover treatment that the old
+           HTML <a class="us-radar-queue-clear"> had. We can't target the
+           clear button via key directly, but it always renders as the
+           LAST stButton inside the queue's stVerticalBlock. */
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-queue-native-marker) [data-testid="stButton"] > button {
+            text-align: center;
+            padding: 0.35rem 0.55rem;
+            font-size: 0.78rem;
+        }
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-queue-native-marker)
+            [data-testid="column"]:last-child [data-testid="stButton"] > button {
+            background: rgba(255,255,255,0.06);
+            border-color: rgba(255,255,255,0.16);
+            color: rgba(255,255,255,0.72);
+        }
+        [data-testid="stVerticalBlock"]:has(> div .us-radar-queue-native-marker)
+            [data-testid="column"]:last-child [data-testid="stButton"] > button:hover {
+            background: rgba(248,113,113,0.16);
+            border-color: rgba(248,113,113,0.40);
+            color: #fbbcbc;
+        }
+
+        /* Mobile RWD tweaks: tighter padding, single column for cards. */
+        @media (max-width: 768px) {
+            [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) {
+                padding: 0.85rem 0.85rem 0.75rem 0.85rem;
+            }
+            [data-testid="stVerticalBlock"]:has(> div .us-radar-card-native-marker) {
+                padding: 0.8rem 0.85rem 0.7rem 0.85rem;
+            }
+            [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button {
+                font-size: 0.80rem;
+                padding: 0.4rem 0.55rem;
+            }
+        }
+        @media (max-width: 480px) {
+            .us-radar-native-header .cockpit-title {
+                font-size: 1.05rem;
+            }
+            .us-radar-native-header .cockpit-sub {
+                font-size: 0.78rem;
+            }
+            [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button {
+                font-size: 0.76rem;
+                padding: 0.36rem 0.5rem;
+            }
+        }
+
         /* Tight inner shell variant for Q5 (so the Streamlit text_area
            doesn't sit inside a too-wide cockpit padding) */
         .cockpit-shell.cockpit-shell-tight {
@@ -30848,6 +31087,338 @@ def _consume_us_radar_clear_query() -> None:
     # render (which hides itself when len < 2).
 
 
+# ---------------------------------------------------------------------------
+# v1.8.8: Native click handler (no URL involvement).
+# ---------------------------------------------------------------------------
+# Companion to _consume_us_radar_jump_query, but called directly from inside
+# st.button click branches in the native render. Mirrors the consumer's
+# state-mutation logic but skips all query-param mechanics. Caller is
+# expected to follow this with st.rerun() so the new state propagates to
+# the layout dispatch on the next render.
+def _handle_radar_click_native(ticker: str) -> None:
+    ticker = str(ticker).strip().upper()
+    if not ticker:
+        return
+
+    # Validate against the radar universe (defensive — should always pass
+    # since the buttons only emit valid tickers, but matches the consumer's
+    # safety contract).
+    valid_tickers: set[str] = set()
+    for theme in US_THEME_GROUPS:
+        for tk in (theme.get("tickers") or []):
+            valid_tickers.add(str(tk).strip().upper())
+    if ticker not in valid_tickers:
+        return
+
+    # Force scope + mode (radar lives in U.S. only inside General Market).
+    st.session_state["dashboard_market_scope"] = "U.S. only"
+    st.session_state["dashboard_mode"] = "General Market"
+
+    # Watchlist append (deduped, scope-filtered).
+    existing = list(st.session_state.get("dashboard_selected_tickers", []) or [])
+    upper_existing = [str(t).strip().upper() for t in existing]
+    if ticker not in upper_existing:
+        merged = merge_ticker_selection(existing, [ticker], "U.S. only")
+        st.session_state["dashboard_selected_tickers"] = merged
+    st.session_state["dashboard_selected_tickers_initialized"] = True
+
+    # Smart-routing queue: validate against current watchlist + append.
+    current_watchlist_set = {
+        str(t).strip().upper()
+        for t in st.session_state.get("dashboard_selected_tickers", []) or []
+    }
+    raw_queue = st.session_state.get("_us_radar_picks", []) or []
+    seen: set[str] = set()
+    queue: list[str] = []
+    for pick in raw_queue:
+        pk = str(pick).strip().upper()
+        if not pk or pk in seen:
+            continue
+        if pk not in current_watchlist_set:
+            continue
+        seen.add(pk)
+        queue.append(pk)
+    if ticker not in seen:
+        queue.append(ticker)
+    if len(queue) > _US_RADAR_PICK_QUEUE_CAP:
+        queue = queue[-_US_RADAR_PICK_QUEUE_CAP:]
+    st.session_state["_us_radar_picks"] = queue
+
+    # Workspace focus ticker keys (canonical + widget) for both selectors.
+    st.session_state["dashboard_standard_focus_ticker"] = ticker
+    st.session_state["dashboard_workspace_focus_ticker"] = ticker
+    st.session_state["dashboard_workspace_focus_ticker__selector"] = ticker
+
+    # Smart routing: 1 pick → Workspace, 2+ → Compare.
+    route_to_compare = len(queue) >= 2
+    if route_to_compare:
+        st.session_state["dashboard_advanced_general_section"] = "layout_compare_tab"
+        st.session_state["dashboard_advanced_general_section__selector"] = "layout_compare_tab"
+        st.session_state["dashboard_expert_general_section"] = "layout_comparison_desk_tab"
+        st.session_state["dashboard_expert_general_section__selector"] = "layout_comparison_desk_tab"
+        st.session_state["dashboard_standard_general_section"] = "layout_standard_compare_plan_tab"
+        st.session_state["dashboard_standard_general_section__selector"] = "layout_standard_compare_plan_tab"
+    else:
+        st.session_state["dashboard_advanced_general_section"] = "layout_workspace_tab"
+        st.session_state["dashboard_advanced_general_section__selector"] = "layout_workspace_tab"
+        st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+        st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
+        st.session_state["dashboard_standard_general_section"] = "layout_standard_single_workspace_tab"
+        st.session_state["dashboard_standard_general_section__selector"] = "layout_standard_single_workspace_tab"
+
+
+# ---------------------------------------------------------------------------
+# v1.8.8: Native theme-card renderer (HTML head + Streamlit buttons).
+# ---------------------------------------------------------------------------
+def _render_theme_card_native(
+    theme: dict,
+    theme_catalysts: dict[str, dict] | None,
+    lang_zh: bool,
+) -> None:
+    theme_key = str(theme.get("key", ""))
+    rising = int(theme.get("rising_count", 0) or 0)
+    total = int(theme.get("total_count", 0) or 0)
+    emoji = str(theme.get("emoji", "")).strip()
+    name = str(theme.get("label", ""))
+
+    if total > 0 and rising / total >= 0.6:
+        badge_tone = "green"
+    elif total > 0 and rising / total <= 0.4:
+        badge_tone = "red"
+    else:
+        badge_tone = "neutral"
+    badge_text = "—" if total == 0 else (
+        f"{rising}/{total}" + ("上漲" if lang_zh else " up")
+    )
+
+    # Theme-level catalyst chip strip (v1.8.3, still HTML).
+    catalyst_strip_html = _us_theme_catalyst_strip_html(
+        theme_catalysts.get(theme_key) if isinstance(theme_catalysts, dict) else None,
+        lang_zh,
+    )
+
+    # Wrap each card in a marker'd container so CSS can apply the card
+    # rectangle visual (background + border + padding) via :has() selector.
+    with st.container():
+        st.markdown(
+            '<div class="us-radar-card-native-marker"></div>',
+            unsafe_allow_html=True,
+        )
+        # Card head + chip strip — pure HTML, no buttons inside.
+        st.markdown(
+            f'<div class="us-radar-card-head">'
+            f'  <div class="us-radar-card-name">{escape(emoji)}  {escape(name)}</div>'
+            f'  <div class="us-radar-card-badge {badge_tone}">{escape(badge_text)}</div>'
+            f'</div>'
+            f'{catalyst_strip_html}',
+            unsafe_allow_html=True,
+        )
+        # Ticker rows as Streamlit buttons. Streamlit button labels are
+        # text-only, so we encode the bull/bear cue as a leading emoji
+        # (🟢 / 🔴 / ⚪) and the rest as ticker · price · move%.
+        for leader in (theme.get("leaders") or []):
+            raw_tk = str(leader.get("ticker", "")).strip()
+            if not raw_tk:
+                continue
+            last_px = leader.get("last_price")
+            move_pct = leader.get("move_pct")
+
+            if isinstance(last_px, (int, float)) and not pd.isna(last_px):
+                price_str = f"${float(last_px):.2f}"
+            else:
+                price_str = "—"
+
+            if isinstance(move_pct, (int, float)) and not pd.isna(move_pct):
+                move_val = float(move_pct)
+                sign = "+" if move_val >= 0 else ""
+                move_str = f"{sign}{move_val:.2f}%"
+                arrow = "🟢" if move_val > 0 else ("🔴" if move_val < 0 else "⚪")
+            else:
+                move_str = "—"
+                arrow = "⚪"
+
+            # Spacing tuned for monospace alignment in the button label.
+            label = f"{arrow}  {raw_tk}    {price_str}    {move_str}"
+            help_text = (
+                f"開啟 {raw_tk} 工作台" if lang_zh else f"Open {raw_tk} workspace"
+            )
+            if st.button(
+                label,
+                key=f"us_radar_btn_{theme_key}_{raw_tk}",
+                use_container_width=True,
+                help=help_text,
+            ):
+                _handle_radar_click_native(raw_tk)
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# v1.8.8: Native compare-queue strip (HTML head + Streamlit buttons).
+# ---------------------------------------------------------------------------
+def _render_compare_queue_native(queue: list[str], lang_zh: bool) -> None:
+    if not queue or len(queue) < 2:
+        return
+
+    label = "比較佇列" if lang_zh else "Compare queue"
+    helper = (
+        "點任一檔可重新聚焦；繼續從雷達點選會延伸佇列。"
+        if lang_zh else
+        "Click a chip to refocus. Click another radar ticker to extend the queue."
+    )
+    count_text = f"{len(queue)} 檔" if lang_zh else f"{len(queue)} picks"
+    clear_label = "清除佇列" if lang_zh else "Clear queue"
+
+    # Wrap in a marker'd container so CSS can give the strip its purple
+    # background + border (matching v1.8.5's HTML compare-queue look).
+    with st.container():
+        st.markdown(
+            '<div class="us-radar-queue-native-marker"></div>',
+            unsafe_allow_html=True,
+        )
+        # Strip head: label + count
+        st.markdown(
+            f'<div class="us-radar-queue-head">'
+            f'  <span class="us-radar-queue-label">{escape(label)}</span>'
+            f'  <span class="us-radar-queue-count">{escape(count_text)}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        # Chip buttons + Clear button as a horizontal row of columns.
+        # Last slot (clear) gets ~1.5x weight so the label fits.
+        n_chips = len(queue)
+        weights = [1.0] * n_chips + [1.5]
+        cols = st.columns(weights, gap="small")
+        for i, tk in enumerate(queue):
+            with cols[i]:
+                refocus_help = (
+                    f"重新聚焦於 {tk}" if lang_zh else f"Refocus on {tk}"
+                )
+                if st.button(
+                    str(tk),
+                    key=f"us_radar_queue_chip_{tk}",
+                    use_container_width=True,
+                    help=refocus_help,
+                ):
+                    _handle_radar_click_native(str(tk))
+                    st.rerun()
+        with cols[-1]:
+            if st.button(
+                clear_label,
+                key="us_radar_queue_clear_native",
+                use_container_width=True,
+                help=clear_label,
+            ):
+                st.session_state["_us_radar_picks"] = []
+                st.rerun()
+        # Helper text below the row of buttons.
+        st.markdown(
+            f'<div class="us-radar-queue-helper">{escape(helper)}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# v1.8.8: Top-level native render (entry point called from the cockpit).
+# ---------------------------------------------------------------------------
+def render_us_theme_radar_native(
+    daily_data: "pd.DataFrame | None",
+    intraday_data: "pd.DataFrame | None",
+    *,
+    lang_zh: bool,
+    prefetched_snapshot: dict | None = None,
+) -> None:
+    """v1.8.8: Streamlit-native US Theme Radar render.
+
+    Replaces the v1.7.0–v1.8.7 single-blob HTML render that used
+    <a href="?radar_jump=...">. Now uses st.button widgets so clicks
+    travel via WebSocket — no browser navigation, no flash, just
+    like a side-panel button click.
+
+    Layout sections:
+      1. Header (kicker / title / sub) — HTML
+      2. Pulse banner — HTML
+      3. Compare-queue strip — HTML head + native button chips (when len >= 2)
+      4. Theme grid — st.columns(3) with each card as st.container() of
+         HTML head + chip strip + N native ticker buttons
+      5. Disclaimer — HTML
+
+    The URL-based consumer (_consume_us_radar_jump_query) is still wired
+    in generate_dashboard for backward-compat with shared URLs, but the
+    native render emits NO <a href> links itself.
+    """
+    # Restore from snapshot or compute live.
+    snapshot_us_radar = None
+    snapshot_us_theme_catalysts = None
+    if prefetched_snapshot and isinstance(prefetched_snapshot, dict):
+        q3 = prefetched_snapshot.get("cockpit_q3_payload") or {}
+        if isinstance(q3, dict):
+            snapshot_us_radar = q3.get("us_theme_radar")
+            snapshot_us_theme_catalysts = q3.get("us_theme_catalysts")
+
+    if snapshot_us_radar:
+        us_radar = snapshot_us_radar
+    else:
+        us_radar = build_us_theme_radar(daily_data, intraday_data, lang_zh=lang_zh)
+
+    if snapshot_us_theme_catalysts and isinstance(snapshot_us_theme_catalysts, dict):
+        theme_catalysts = snapshot_us_theme_catalysts
+    else:
+        theme_catalysts = build_us_theme_catalysts_safe(timeout_sec=4.5)
+
+    pulse_aggregate = build_us_theme_catalyst_aggregate(theme_catalysts)
+    queue = list(st.session_state.get("_us_radar_picks", []) or [])
+
+    title_text = "美股主題雷達" if lang_zh else "U.S. Theme Radar"
+    sub_text = (
+        "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。"
+        "點第 1 檔即進入該股工作台；點第 2 檔起自動切換為比較模式。"
+        if lang_zh else
+        "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count. "
+        "Click 1 ticker to open its workspace; click a 2nd ticker to auto-switch to compare mode."
+    )
+    disclaimer_text = (
+        "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。催化劑訊號來自個股新聞分類聚合，僅供研究參考，非投資建議。"
+        if lang_zh else
+        "Source: yfinance public quotes. % move = today vs prior close. Catalyst signals aggregate per-ticker news classification. For research only; not investment advice."
+    )
+    kicker_text = "美股主題雷達" if lang_zh else "US THEME RADAR"
+
+    # Outer shell container (CSS-styled via marker) wraps everything so
+    # the native render still visually reads as one cockpit panel.
+    with st.container():
+        st.markdown(
+            '<div class="us-radar-native-shell"></div>',
+            unsafe_allow_html=True,
+        )
+        # Header
+        st.markdown(
+            f'<div class="us-radar-native-header">'
+            f'  <div class="cockpit-kicker">'
+            f'    <span class="cockpit-kicker-dot"></span>{escape(kicker_text)}'
+            f'  </div>'
+            f'  <div class="cockpit-title">{escape(title_text)}</div>'
+            f'  <div class="cockpit-sub">{escape(sub_text)}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        # Pulse banner (HTML, no buttons)
+        pulse_html = _us_theme_pulse_banner_html(pulse_aggregate, lang_zh)
+        if pulse_html:
+            st.markdown(pulse_html, unsafe_allow_html=True)
+        # Compare-queue strip (renders only when len(queue) >= 2)
+        _render_compare_queue_native(queue, lang_zh)
+        # 3-column grid for theme cards
+        cols = st.columns(3, gap="medium")
+        for i, theme in enumerate(us_radar):
+            with cols[i % 3]:
+                _render_theme_card_native(theme, theme_catalysts, lang_zh)
+        # Disclaimer
+        st.markdown(
+            f'<div class="cockpit-disclaimer">{escape(disclaimer_text)}</div>',
+            unsafe_allow_html=True,
+        )
+
+
 def _cockpit_render_q4_html(q4: dict, lang_zh: bool) -> str:
     color = q4.get("color", "yellow")
     label_text = str(q4.get("label", "—"))
@@ -31166,43 +31737,36 @@ def render_decision_cockpit(
     snapshot_q4 = (prefetched_snapshot or {}).get("cockpit_q4_payload") if prefetched_snapshot else None
 
     if is_us_only:
-        # US Theme Radar path -- only Q3 with 5 themes, no Q1/Q2/Q4/Q5.
-        # Try to restore from snapshot first; fall back to live build.
+        # v1.8.9 [REVERT]: temporarily reverted to v1.8.7's HTML-blob
+        # path because v1.8.8's native st.button render was clearing
+        # the user's watchlist on click (root cause under investigation).
+        # The native helpers (render_us_theme_radar_native +
+        # _handle_radar_click_native + _render_theme_card_native +
+        # _render_compare_queue_native) and v1.8.8 CSS remain defined
+        # but are NOT called. Once the regression is understood we can
+        # re-enable the native path by swapping the call below.
         snapshot_us_radar = None
         snapshot_us_theme_catalysts = None
         snapshot_us_ticker_catalysts = None
         if snapshot_q3 and isinstance(snapshot_q3, dict):
             snapshot_us_radar = snapshot_q3.get("us_theme_radar")
-            # v1.8.3: Theme-level catalyst data rides on cockpit_q3_payload
-            # when the prefetch script provides it. If absent, we build live.
             snapshot_us_theme_catalysts = snapshot_q3.get("us_theme_catalysts")
-            # v1.8.4: Per-ticker catalyst data also rides on the same q3
-            # payload. Same fallback behavior — live build if missing.
             snapshot_us_ticker_catalysts = snapshot_q3.get("us_ticker_catalysts")
         if snapshot_us_radar:
             us_radar = snapshot_us_radar
         else:
             us_radar = build_us_theme_radar(daily_data, intraday_data, lang_zh=lang_zh)
 
-        # v1.8.3: Compute or restore per-theme Catalyst Engine pulse.
-        # Snapshot first (free); fall back to live compute (cached 600s,
-        # parallel news fetch with 4.5s timeout). On any failure or
-        # timeout we get {} back and the renderer simply omits chips.
         if snapshot_us_theme_catalysts and isinstance(snapshot_us_theme_catalysts, dict):
             theme_catalysts = snapshot_us_theme_catalysts
         else:
             theme_catalysts = build_us_theme_catalysts_safe(timeout_sec=4.5)
 
-        # v1.8.4: Compute or restore per-ticker Catalyst Engine signals.
-        # On cold cache the inner fetch_ticker_news cache is already warm
-        # from the theme builder above — so this call is essentially a
-        # cache-hit pass + classify_catalyst CPU work (~50-100ms).
         if snapshot_us_ticker_catalysts and isinstance(snapshot_us_ticker_catalysts, dict):
             ticker_catalysts = snapshot_us_ticker_catalysts
         else:
             ticker_catalysts = build_us_ticker_catalysts_safe(timeout_sec=4.5)
 
-        # Aggregate across all themes for the Theme Pulse banner.
         pulse_aggregate = build_us_theme_catalyst_aggregate(theme_catalysts)
 
         if loading_placeholder is not None:
@@ -31221,13 +31785,6 @@ def render_decision_cockpit(
             if lang_zh else
             "Source: yfinance public quotes. % move = today vs prior close. Catalyst signals aggregate per-ticker news classification. For research only; not investment advice."
         )
-        # v1.8.3: Theme Pulse banner above the grid + per-theme chips
-        # injected into each card via theme_catalysts kwarg.
-        # v1.8.4: ticker_catalysts kwarg adds a mini-chip strip on every
-        # ticker row (AI Demand / Earnings) so users can read each stock
-        # individually, not just the theme average.
-        # v1.8.5: compare-queue strip surfaces the radar-driven pick queue
-        # (1 pick = Workspace mode implicit; 2+ = Compare mode active).
         pulse_banner_html = _us_theme_pulse_banner_html(pulse_aggregate, lang_zh)
         compare_queue_html = _us_radar_compare_queue_html(
             list(st.session_state.get("_us_radar_picks", []) or []),
