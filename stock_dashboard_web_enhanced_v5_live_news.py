@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.9.0
+Version : v1.9.4
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,146 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.9.4 (2026-05-09)  [REVERSE v1.9.1 — Cockpit + editor block only in main Dashboard]
+  - User reversed the v1.9.1 decision after testing. Per user 2026-05-09:
+    "只要使用者選擇主Dashboad 以外的Dashboard, 今天市場決策主線和版主特別
+    分析與加權指數量能地形就應該要隱藏起來"
+  - The decision cockpit and editor analysis block (which contains TAIEX
+    volume terrain) are now gated to `dashboard_mode == "General Market"`
+    only. Active ETF Lab and Supply Chain Lab no longer show them.
+  - Affected blocks:
+      ✗ 今天市場決策主線    (render_decision_cockpit)
+      ✗ 版主特別分析        (render_editor_analysis_block)
+      ✗ 加權指數量能地形    (inside render_editor_analysis_block)
+  - Kept unconditional (still shows in all modes):
+      ✓ 📅 Snapshot freshness bar   — useful data-age context
+      ✓ 🌍 Global Market Indicator  — TAIEX/NASDAQ/etc. macro context
+  - Loading placeholder ("今天市場決策主線預備中" skeleton) is also gated
+    to General Market only since it's specifically the cockpit's
+    pre-paint skeleton. Active ETF Lab / Supply Chain Lab have their
+    own internal `with st.spinner(...)` loaders so users still see a
+    loading state during yfinance fetch.
+  - Page order on each mode:
+      General Market  : Hero → Freshness → Indicator → Cockpit → Editor → Body
+      Active ETF Lab  : Hero → Freshness → Indicator → ETF Lab body
+      Supply Chain Lab: Hero → Freshness → Indicator → Supply Chain body
+      Taiwan Futures  : Hero → Futures dashboard (unchanged — early return)
+  - v1.9.2's empty-tickers / data-error common header rendering still
+    works: when watchlist is empty, the user sees freshness bar +
+    global indicator + warning (cockpit/editor only joined the warning
+    path when in General Market mode).
+
+v1.9.3 (2026-05-09)  [Add 聯發科 (MTK) supply chain group]
+  - New supply chain group "mtk" added to SUPPLY_CHAIN_FOCUS_CONFIGS.
+    Curated by user (image upload 2026-05-08) — 10 stocks tied to the
+    MediaTek story across six sub-themes:
+      AI ASIC 設計           : 3661 世芯-KY
+      聯發科集團 / 合資       : 6526 達發, 3594 磐儀
+      通訊認證測試 (Wi-Fi 8) : 6146 耕興
+      先進製程 (2nm)         : 2330 台積電
+      GB10 系統夥伴          : 2357 華碩, 2376 技嘉
+      後段封裝測試 (OSAT)    : 3711 日月光投控, 6257 矽格, 2449 京元電子
+  - Unlike other supply chain groups (which classify by industry only),
+    each MTK ticker carries THREE narrative columns directly in the
+    catalog so the user sees "why this stock?" without leaving the page:
+      mtk_link  ── 跟聯發科的連結 (子公司 / 合資 / 技術合作 / 供應商)
+      thesis    ── 炒作 / 基本面主線 (市場為何把它跟 MTK 故事綁在一起)
+      risk      ── 主要風險 (這檔股票特有的下行風險)
+    These render as text columns in the supply chain table alongside
+    the standard price / move / trend / signal / news columns.
+  - Wider grid_template (1990px min) than other groups because MTK's
+    table has 12 columns vs 9–11 for others. Users can scroll
+    horizontally; the narrative columns are wide enough that the user
+    can read full sentences without truncation.
+  - Ticker suffixes verified via web search 2026-05-09:
+      .TW (上市):  3661, 6526, 2330, 2357, 2376, 3711, 6257, 2449
+      .TWO (上櫃): 3594, 6146
+  - Five touch points updated:
+      1. MTK_SUPPLY_CHAIN_CATALOG defined (after ROBOTICS catalog)
+      2. MTK_SUPPLY_CHAIN_CATALOG appended to SUPPLY_CHAIN_RUNTIME_NAME_MAP loop
+      3. "mtk" entry added to SUPPLY_CHAIN_FOCUS_CONFIGS
+      4. "mtk" appended to SUPPLY_CHAIN_FOCUS_ORDER (kept at end so
+         existing users' saved group order isn't disturbed)
+      5. supply_chain_group_label English label added: "MediaTek (MTK)"
+  - The existing _serialize_supply_chain_rows() and
+    _render_supply_chain_focus_cell_html() handlers automatically
+    propagate text columns by reading the columns config — no rendering
+    code changes needed for the new narrative columns to display.
+
+v1.9.2 (2026-05-09)  [Common header survives empty-watchlist + data-error early returns]
+  - User reported v1.9.1 worked for U.S. only scope but NOT for
+    Taiwan only scope when switching to 主動式 ETF / 供應鏈 Dashboard.
+  - Root cause: TWO early-return points in generate_dashboard fired
+    BEFORE the common header rendered:
+      1. Empty `dashboard_tickers` (line 38868):  When the user just
+         switched to Active ETF Lab and their `dashboard_active_etf_tickers`
+         was empty (very common for first-time users), the warning
+         fired and skipped the cockpit entirely.
+      2. `daily_data is None or daily_data.empty` (line 39027): If
+         yfinance returned no data for the chosen tickers, the error
+         fired and skipped the cockpit.
+    In U.S. only scope this happened to work because the cockpit's
+    `is_us_only` short-circuit renders the US Theme Radar from the
+    snapshot — but the page reached that branch AFTER the same early
+    returns. So the user saw the radar in U.S. only mostly because
+    their U.S. Active ETF watchlist was non-empty; in Taiwan scope
+    the same configuration left them watching the warning and nothing
+    else.
+  - Fix: restructured generate_dashboard so the common header (snapshot
+    freshness bar / global market indicator / decision cockpit / editor
+    analysis) ALWAYS renders before the empty-tickers or data-error
+    warnings. The page order in every error/empty path is now:
+        Hero Bar → Snapshot freshness → Global indicator → Cockpit
+        → Editor + TAIEX terrain → empty/error warning → return
+  - Implementation details:
+      * Loading placeholder is still created at the top so the user
+        sees a consistent skeleton during fetch.
+      * Data fetch is now guarded by `if dashboard_tickers:` so
+        yfinance doesn't get called with an empty list.
+      * Q1-Q5 builders inside render_decision_cockpit already handle
+        None/empty inputs gracefully (verified):
+          - build_home_news_top_taiwan_movers: empty loop → snapshot fallback
+          - build_home_news_supply_chain_rankings: doesn't use daily_data
+          - build_home_news_active_etf_spotlight: returns [] if no candidates
+          - _cockpit_compute_q4_signal: explicit "data not ready" verdict
+        So passing daily_data=None to the cockpit when the watchlist
+        is empty is safe — the cockpit renders skeleton/empty cards,
+        not a crash.
+      * The mode-specific bodies (Active ETF Lab / Supply Chain Lab /
+        General Market) still require non-empty dashboard_tickers AND
+        non-empty daily_data; that's enforced by the warnings AFTER
+        the common header.
+
+v1.9.1 (2026-05-09)  [Common header now renders for Active ETF + Supply Chain modes]
+  - Per user request: when the user is in 主動式 ETF Dashboard or
+    供應鏈 Dashboard, they now see the same first-paint header that
+    appears in 主 Dashboard:
+      1. 今天市場決策主線 (Decision Cockpit, 5-quadrant verdict)
+      2. 加權指數量能地形 (TAIEX volume terrain, inside Editor block)
+      3. 版主特別分析 (Editor analysis cards)
+    Plus the Global Market Indicator and snapshot freshness bar.
+  - Previously these were gated by `if dashboard_mode != "Active ETF Lab"`,
+    so Active ETF Lab dropped the entire block and went straight to its
+    own ETF-specific dashboard. Supply Chain Lab WAS already showing
+    the block, but the user's request covers both modes for safety.
+  - Removed two gates in generate_dashboard():
+      * Loading-placeholder creation (so Active ETF mode also shows
+        the "今天市場決策主線預備中" skeleton during data fetch).
+      * Common-header render block (snapshot bar / global indicator /
+        cockpit / editor analysis).
+  - The Active ETF body still renders below the common header. So the
+    page order on Active ETF Dashboard is now:
+        Hero Bar → Snapshot freshness → Global indicator → Cockpit
+        → Editor + TAIEX terrain → Active ETF Lab dashboard
+    Mirroring the 主 Dashboard top-down flow.
+  - U.S. only scope still skips the Editor block (v1.8.1 behavior
+    preserved): TAIEX terrain is Taiwan-specific and shouldn't appear
+    when the user is researching US tickers.
+  - Cockpit's existing dashboard_mode parameter routes correctly: it
+    already adapts Q3 (top movers / chain rankings / active ETFs)
+    based on which mode is active, so passing "Active ETF Lab" or
+    "Supply Chain Lab" to render_decision_cockpit Just Works.
 
 v1.9.0 (2026-05-09)  [Taiwan first-load speedup — universe restore + parallel fetch]
   Two complementary fixes that target the 7-15s yfinance bulk-download
@@ -1646,6 +1786,114 @@ ROBOTICS_SUPPLY_CHAIN_CATALOG = [
     {"group": "精密零件 / 外殼", "code": "4566", "name": "時碩工業", "ticker": "4566.TW"},
 ]
 
+# v1.9.3: 聯發科 (MTK) 供應鏈 ── 使用者手動策劃的「跟聯發科連結最緊」名單。
+# 不同於其他供應鏈群組(以產業分類為主),MTK 群組以「與聯發科的關係」為核心,
+# 涵蓋 AI ASIC 外溢、集團子公司、Wi-Fi 8 認證、先進製程、GB10 系統夥伴、
+# 後段封測等六大主軸。每檔股票都附上:
+#   mtk_link  ── 跟聯發科的具體連結(子公司持股、合資、技術合作、供應商列入)
+#   thesis    ── 炒作 / 基本面主線(為何市場會把它跟 MTK 故事綁在一起)
+#   risk      ── 主要風險(此檔股票特有的下行風險)
+# 這三個欄位會在供應鏈 Dashboard 的個股表格中以獨立欄位呈現,讓使用者一眼
+# 看清「為什麼是這檔」。
+MTK_SUPPLY_CHAIN_CATALOG = [
+    # AI ASIC 設計 ── 聯發科 ASIC 外溢最直接
+    {
+        "group": "AI ASIC 設計",
+        "code": "3661",
+        "name": "世芯-KY",
+        "ticker": "3661.TW",
+        "mtk_link": "聯發科透過子公司參與世芯私募,市場解讀為 AI ASIC 策略投資;世芯本身是 ASIC 設計服務大廠。",
+        "thesis": "AI ASIC 外溢最直接 — 聯發科 ASIC 專案放量,市場容易聯想到 ASIC 設計服務與 CSP 客戶題材。",
+        "risk": "P/E 約 69、Beta 高,且短線已漲多;若 AI ASIC 題材降溫,回檔會很快。",
+    },
+    # 聯發科集團 / 合資 ── 聯發科直接持股或共同出資
+    {
+        "group": "聯發科集團",
+        "code": "6526",
+        "name": "達發",
+        "ticker": "6526.TW",
+        "mtk_link": "達發與聯發科在多條產品線合作:寬頻 PON、Wi-Fi、Ethernet PHY 導入聯發科平台;AI 資料中心則有聯發科 Scale-up、達發 Scale-out 光模組晶片分工。",
+        "thesis": "聯發科集團 + 光通訊 + Ethernet + AI data center,是最有「集團輪動」味道的標的。",
+        "risk": "短線漲幅已大,若光通訊 / 高速網通題材退燒,可能快速回測。",
+    },
+    {
+        "group": "聯發科合資",
+        "code": "3594",
+        "name": "磐儀",
+        "ticker": "3594.TWO",
+        "mtk_link": "聯發科與磐儀合資磐旭智能,磐旭使用聯發科晶片與 ARM 解決方案;近期也有邊緣 AI 訂單與合作效益被市場關注。",
+        "thesis": "邊緣 AI + 工業電腦 + 聯發科合資題材,屬於較小型、彈性高的題材股。",
+        "risk": "P/E 約 113、股本與流動性相對小,漲跌會比大型股更劇烈。",
+    },
+    # 通訊認證測試 ── Wi-Fi 8 / 6G 測試先機
+    {
+        "group": "通訊認證測試",
+        "code": "6146",
+        "name": "耕興",
+        "ticker": "6146.TWO",
+        "mtk_link": "耕興完成聯發科 CES 2026 Filogic 8000 系列 Wi-Fi 8 核心晶片測試案,並取得美國 FCC 相關認證測試先機。",
+        "thesis": "Wi-Fi 8、認證測試、6G / 高頻測試;不是最強動能股,但屬於「回測二波」觀察股。",
+        "risk": "若跌破 MA60 約 200.9 元,代表不只是洗盤,可能轉為中期整理。",
+    },
+    # 先進製程 ── 底層晶圓代工供應鏈
+    {
+        "group": "先進製程",
+        "code": "2330",
+        "name": "台積電",
+        "ticker": "2330.TW",
+        "mtk_link": "聯發科宣布首款採用台積電 2nm 製程的旗艦晶片完成設計定案,預計 2026 年底上市;雙方合作橫跨行動、運算、車用、資料中心等領域。",
+        "thesis": "2nm + AI ASIC + 先進製程產能,是聯發科 AI / 高階晶片故事的底層供應鏈。",
+        "risk": "市值太大,彈性不如中小型題材股;更適合做核心趨勢股,不一定是最暴力的輪動股。",
+    },
+    # GB10 系統夥伴 ── NVIDIA + MTK 共同設計 DGX Spark
+    {
+        "group": "GB10 系統夥伴",
+        "code": "2357",
+        "name": "華碩",
+        "ticker": "2357.TW",
+        "mtk_link": "NVIDIA DGX Spark 採用 NVIDIA 與聯發科共同設計的 GB10 Grace Blackwell Superchip;台廠系統夥伴包含華碩等品牌。",
+        "thesis": "GB10 桌上型 AI 超級電腦 + AI PC / 工作站,有機會接到邊緣 AI 開發者需求。",
+        "risk": "DGX Spark / GB10 對華碩總營收貢獻仍需驗證;PC 毛利、記憶體成本也會影響評價。",
+    },
+    {
+        "group": "GB10 系統夥伴",
+        "code": "2376",
+        "name": "技嘉",
+        "ticker": "2376.TW",
+        "mtk_link": "技嘉也是搭載 NVIDIA + 聯發科共同設計 GB10 的 DGX Spark / 桌上型 AI 系統參與者之一。",
+        "thesis": "AI TOP、AI 工作站、DGX Spark 題材,市場容易用「GB10 供應鏈」角度炒作。",
+        "risk": "需注意 AI 工作站實際出貨量與毛利,若只是題材拉抬,容易震盪。",
+    },
+    # 後段封裝測試 ── 聯發科 ASIC 放量受惠
+    {
+        "group": "後段封裝測試",
+        "code": "3711",
+        "name": "日月光投控",
+        "ticker": "3711.TW",
+        "mtk_link": "聯發科供應商大會曾列入日月光投控,且 AI 基礎建設帶動先進封裝 / 封測需求外溢至 OSAT。",
+        "thesis": "AI ASIC 後段封裝測試 + 先進封裝產能,若聯發科 ASIC 放量,後段供應鏈會被市場重估。",
+        "risk": "Beta 約 1.73,波動大;若 AI 封測資本支出預期降溫,評價可能修正。",
+    },
+    {
+        "group": "後段封裝測試",
+        "code": "6257",
+        "name": "矽格",
+        "ticker": "6257.TW",
+        "mtk_link": "聯發科供應商大會也列入矽格,屬於測試 / 封測供應鏈觀察股。",
+        "thesis": "晶片測試 + AI / ASIC 測試需求,比大型封測股更有價格彈性。",
+        "risk": "漲多後籌碼容易鬆動;測試股常受客戶拉貨節奏影響。",
+    },
+    {
+        "group": "後段封裝測試",
+        "code": "2449",
+        "name": "京元電子",
+        "ticker": "2449.TW",
+        "mtk_link": "聯發科供應商大會也列入京元電;AI GPU / ASIC 測試複雜度提升,SLT、Burn-in 等需求被市場看好。",
+        "thesis": "AI ASIC / 高階晶片測試,屬於聯發科 ASIC 放量後的後段測試受惠股。",
+        "risk": "這檔最需要紀律,若跌破 MA20 約 297.2 元,代表短線資金可能撤退。",
+    },
+]
+
 SUPPLY_CHAIN_RUNTIME_NAME_MAP = {}
 for _catalog in (
     LOW_ORBIT_SUPPLY_CHAIN_CATALOG,
@@ -1653,6 +1901,7 @@ for _catalog in (
     MEMORY_SUPPLY_CHAIN_CATALOG,
     PACKAGING_TEST_SUPPLY_CHAIN_CATALOG,
     ROBOTICS_SUPPLY_CHAIN_CATALOG,
+    MTK_SUPPLY_CHAIN_CATALOG,
 ):
     for _item in _catalog:
         _ticker = str(_item.get("ticker", "")).upper().strip()
@@ -1838,9 +2087,54 @@ SUPPLY_CHAIN_FOCUS_CONFIGS = {
             {"label": "主導新聞", "kind": "story"},
         ],
     },
+    "mtk": {
+        "panel_section": "mtk-supply",
+        "panel_key": "mtk-supply-chain",
+        "catalog": MTK_SUPPLY_CHAIN_CATALOG,
+        "title": "聯發科 (MTK) 概念股",
+        "copy": "依使用者手動策劃的「跟聯發科連結最緊」名單,涵蓋 AI ASIC 外溢(世芯)、聯發科集團子公司(達發)、合資題材(磐儀 / 磐旭智能)、Wi-Fi 8 認證(耕興)、2nm 先進製程(台積電)、GB10 系統夥伴(華碩、技嘉)、後段封測(日月光投控、矽格、京元電) 共六大主軸。每檔附上「跟聯發科的連結」、「炒作主線」、「主要風險」三個獨立欄位,再用最新漲幅與趨勢強度做排序。",
+        "topline": "繁體中文主頁特別焦點",
+        "selection_note": "範圍:AI ASIC + 集團子公司 + 合資 + Wi-Fi 8 + 2nm + GB10 + 後段封測等聯發科外溢題材",
+        "rank_note": "排序邏輯:先看最新漲幅,其次看趨勢強度,再看一年相對領先;新聞判別在排名後再套用到目前名單。",
+        "empty_note": "目前沒有抓到可用的聯發科概念股價格資料。",
+        "lead_story_fallback": "目前還沒有回傳該股專屬新聞。",
+        "table_title": "目前聯發科概念股戰力板",
+        "driver_note": "策展觀點:聯發科 ASIC 放量 + GB10 共同設計 + 2nm 旗艦晶片三大故事同步發酵,整條供應鏈都被市場重新定價;但每檔的下行風險不同,搭配「主要風險」欄位逐檔判斷。",
+        # 12 columns total. Wider than other groups because the MTK catalog
+        # carries three narrative columns (link / thesis / risk) that don't
+        # exist in low-orbit / abf / etc. Min width 1990px so all columns
+        # are readable without truncation.
+        "grid_template": "70px 160px 180px minmax(280px, 1.5fr) minmax(220px, 1.2fr) 110px 110px 130px 110px 140px minmax(220px, 1.2fr) minmax(260px, 1fr)",
+        "min_width": "1990px",
+        "target_pe_sample": 4,
+        "summary_labels": {
+            "total": "聯發科供應鏈名單",
+            "rising": "最新上漲家數",
+            "bullish": "偏多新聞家數",
+            "last_sync": "更新基準",
+        },
+        "bullish_note": "延用 Dashboard 原有個股新聞判別邏輯;結合策展的「跟聯發科連結」與「主要風險」一起判讀。",
+        "columns": [
+            {"label": "#", "kind": "rank"},
+            {"label": "產業別", "kind": "text", "key": "group", "value_class": "sc-text sc-text-soft"},
+            {"label": "公司", "kind": "company"},
+            {"label": "跟聯發科的連結", "kind": "text", "key": "mtk_link", "value_class": "sc-text sc-text-strong"},
+            {"label": "炒作 / 基本面主線", "kind": "text", "key": "thesis", "value_class": "sc-text sc-text-highlight"},
+            {"label": "最新價", "kind": "price"},
+            {"label": "最新變動", "kind": "move"},
+            {"label": "趨勢", "kind": "trend"},
+            {"label": "訊號", "kind": "signal"},
+            {"label": "新聞傾向", "kind": "news"},
+            {"label": "主要風險", "kind": "text", "key": "risk", "value_class": "sc-text sc-text-soft"},
+            {"label": "主導新聞", "kind": "story"},
+        ],
+    },
 }
 
-SUPPLY_CHAIN_FOCUS_ORDER = ["low-orbit", "abf", "memory", "packaging-test", "robotics"]
+# v1.9.3: "mtk" appended at the end so existing users' saved group order
+# is preserved (existing keys keep their slots; new key shows up at the
+# bottom of the multi-select). Users can re-order from the sidebar.
+SUPPLY_CHAIN_FOCUS_ORDER = ["low-orbit", "abf", "memory", "packaging-test", "robotics", "mtk"]
 SUPPLY_CHAIN_PANEL_STATE_VERSION = 1
 SUPPLY_CHAIN_SNAPSHOT_VERSION = 1
 SUPPLY_CHAIN_SNAPSHOT_PATH = Path(__file__).with_name("supply_chain_focus_snapshots.json")
@@ -24263,6 +24557,7 @@ def supply_chain_group_label(config_key: str) -> str:
         "memory": "Memory",
         "packaging-test": "Packaging & Test",
         "robotics": "Robotics",
+        "mtk": "MediaTek (MTK)",
     }
     return english_labels.get(str(config_key), title)
 
@@ -38835,25 +39130,13 @@ def generate_dashboard():
         else tickers
     )
 
-    if not dashboard_tickers:
-        if dashboard_mode == "Active ETF Lab":
-            st.warning(t("active_etf_no_dashboard_data"))
-        elif dashboard_mode == "Supply Chain Lab":
-            st.warning(t("supply_chain_no_dashboard_data"))
-        else:
-            st.warning(t("please_select_ticker"))
-        return
-
-    # v1.4.7: For non-Active-ETF-Lab modes, render the cockpit loading
-    # placeholder BEFORE any heavy fetches. This guarantees the "今天市場
-    # 決策主線預備中" message is visible from the very first paint, even
-    # when the slow step is yfinance market-data fetch (5-12s on cold
-    # start) rather than the cockpit builders themselves. The placeholder
-    # is later passed into render_decision_cockpit, which reuses it and
-    # clears it once real content is ready -- so users see ONE continuous
-    # loading state, not two flashes.
+    # v1.9.4: Loading placeholder is the cockpit's pre-paint skeleton
+    # ("今天市場決策主線預備中"), so it's only relevant when the cockpit
+    # itself will render. Gated to General Market mode only — Active
+    # ETF Lab / Supply Chain Lab don't show the cockpit and have their
+    # own internal `with st.spinner(...)` loaders during data fetch.
     cockpit_loading_placeholder = None
-    if dashboard_mode != "Active ETF Lab":
+    if dashboard_mode == "General Market":
         cockpit_loading_placeholder = render_cockpit_loading_placeholder(
             lang_zh=_news_briefing_is_zh(),
             sub_message=(
@@ -38863,192 +39146,203 @@ def generate_dashboard():
             ),
         )
 
-    # v1.3.7: For Active ETF Lab, try to reconstruct daily / intraday frames
-    # from prefetched workspace snapshots first. This avoids 3-8s of yfinance
-    # latency on first paint when prefetch is healthy. We fall back to the
-    # live fetcher if any ticker is missing a usable snapshot.
+    # v1.9.2: Data fetch is now guarded by `if dashboard_tickers`. With an
+    # empty watchlist (common for first-time users in Active ETF Lab)
+    # there's nothing to fetch — daily_data / intraday_data stay None,
+    # the cockpit falls back to the snapshot path, and the empty warning
+    # fires AFTER the common header (instead of before it).
     daily_data = None
     intraday_data = None
     used_snapshot_market_data = False
     universe_restore_telemetry: dict | None = None  # v1.9.0: which path served the page
-    if dashboard_mode == "Active ETF Lab":
-        restored = _restore_active_etf_market_data_from_snapshots(
-            dashboard_tickers, lens_meta=lens_meta
-        )
-        if restored is not None:
-            daily_data, intraday_data = restored
-            used_snapshot_market_data = True
 
-    # v1.9.0 [A]: For Taiwan general market, try the universe-level snapshot
-    # restore BEFORE the blocking yfinance call. Skipped for Active ETF Lab
-    # (handled above), Supply Chain Lab (has its own snapshot system), and
-    # U.S. only (its tickers aren't in the Taiwan universe anyway). This is
-    # the primary speedup vs v1.8.x: ~95% of users with curated Taiwan
-    # watchlists get a full restore in <100ms with no yfinance call at all.
-    if (
-        daily_data is None
-        and dashboard_mode == "General Market"
-        and _normalize_market_scope(
-            st.session_state.get("dashboard_market_scope", "Taiwan only")
-        ) == "Taiwan only"
-    ):
-        try:
-            early_snapshot = load_main_dashboard_snapshot(
-                _normalize_market_scope(
-                    st.session_state.get("dashboard_market_scope", "Taiwan only")
+    if dashboard_tickers:
+        # v1.3.7: For Active ETF Lab, try to reconstruct daily / intraday frames
+        # from prefetched workspace snapshots first. This avoids 3-8s of yfinance
+        # latency on first paint when prefetch is healthy. We fall back to the
+        # live fetcher if any ticker is missing a usable snapshot.
+        if dashboard_mode == "Active ETF Lab":
+            restored = _restore_active_etf_market_data_from_snapshots(
+                dashboard_tickers, lens_meta=lens_meta
+            )
+            if restored is not None:
+                daily_data, intraday_data = restored
+                used_snapshot_market_data = True
+
+        # v1.9.0 [A]: For Taiwan general market, try the universe-level snapshot
+        # restore BEFORE the blocking yfinance call. Skipped for Active ETF Lab
+        # (handled above), Supply Chain Lab (has its own snapshot system), and
+        # U.S. only (its tickers aren't in the Taiwan universe anyway).
+        if (
+            daily_data is None
+            and dashboard_mode == "General Market"
+            and _normalize_market_scope(
+                st.session_state.get("dashboard_market_scope", "Taiwan only")
+            ) == "Taiwan only"
+        ):
+            try:
+                early_snapshot = load_main_dashboard_snapshot(
+                    _normalize_market_scope(
+                        st.session_state.get("dashboard_market_scope", "Taiwan only")
+                    )
                 )
+            except Exception:
+                early_snapshot = None
+            universe_payload = (
+                (early_snapshot or {}).get("universe_market_data_payload")
+                if isinstance(early_snapshot, dict) else None
             )
-        except Exception:
-            early_snapshot = None
-        universe_payload = (
-            (early_snapshot or {}).get("universe_market_data_payload")
-            if isinstance(early_snapshot, dict) else None
-        )
-        if isinstance(universe_payload, dict):
-            rd, ri, missing = _restore_general_market_data_from_snapshot(
-                dashboard_tickers,
-                universe_payload,
-                period=period,
-                interval=interval,
-            )
-            covered_count = len(dashboard_tickers) - len(missing)
-            universe_restore_telemetry = {
-                "covered_count": covered_count,
-                "missing_count": len(missing),
-                "missing_tickers": list(missing),
-                "snapshot_at": universe_payload.get("snapshot_at"),
-            }
-            if rd is not None and not missing:
-                # Full restore — every user ticker is in the universe.
-                # Skip yfinance entirely.
-                daily_data = rd
-                intraday_data = ri if ri is not None else pd.DataFrame()
-                used_snapshot_market_data = True
-            elif rd is not None and missing:
-                # Hybrid restore: snapshot covers most tickers, fetch the
-                # missing few from yfinance live (small list = small fetch).
-                # Run daily + intraday for the missing tickers in PARALLEL
-                # to halve the wall-clock cost of the fallback piece.
-                import concurrent.futures
-                with st.spinner(t("loading_data")):
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
-                        _f_daily = _ex.submit(fetch_daily_data, missing, period, interval)
-                        _f_intraday = _ex.submit(fetch_intraday_data, missing)
-                        try:
-                            fetched_daily = _f_daily.result()
-                        except Exception:
-                            fetched_daily = None
-                        try:
-                            fetched_intraday = _f_intraday.result()
-                        except Exception:
-                            fetched_intraday = None
-                # Concat covered + missing along the columns axis. yfinance
-                # already returns a (field, ticker) MultiIndex when given a
-                # multi-ticker list; for a single missing ticker it returns
-                # flat columns, which we wrap manually.
-                if fetched_daily is not None and not fetched_daily.empty:
-                    if not isinstance(fetched_daily.columns, pd.MultiIndex):
-                        # Single ticker case — promote columns to MultiIndex.
-                        only_ticker = missing[0]
-                        fetched_daily = fetched_daily.copy()
-                        fetched_daily.columns = pd.MultiIndex.from_tuples(
-                            [(str(c), only_ticker) for c in fetched_daily.columns]
-                        )
-                    daily_data = pd.concat([rd, fetched_daily], axis=1).sort_index(axis=1)
-                else:
+            if isinstance(universe_payload, dict):
+                rd, ri, missing = _restore_general_market_data_from_snapshot(
+                    dashboard_tickers,
+                    universe_payload,
+                    period=period,
+                    interval=interval,
+                )
+                covered_count = len(dashboard_tickers) - len(missing)
+                universe_restore_telemetry = {
+                    "covered_count": covered_count,
+                    "missing_count": len(missing),
+                    "missing_tickers": list(missing),
+                    "snapshot_at": universe_payload.get("snapshot_at"),
+                }
+                if rd is not None and not missing:
+                    # Full restore — every user ticker is in the universe.
                     daily_data = rd
-                if fetched_intraday is not None and not fetched_intraday.empty:
-                    if not isinstance(fetched_intraday.columns, pd.MultiIndex):
-                        only_ticker = missing[0]
-                        fetched_intraday = fetched_intraday.copy()
-                        fetched_intraday.columns = pd.MultiIndex.from_tuples(
-                            [(str(c), only_ticker) for c in fetched_intraday.columns]
-                        )
-                    if ri is not None and not ri.empty:
-                        intraday_data = pd.concat([ri, fetched_intraday], axis=1).sort_index(axis=1)
-                    else:
-                        intraday_data = fetched_intraday
-                else:
                     intraday_data = ri if ri is not None else pd.DataFrame()
-                used_snapshot_market_data = True
+                    used_snapshot_market_data = True
+                elif rd is not None and missing:
+                    # Hybrid restore: snapshot covers most tickers, fetch the
+                    # missing few from yfinance live (small list = small fetch).
+                    import concurrent.futures
+                    with st.spinner(t("loading_data")):
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+                            _f_daily = _ex.submit(fetch_daily_data, missing, period, interval)
+                            _f_intraday = _ex.submit(fetch_intraday_data, missing)
+                            try:
+                                fetched_daily = _f_daily.result()
+                            except Exception:
+                                fetched_daily = None
+                            try:
+                                fetched_intraday = _f_intraday.result()
+                            except Exception:
+                                fetched_intraday = None
+                    if fetched_daily is not None and not fetched_daily.empty:
+                        if not isinstance(fetched_daily.columns, pd.MultiIndex):
+                            only_ticker = missing[0]
+                            fetched_daily = fetched_daily.copy()
+                            fetched_daily.columns = pd.MultiIndex.from_tuples(
+                                [(str(c), only_ticker) for c in fetched_daily.columns]
+                            )
+                        daily_data = pd.concat([rd, fetched_daily], axis=1).sort_index(axis=1)
+                    else:
+                        daily_data = rd
+                    if fetched_intraday is not None and not fetched_intraday.empty:
+                        if not isinstance(fetched_intraday.columns, pd.MultiIndex):
+                            only_ticker = missing[0]
+                            fetched_intraday = fetched_intraday.copy()
+                            fetched_intraday.columns = pd.MultiIndex.from_tuples(
+                                [(str(c), only_ticker) for c in fetched_intraday.columns]
+                            )
+                        if ri is not None and not ri.empty:
+                            intraday_data = pd.concat([ri, fetched_intraday], axis=1).sort_index(axis=1)
+                        else:
+                            intraday_data = fetched_intraday
+                    else:
+                        intraday_data = ri if ri is not None else pd.DataFrame()
+                    used_snapshot_market_data = True
 
-    if daily_data is None:
-        # v1.9.0 [B]: Fallback live fetch path. Run daily + intraday
-        # concurrently — both are @st.cache_data decorated yfinance calls
-        # and Streamlit's cache is thread-safe. Wall time drops from
-        # daily+intraday (sequential) to max(daily, intraday) — ~30-50%
-        # savings on cold cache. The spinner stays visible because the
-        # main thread blocks on .result() until both futures complete.
-        import concurrent.futures
-        with st.spinner(t("loading_data")):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
-                _f_daily = _ex.submit(fetch_daily_data, dashboard_tickers, period, interval)
-                _f_intraday = _ex.submit(fetch_intraday_data, dashboard_tickers)
-                try:
-                    daily_data = _f_daily.result()
-                except Exception:
-                    daily_data = None
-                try:
-                    intraday_data = _f_intraday.result()
-                except Exception:
-                    intraday_data = None
+        if daily_data is None:
+            # v1.9.0 [B]: Fallback live fetch path. Run daily + intraday
+            # concurrently — both are @st.cache_data decorated yfinance calls
+            # and Streamlit's cache is thread-safe.
+            import concurrent.futures
+            with st.spinner(t("loading_data")):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+                    _f_daily = _ex.submit(fetch_daily_data, dashboard_tickers, period, interval)
+                    _f_intraday = _ex.submit(fetch_intraday_data, dashboard_tickers)
+                    try:
+                        daily_data = _f_daily.result()
+                    except Exception:
+                        daily_data = None
+                    try:
+                        intraday_data = _f_intraday.result()
+                    except Exception:
+                        intraday_data = None
 
-    if daily_data is None or daily_data.empty:
-        # Clear the cockpit loading placeholder before showing the error so
-        # the user doesn't see both a "preparing..." skeleton and an error
-        # message stacked.
-        if cockpit_loading_placeholder is not None:
-            cockpit_loading_placeholder.empty()
-        st.error(t("no_market_data"))
-        return
+    # v1.9.2: Determine error state BEFORE rendering common header so we
+    # can surface the right warning at the end. The common header itself
+    # is independent of these — it uses the snapshot.
+    _empty_tickers_state = not dashboard_tickers
+    _data_error_state = bool(dashboard_tickers) and (daily_data is None or daily_data.empty)
 
-    if dashboard_mode != "Active ETF Lab":
-        # v1.4.7: At this point market data is loaded. Clear the cockpit
-        # loading placeholder NOW so the global market indicator + cockpit
-        # render in the natural top-down order.
-        if cockpit_loading_placeholder is not None:
-            cockpit_loading_placeholder.empty()
+    # v1.4.7 / v1.9.1 / v1.9.2: Clear the cockpit loading placeholder NOW so
+    # the global market indicator + cockpit render in the natural top-down
+    # order. Runs for ALL three modes regardless of whether the watchlist
+    # is empty or the fetch failed.
+    if cockpit_loading_placeholder is not None:
+        cockpit_loading_placeholder.empty()
 
-        # v1.6.0: SNAPSHOT-FIRST PATH
-        # Try to render from the daily-prefetched Supabase snapshot. When the
-        # snapshot exists, the page paints in <500ms (no yfinance/TWSE calls).
-        # The user-facing "🔄 抓今天最新" button forces a live refetch when
-        # they want fresh numbers; we detect that via the
-        # _force_live_main_dashboard session_state flag.
-        scope_for_indicator = st.session_state.get(
-            "dashboard_market_scope", "Taiwan only"
+    # v1.9.2: Common header — runs unconditionally. Even when the user
+    # has an empty Active ETF / Supply Chain watchlist, this still
+    # renders so they see the cockpit / editor / global indicator
+    # context while picking tickers. Per user feedback in v1.9.1 →
+    # "在台股的狀態下就沒有達到我的要求" — Taiwan scope was hitting the
+    # empty-tickers early return BEFORE the common header could render.
+    #
+    # v1.6.0: SNAPSHOT-FIRST PATH
+    # Try to render from the daily-prefetched Supabase snapshot. When the
+    # snapshot exists, the page paints in <500ms (no yfinance/TWSE calls).
+    # The user-facing "🔄 抓今天最新" button forces a live refetch when
+    # they want fresh numbers; we detect that via the
+    # _force_live_main_dashboard session_state flag.
+    scope_for_indicator = st.session_state.get(
+        "dashboard_market_scope", "Taiwan only"
+    )
+    force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
+    snapshot_row = None
+    if not force_live:
+        snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
+
+    # Always render the freshness bar so the user knows what data
+    # they're looking at and can refresh.
+    render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
+
+    if snapshot_row and snapshot_row.get("global_indicator_payload"):
+        # Snapshot path: render directly from the stored payload.
+        render_global_market_indicator(snapshot_row["global_indicator_payload"])
+    else:
+        # Live path (snapshot missing OR user pressed refresh).
+        global_reference_data = fetch_global_reference_data(period, interval)
+        scope_indices = get_indices_for_scope(scope_for_indicator)
+        live_quote_tickers = tuple(
+            item["ticker"] for item in scope_indices
+            if not item["ticker"].startswith("__")
         )
-        force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
-        snapshot_row = None
-        if not force_live:
-            snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
+        global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
+        global_indicator = build_global_market_indicator(
+            global_reference_data,
+            lens_meta=lens_meta,
+            live_quotes=global_reference_quotes,
+            market_scope=scope_for_indicator,
+        )
+        render_global_market_indicator(global_indicator)
 
-        # Always render the freshness bar so the user knows what data
-        # they're looking at and can refresh.
-        render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
-
-        if snapshot_row and snapshot_row.get("global_indicator_payload"):
-            # Snapshot path: render directly from the stored payload.
-            render_global_market_indicator(snapshot_row["global_indicator_payload"])
-        else:
-            # Live path (snapshot missing OR user pressed refresh).
-            global_reference_data = fetch_global_reference_data(period, interval)
-            scope_indices = get_indices_for_scope(scope_for_indicator)
-            live_quote_tickers = tuple(
-                item["ticker"] for item in scope_indices
-                if not item["ticker"].startswith("__")
-            )
-            global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
-            global_indicator = build_global_market_indicator(
-                global_reference_data,
-                lens_meta=lens_meta,
-                live_quotes=global_reference_quotes,
-                market_scope=scope_for_indicator,
-            )
-            render_global_market_indicator(global_indicator)
-
-        # Decision Cockpit — pass the snapshot (if any) into render so it can
-        # short-circuit the heavy builders.
+    # v1.9.4: Decision Cockpit + Editor analysis block now ONLY render
+    # in General Market mode. Per user 2026-05-09: "只要使用者選擇主
+    # Dashboad 以外的Dashboard, 今天市場決策主線和版主特別分析與加權
+    # 指數量能地形就應該要隱藏起來". This reverses v1.9.1 (which made
+    # them universal) — the user tested it and decided focused modes
+    # like Active ETF Lab / Supply Chain Lab should NOT show the
+    # general-market analysis blocks.
+    #
+    # v1.9.2: When dashboard_tickers is empty and daily_data is None,
+    # the cockpit's snapshot path takes over; without snapshot the
+    # Q1-Q4 builders all degrade gracefully.
+    # v1.8.1: US-only mode skips the editor block entirely. The TAIEX
+    # volume terrain is Taiwan-specific data, and the editor analysis
+    # cards are written about Taiwan supply-chain themes.
+    if dashboard_mode == "General Market":
         render_decision_cockpit(
             daily_data,
             intraday_data,
@@ -39059,19 +39353,28 @@ def generate_dashboard():
             skip_loading_placeholder=True,
             prefetched_snapshot=snapshot_row if not force_live else None,
         )
-        # v1.4.2: News Briefing's three auto-summary cards (TOP 5 stocks /
-        # supply chain / active ETF spotlight) have been absorbed into Q3 of
-        # the cockpit. We keep the Editor Analysis cards + TAIEX volume
-        # terrain in a standalone block below the cockpit.
-        # v1.8.1: US-only mode skips this block entirely. The TAIEX volume
-        # terrain is Taiwan-specific data, and the editor analysis cards are
-        # written about Taiwan supply-chain themes. Showing them in U.S. only
-        # would be off-topic and confusing.
         _editor_block_scope = _normalize_market_scope(
             st.session_state.get("dashboard_market_scope", "Taiwan only")
         )
         if _editor_block_scope != "U.S. only":
             render_editor_analysis_block(lang_zh=_news_briefing_is_zh())
+
+    # v1.9.2: Empty-tickers and data-error early returns moved here, AFTER
+    # the common header has rendered. The user now always sees the cockpit
+    # / editor / global indicator before being told their watchlist is
+    # empty or the data fetch failed.
+    if _empty_tickers_state:
+        if dashboard_mode == "Active ETF Lab":
+            st.warning(t("active_etf_no_dashboard_data"))
+        elif dashboard_mode == "Supply Chain Lab":
+            st.warning(t("supply_chain_no_dashboard_data"))
+        else:
+            st.warning(t("please_select_ticker"))
+        return
+
+    if _data_error_state:
+        st.error(t("no_market_data"))
+        return
 
     if dashboard_mode == "Active ETF Lab":
         render_active_etf_lab_dashboard(
