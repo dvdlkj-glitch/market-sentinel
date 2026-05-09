@@ -167,50 +167,61 @@ def build_snapshot_for_scope(mod, market_scope: str) -> dict:
         log("  Fetching cockpit data...")
         # Default tickers for the scope drive the cockpit builders.
         dashboard_tickers = mod.default_tickers_for_market_scope(market_scope)
-        # We need daily/intraday for the cockpit; reuse fetch_daily/intraday.
-        period = "1y"
-        interval = "1d"
-        daily = mod.fetch_daily_data(dashboard_tickers, period, interval)
-        intraday = mod.fetch_intraday_data(dashboard_tickers)
-        lens_meta = {"period": period, "interval": interval}
-        # Use the dashboard's default supply chain groups
-        supply_chain_groups = mod.MARKET_SCOPE_DEFAULT_GROUPS.get(market_scope, [])
-        # Builders the cockpit calls internally:
-        top_movers = mod.build_home_news_top_taiwan_movers(
-            daily, intraday, dashboard_tickers, supply_chain_groups
-        )
-        chain_rankings = mod.build_home_news_supply_chain_rankings(
-            supply_chain_groups, lens_meta=lens_meta
-        )
-        active_etfs = mod.build_home_news_active_etf_spotlight(
-            daily, intraday, dashboard_tickers, lens_meta, "General Market"
-        )
-        # Determine language; cockpit Q1-Q5 has both zh/en. Snapshot in zh
-        # (dashboard's default since v1.5.3); restore-time we use whatever
-        # the user has selected. The text is mostly templated so this is OK.
-        lang_zh = True
-
-        # Q1
-        q1 = mod._cockpit_compute_q1_verdict(top_movers, chain_rankings, lang_zh)
-        payload["cockpit_q1_payload"] = _sanitize_for_json(q1)
-        # Q2 = top 3 chains
-        payload["cockpit_q2_payload"] = _sanitize_for_json({
-            "chains": chain_rankings[:3],
-            "lang_zh": lang_zh,
-        })
-        # Q3 = top movers + chains + ETFs (all in one bundle)
-        payload["cockpit_q3_payload"] = _sanitize_for_json({
-            "top_movers": top_movers[:5],
-            "chain_rankings": chain_rankings[:3],
-            "active_etfs": active_etfs[:3],
-            "lang_zh": lang_zh,
-        })
-        # Q4
-        q4 = mod._cockpit_compute_q4_signal(
-            daily, intraday, chain_rankings, top_movers, lang_zh
-        )
-        payload["cockpit_q4_payload"] = _sanitize_for_json(q4)
-        log(f"  ✓ Cockpit Q1-Q4 built")
+        # v1.7.0: US-only mode skips Q1/Q2/Q4 entirely and only builds the
+        # US Theme Radar. The dashboard's render_decision_cockpit reads
+        # snapshot_q3.us_theme_radar when market_scope=='U.S. only'.
+        if market_scope == "U.S. only":
+            log("  US-only mode: building US Theme Radar (5 themes)")
+            # Fetch daily/intraday for ALL US theme tickers (28 tickers).
+            us_tickers = mod.all_us_theme_tickers()
+            us_daily = mod.fetch_daily_data(us_tickers, "3mo", "1d")
+            us_intraday = mod.fetch_intraday_data(us_tickers)
+            us_radar = mod.build_us_theme_radar(
+                us_daily, us_intraday, top_n_per_theme=3, lang_zh=True
+            )
+            payload["cockpit_q1_payload"] = None
+            payload["cockpit_q2_payload"] = None
+            payload["cockpit_q3_payload"] = _sanitize_for_json({
+                "us_theme_radar": us_radar,
+                "lang_zh": True,
+            })
+            payload["cockpit_q4_payload"] = None
+            log(f"  ✓ US Theme Radar built ({len(us_radar)} themes)")
+        else:
+            # Taiwan-only path (existing logic)
+            period = "1y"
+            interval = "1d"
+            daily = mod.fetch_daily_data(dashboard_tickers, period, interval)
+            intraday = mod.fetch_intraday_data(dashboard_tickers)
+            lens_meta = {"period": period, "interval": interval}
+            supply_chain_groups = mod.MARKET_SCOPE_DEFAULT_GROUPS.get(market_scope, [])
+            top_movers = mod.build_home_news_top_taiwan_movers(
+                daily, intraday, dashboard_tickers, supply_chain_groups
+            )
+            chain_rankings = mod.build_home_news_supply_chain_rankings(
+                supply_chain_groups, lens_meta=lens_meta
+            )
+            active_etfs = mod.build_home_news_active_etf_spotlight(
+                daily, intraday, dashboard_tickers, lens_meta, "General Market"
+            )
+            lang_zh = True
+            q1 = mod._cockpit_compute_q1_verdict(top_movers, chain_rankings, lang_zh)
+            payload["cockpit_q1_payload"] = _sanitize_for_json(q1)
+            payload["cockpit_q2_payload"] = _sanitize_for_json({
+                "chains": chain_rankings[:3],
+                "lang_zh": lang_zh,
+            })
+            payload["cockpit_q3_payload"] = _sanitize_for_json({
+                "top_movers": top_movers[:5],
+                "chain_rankings": chain_rankings[:3],
+                "active_etfs": active_etfs[:3],
+                "lang_zh": lang_zh,
+            })
+            q4 = mod._cockpit_compute_q4_signal(
+                daily, intraday, chain_rankings, top_movers, lang_zh
+            )
+            payload["cockpit_q4_payload"] = _sanitize_for_json(q4)
+        log(f"  ✓ Cockpit data built")
     except Exception as exc:
         log(f"  ✗ Cockpit failed: {exc}\n{traceback.format_exc()}")
         payload["fetch_metadata"]["errors"].append(
