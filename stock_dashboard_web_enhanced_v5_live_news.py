@@ -25384,6 +25384,143 @@ def _home_news_active_etf_candidates(dashboard_mode: str, tickers: list[str]) ->
     return build_active_etf_quick_picks()
 
 
+# v1.7.0: US-only theme radar -- 5 themes covering MAG7 / oil / materials /
+# DRAM / data center, each with a curated ticker list. When the user picks
+# "U.S. only" market scope, the cockpit Q3 panel renders these 5 themes
+# (each showing TOP 3 movers) instead of Taiwan supply-chain rankings.
+US_THEME_GROUPS = [
+    {
+        "key": "mag7",
+        "emoji": "🌟",
+        "label_zh": "MAG 7 科技七雄",
+        "label_en": "MAG 7",
+        "tickers": ["NVDA", "META", "AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"],
+    },
+    {
+        "key": "oil_stocks",
+        "emoji": "🛢️",
+        "label_zh": "油股",
+        "label_en": "Oil Equities",
+        "tickers": ["XLE", "XOM", "CVX", "OXY", "COP"],
+    },
+    {
+        "key": "materials",
+        "emoji": "🏗️",
+        "label_zh": "化工材料股",
+        "label_en": "Materials",
+        "tickers": ["LIN", "SHW", "FCX", "NEM", "APD"],
+    },
+    {
+        "key": "dram_memory",
+        "emoji": "💾",
+        "label_zh": "DRAM / 記憶體",
+        "label_en": "DRAM / Memory",
+        "tickers": ["MU", "WDC", "SNDK"],
+    },
+    {
+        "key": "data_center",
+        "emoji": "🏢",
+        "label_zh": "資料中心",
+        "label_en": "Data Center",
+        "tickers": ["DLR", "EQIX", "VRT", "NVT", "ETN", "MOD", "AVGO", "ANET"],
+    },
+]
+
+
+def us_theme_label(theme_key: str, lang_zh: bool) -> str:
+    """Return the localized theme label, including emoji prefix."""
+    for theme in US_THEME_GROUPS:
+        if theme["key"] == theme_key:
+            label = theme["label_zh"] if lang_zh else theme["label_en"]
+            return f"{theme['emoji']}  {label}"
+    return theme_key
+
+
+def all_us_theme_tickers() -> list[str]:
+    """Flat list of all US theme tickers (for fetch_daily_data warm-up)."""
+    out: list[str] = []
+    for theme in US_THEME_GROUPS:
+        out.extend(theme["tickers"])
+    return dedupe_keep_order(out)
+
+
+def build_us_theme_radar(
+    daily_data: pd.DataFrame | None,
+    intraday_data: pd.DataFrame | None,
+    *,
+    top_n_per_theme: int = 3,
+    lang_zh: bool = True,
+) -> list[dict]:
+    """Build the 5-theme US market radar bundle.
+
+    Returns a list of theme dicts:
+        [
+          {
+            "key": "mag7",
+            "emoji": "🌟",
+            "label": "MAG 7 科技七雄",
+            "leaders": [
+                {"ticker": "NVDA", "move_pct": 2.1, "last_price": 142.3},
+                {"ticker": "META", "move_pct": 1.5, "last_price": 615.0},
+                ...
+            ],
+            "rising_count": 5,
+            "total_count": 7,
+          },
+          ...
+        ]
+
+    "leaders" are the top_n_per_theme tickers sorted by today's % move
+    descending. The fetcher caller must have already pulled daily/intraday
+    data for at least all_us_theme_tickers().
+    """
+    radar: list[dict] = []
+    for theme in US_THEME_GROUPS:
+        rows: list[dict] = []
+        rising = 0
+        total = 0
+        for ticker in theme["tickers"]:
+            series, _ = get_price_series(daily_data, ticker)
+            if series is None or series.empty:
+                continue
+            total += 1
+            # Today's % move = (last - prev_close) / prev_close * 100
+            last_price = float(series.iloc[-1])
+            prev_close = float(series.iloc[-2]) if len(series) >= 2 else last_price
+            move_pct = ((last_price - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0
+            # Try intraday for fresher last price if available
+            try:
+                if intraday_data is not None and not intraday_data.empty:
+                    intra_series, _ = get_price_series(intraday_data, ticker)
+                    if intra_series is not None and not intra_series.empty:
+                        intra_last = float(intra_series.iloc[-1])
+                        if not pd.isna(intra_last) and prev_close > 0:
+                            last_price = intra_last
+                            move_pct = ((intra_last - prev_close) / prev_close * 100.0)
+            except Exception:
+                pass
+            if move_pct > 0:
+                rising += 1
+            rows.append({
+                "ticker": ticker,
+                "last_price": last_price,
+                "move_pct": move_pct,
+                "prev_close": prev_close,
+            })
+        # Sort by move_pct descending, take top N
+        rows.sort(key=lambda r: r["move_pct"], reverse=True)
+        leaders = rows[:top_n_per_theme]
+        radar.append({
+            "key": theme["key"],
+            "emoji": theme["emoji"],
+            "label": theme["label_zh"] if lang_zh else theme["label_en"],
+            "leaders": leaders,
+            "rising_count": rising,
+            "total_count": total,
+        })
+    return radar
+
+
 def build_home_news_active_etf_spotlight(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
@@ -27076,6 +27213,75 @@ def _cockpit_inject_css() -> None:
             line-height: 1.5;
         }
 
+        /* v1.7.0: US Theme Radar grid (US-only mode replaces Q1-Q4) */
+        .us-radar-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 0.85rem;
+            margin-top: 1rem;
+        }
+        .us-radar-card {
+            background: linear-gradient(160deg, rgba(15,28,52,0.65) 0%, rgba(8,14,28,0.45) 100%);
+            border: 1px solid rgba(94,234,212,0.18);
+            border-radius: 14px;
+            padding: 0.95rem 1.05rem;
+            display: flex; flex-direction: column;
+            gap: 0.7rem;
+        }
+        .us-radar-card-head {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 0.6rem;
+        }
+        .us-radar-card-name {
+            font-size: 0.95rem; font-weight: 600; color: #f5ead8;
+        }
+        .us-radar-card-badge {
+            font-size: 0.72rem; padding: 0.2rem 0.55rem; border-radius: 6px;
+            font-weight: 600; letter-spacing: 0.02em;
+        }
+        .us-radar-card-badge.green {
+            background: rgba(94,234,212,0.18); color: #5eead4;
+        }
+        .us-radar-card-badge.red {
+            background: rgba(248,113,113,0.18); color: #f87171;
+        }
+        .us-radar-card-badge.neutral {
+            background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6);
+        }
+        .us-radar-card-body {
+            display: flex; flex-direction: column; gap: 0.45rem;
+        }
+        .us-radar-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 0.6rem;
+            align-items: center;
+            padding: 0.45rem 0.6rem;
+            background: rgba(11,18,32,0.4);
+            border-radius: 8px;
+        }
+        .us-radar-tk {
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 0.92rem; font-weight: 700; color: #fff;
+        }
+        .us-radar-px {
+            font-size: 0.85rem; color: rgba(255,255,255,0.65);
+        }
+        .us-radar-move {
+            font-size: 0.86rem; font-weight: 700; min-width: 70px; text-align: right;
+        }
+        .us-radar-move.up { color: #5eead4; }
+        .us-radar-move.down { color: #f87171; }
+        .us-radar-move.flat { color: rgba(255,255,255,0.45); }
+        .us-radar-empty {
+            text-align: center; color: rgba(255,255,255,0.5);
+            padding: 2rem 1rem; font-style: italic;
+        }
+        .us-radar-empty-row {
+            font-size: 0.85rem; color: rgba(255,255,255,0.4); font-style: italic;
+            text-align: center; padding: 0.5rem;
+        }
+
         /* Tight inner shell variant for Q5 (so the Streamlit text_area
            doesn't sit inside a too-wide cockpit padding) */
         .cockpit-shell.cockpit-shell-tight {
@@ -28522,6 +28728,80 @@ def _cockpit_compute_q4_signal(
     }
 
 
+# v1.7.0: US-only theme radar HTML renderer.
+# Renders 5 theme cards in a responsive grid; each card shows the theme
+# name + rising/total badge + top-3 leader rows. Reuses cockpit-* CSS
+# classes for visual consistency with the rest of the cockpit.
+def _cockpit_render_us_theme_radar_html(radar: list[dict], lang_zh: bool) -> str:
+    if not radar:
+        empty_msg = "美股主題雷達資料準備中..." if lang_zh else "US theme radar data pending..."
+        return f'<div class="us-radar-empty">{escape(empty_msg)}</div>'
+
+    cards_html_parts = []
+    for theme in radar:
+        # Header: emoji + name + (rising/total)
+        rising = int(theme.get("rising_count", 0) or 0)
+        total = int(theme.get("total_count", 0) or 0)
+        emoji = str(theme.get("emoji", "")).strip()
+        name = str(theme.get("label", ""))
+        # Tone the badge: green if majority rising, red if majority falling
+        if total > 0 and rising / total >= 0.6:
+            badge_tone = "green"
+        elif total > 0 and rising / total <= 0.4:
+            badge_tone = "red"
+        else:
+            badge_tone = "neutral"
+        if total == 0:
+            badge_text = "—"
+        else:
+            badge_text = f"{rising}/{total}" + ("上漲" if lang_zh else " up")
+        # Leader rows: ticker + price + % move chip
+        leaders = theme.get("leaders") or []
+        if leaders:
+            leader_rows = []
+            for leader in leaders:
+                tk = escape(str(leader.get("ticker", "")))
+                last_px = leader.get("last_price")
+                move_pct = leader.get("move_pct")
+                price_str = f"${float(last_px):.2f}" if isinstance(last_px, (int, float)) and not pd.isna(last_px) else "—"
+                if isinstance(move_pct, (int, float)) and not pd.isna(move_pct):
+                    move_val = float(move_pct)
+                    sign = "+" if move_val >= 0 else ""
+                    move_str = f"{sign}{move_val:.2f}%"
+                    move_class = "up" if move_val > 0 else ("down" if move_val < 0 else "flat")
+                else:
+                    move_str = "—"
+                    move_class = "flat"
+                leader_rows.append(
+                    f'<div class="us-radar-row">'
+                    f'  <div class="us-radar-tk">{tk}</div>'
+                    f'  <div class="us-radar-px">{price_str}</div>'
+                    f'  <div class="us-radar-move {move_class}">{move_str}</div>'
+                    f'</div>'
+                )
+            leaders_html = "".join(leader_rows)
+        else:
+            leaders_html = (
+                f'<div class="us-radar-empty-row">'
+                f'  {escape("資料準備中" if lang_zh else "Data pending")}'
+                f'</div>'
+            )
+        cards_html_parts.append(
+            f'<div class="us-radar-card">'
+            f'  <div class="us-radar-card-head">'
+            f'    <div class="us-radar-card-name">{escape(emoji)}  {escape(name)}</div>'
+            f'    <div class="us-radar-card-badge {badge_tone}">{escape(badge_text)}</div>'
+            f'  </div>'
+            f'  <div class="us-radar-card-body">{leaders_html}</div>'
+            f'</div>'
+        )
+    return (
+        f'<div class="us-radar-grid">'
+        f'  {"".join(cards_html_parts)}'
+        f'</div>'
+    )
+
+
 def _cockpit_render_q4_html(q4: dict, lang_zh: bool) -> str:
     color = q4.get("color", "yellow")
     label_text = str(q4.get("label", "—"))
@@ -28819,6 +29099,16 @@ def render_decision_cockpit(
             unsafe_allow_html=True,
         )
 
+    # ---- v1.7.0: US-only mode short-circuit ----
+    # When market_scope = "U.S. only", show ONLY the US Theme Radar (5 themes)
+    # and hide Q1/Q2/Q4/Q5 entirely. This is per the user's explicit ask:
+    #台股 cockpit 邏輯（breadth 判讀、供應鏈題材、追/等/避）對美股使用者沒有
+    # 直接幫助 -- 美股使用者要看的是「主題雷達」直接找今天最強的群組與個股。
+    market_scope = _normalize_market_scope(
+        st.session_state.get("dashboard_market_scope", "Taiwan only")
+    )
+    is_us_only = (market_scope == "U.S. only")
+
     # ---- Heavy lifting: builders + verdict computation ----
     # v1.6.0: When the prefetched snapshot is available, restore Q1-Q4
     # payloads from JSON instead of re-running the builders. Q3 needs
@@ -28828,6 +29118,46 @@ def render_decision_cockpit(
     snapshot_q2 = (prefetched_snapshot or {}).get("cockpit_q2_payload") if prefetched_snapshot else None
     snapshot_q3 = (prefetched_snapshot or {}).get("cockpit_q3_payload") if prefetched_snapshot else None
     snapshot_q4 = (prefetched_snapshot or {}).get("cockpit_q4_payload") if prefetched_snapshot else None
+
+    if is_us_only:
+        # US Theme Radar path -- only Q3 with 5 themes, no Q1/Q2/Q4/Q5.
+        # Try to restore from snapshot first; fall back to live build.
+        snapshot_us_radar = None
+        if snapshot_q3 and isinstance(snapshot_q3, dict):
+            snapshot_us_radar = snapshot_q3.get("us_theme_radar")
+        if snapshot_us_radar:
+            us_radar = snapshot_us_radar
+        else:
+            us_radar = build_us_theme_radar(daily_data, intraday_data, lang_zh=lang_zh)
+
+        if loading_placeholder is not None:
+            loading_placeholder.empty()
+
+        title_text = "美股主題雷達" if lang_zh else "U.S. Theme Radar"
+        sub_text = (
+            "5 個主題各顯示今天漲幅前 3 名 — 一眼看出資金最熱的方向。下方括號是該主題上漲 / 總檔數。"
+            if lang_zh else
+            "5 themes, each showing today's top 3 movers — see where the money flows at a glance. The badge shows rising / total count for each theme."
+        )
+        disclaimer_text = (
+            "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。僅供研究參考，非投資建議。"
+            if lang_zh else
+            "Source: yfinance public quotes. % move = today vs prior close. For research only; not investment advice."
+        )
+        radar_html = _cockpit_render_us_theme_radar_html(us_radar, lang_zh)
+        shell_html = (
+            f'<div class="cockpit-shell">'
+            f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>'
+            f'      {escape("US THEME RADAR" if not lang_zh else "美股主題雷達")}</div>'
+            f'  <div class="cockpit-title">{escape(title_text)}</div>'
+            f'  <div class="cockpit-sub">{escape(sub_text)}</div>'
+            f'  {radar_html}'
+            f'  <div class="cockpit-disclaimer">{escape(disclaimer_text)}</div>'
+            f'</div>'
+        )
+        st.markdown(_cockpit_minify_html(shell_html), unsafe_allow_html=True)
+        return  # No Q1/Q2/Q4/Q5 in US-only mode
+
     use_snapshot = bool(snapshot_q1 and snapshot_q3)
 
     if use_snapshot:
