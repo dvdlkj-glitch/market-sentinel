@@ -215,6 +215,14 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 CHANGELOG (most recent first)
 ================================================================================
 
+v1.8.1 (2026-05-09)
+  - U.S. only mode now skips the Editor & Terrain block (TAIEX volume
+    terrain + curated editor analysis cards). The terrain visualises
+    Taiwan-specific volume data and the editor cards are written about
+    Taiwan supply-chain themes; both are off-topic in US-only mode.
+  - Single-line guard at the call site in generate_dashboard() — no
+    changes to render_editor_analysis_block itself.
+
 v1.8.0 (2026-05-09)
   - Mobile RWD audit phase 1: layered @media breakpoints (1100/980/768/480)
     across Hero Bar, Freshness Bar, Global Indicator, Decision Cockpit, and
@@ -36399,7 +36407,15 @@ def generate_dashboard():
         # supply chain / active ETF spotlight) have been absorbed into Q3 of
         # the cockpit. We keep the Editor Analysis cards + TAIEX volume
         # terrain in a standalone block below the cockpit.
-        render_editor_analysis_block(lang_zh=_news_briefing_is_zh())
+        # v1.8.1: US-only mode skips this block entirely. The TAIEX volume
+        # terrain is Taiwan-specific data, and the editor analysis cards are
+        # written about Taiwan supply-chain themes. Showing them in U.S. only
+        # would be off-topic and confusing.
+        _editor_block_scope = _normalize_market_scope(
+            st.session_state.get("dashboard_market_scope", "Taiwan only")
+        )
+        if _editor_block_scope != "U.S. only":
+            render_editor_analysis_block(lang_zh=_news_briefing_is_zh())
 
     if dashboard_mode == "Active ETF Lab":
         render_active_etf_lab_dashboard(
