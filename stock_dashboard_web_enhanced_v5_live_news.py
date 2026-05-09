@@ -25448,7 +25448,7 @@ def build_us_theme_radar(
     daily_data: pd.DataFrame | None,
     intraday_data: pd.DataFrame | None,
     *,
-    top_n_per_theme: int = 3,
+    top_n_per_theme: int = 0,
     lang_zh: bool = True,
     auto_fetch: bool = True,
 ) -> list[dict]:
@@ -25534,7 +25534,10 @@ def build_us_theme_radar(
             })
         # Sort by move_pct descending, take top N
         rows.sort(key=lambda r: r["move_pct"], reverse=True)
-        leaders = rows[:top_n_per_theme]
+        # v1.7.2: top_n_per_theme=0 means show all tickers in the theme.
+        # Otherwise slice to top N. The user selected "show all" so each
+        # theme card lists every ticker the theme defines (not just top 3).
+        leaders = rows if top_n_per_theme <= 0 else rows[:top_n_per_theme]
         radar.append({
             "key": theme["key"],
             "emoji": theme["emoji"],
@@ -29160,9 +29163,9 @@ def render_decision_cockpit(
 
         title_text = "美股主題雷達" if lang_zh else "U.S. Theme Radar"
         sub_text = (
-            "5 個主題各顯示今天漲幅前 3 名 — 一眼看出資金最熱的方向。下方括號是該主題上漲 / 總檔數。"
+            "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。"
             if lang_zh else
-            "5 themes, each showing today's top 3 movers — see where the money flows at a glance. The badge shows rising / total count for each theme."
+            "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count."
         )
         disclaimer_text = (
             "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。僅供研究參考，非投資建議。"
