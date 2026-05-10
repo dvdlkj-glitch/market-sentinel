@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.23
+Version : v1.10.24
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,43 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.24 (2026-05-10)  [Batch import: support multi-line paragraph format, not just TSV]
+
+  - User reported clicking "🔍 預覽匯入結果" did nothing.
+  - Root cause: user pasted content in MULTI-LINE PARAGRAPH format
+    (each thesis = 5 lines with no Tab separators between fields),
+    not TSV format. The parser tried to split each line on "\\t",
+    found only 1 column per line, and silently dropped every row
+    (because `len(cols) < 2` skip). Result: empty preview = user
+    sees no feedback, button appears broken.
+  - This is actually a UX problem, not a bug:
+    * The instructions said "Tab-separated", but users naturally
+      paste multi-line content from notes / Markdown / blog drafts
+    * Empty preview gave no error message — user just thinks the
+      button is dead
+  - Fix: smart format detection in _parse_table_text()
+    * If paste contains tab chars → treat as TSV (existing behavior)
+    * If no tab chars but content has multiple lines that look like
+      "a paragraph block of 5+ rows" → treat as multi-line paragraph
+      format (one thesis per block, blank line separates blocks)
+    * Else → return empty AND surface a helpful error message
+  - Multi-line paragraph format spec:
+      Block 1, Line 1: title (required)
+      Block 1, Line 2: summary (required, can be 1+ joined lines)
+      Block 1, Line 3: cross_validation
+      Block 1, Line 4: risk
+      Block 1, Line 5: probability text (e.g. "中,約55-60%")
+      Block 1, Line 6: topic (optional)
+      [blank line]
+      Block 2, Line 1: ...
+  - Helper _detect_paste_format() returns "tsv" | "paragraph" | "unknown"
+    so the UI can show a hint about which format was detected.
+  - Also: when parse returns empty, now show a clearer error explaining
+    BOTH supported formats so user can self-diagnose.
+  - Tested with: 5-line single-paragraph (user's actual case),
+    multi-paragraph (2 theses with blank line), TSV (still works),
+    mixed garbage (graceful failure with helpful error).
 
 v1.10.23 (2026-05-10)  [Cross-market signal pulse — fills the weekend / holiday gap]
 

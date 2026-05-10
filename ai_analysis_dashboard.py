@@ -442,6 +442,135 @@ def _auto_generate_validation_points(title: str, cross_validation: str) -> list[
     return points
 
 
+def _detect_paste_format(text: str) -> str:
+    """v1.10.24: Detect whether the paste is TSV, paragraph blocks, or unknown.
+
+    Returns:
+        "tsv"        — has tab characters in non-empty lines
+        "paragraph"  — no tabs but has multi-line structure that could be
+                       parsed as paragraph blocks
+        "unknown"    — too short / unstructured to make sense of
+    """
+    if not text or not text.strip():
+        return "unknown"
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return "unknown"
+
+    # If ANY non-empty line contains a tab, treat as TSV
+    if any("\t" in ln for ln in lines):
+        return "tsv"
+
+    # No tabs — check if it could be paragraph format.
+    # Heuristic: at least 2 non-empty lines (5 ideally for one full thesis,
+    # but allow loose). Title-only paste is also valid (1 line) but
+    # we'd return 'unknown' because it's not enough info.
+    if len(lines) >= 2:
+        return "paragraph"
+
+    return "unknown"
+
+
+def _parse_paragraph_blocks(text: str) -> list[dict]:
+    """v1.10.24: Parse multi-line paragraph format.
+
+    Format (per thesis "block"):
+        Line 1: title
+        Line 2: summary
+        Line 3: cross_validation
+        Line 4: risk
+        Line 5: probability text
+        Line 6: topic (optional)
+
+    Blocks are separated by ONE OR MORE blank lines. A block must have
+    at least 2 non-empty lines (title + summary) to be valid.
+
+    Single-block paste with fewer than 5 lines: pad missing fields as "".
+    Block with > 6 lines: extra lines after Line 5 are appended to summary
+    (so paragraph-style summary that spans multiple lines still works).
+    Actually — to handle the user's real case where the SUMMARY itself
+    spans multiple physical lines:
+      We use a smart heuristic — if a block has 5 lines, treat as
+      title/summary/cv/risk/prob. If a block has more than 6 lines,
+      treat first as title, then JOIN middle lines into summary if no
+      explicit separator emerges.
+
+    For simplicity v1.10.24 uses the strict "5-7 lines per block" rule
+    and lets users adjust their input if they need.
+    """
+    if not text or not text.strip():
+        return []
+
+    rows: list[dict] = []
+
+    # Split on blank lines into blocks
+    blocks: list[list[str]] = []
+    current_block: list[str] = []
+    for raw_line in text.splitlines():
+        if raw_line.strip():
+            current_block.append(raw_line.strip())
+        else:
+            if current_block:
+                blocks.append(current_block)
+                current_block = []
+    if current_block:
+        blocks.append(current_block)
+
+    for block in blocks:
+        if len(block) < 2:
+            # Need at least title + summary
+            continue
+
+        # Skip block if first line looks like a header
+        first = block[0]
+        if any(h in first for h in ["影片可確認主題", "Title", "title", "主題"]):
+            # Header detection — but only if it's the only field-like line
+            # (e.g. Tab-separated header copied without tabs by mistake).
+            # For paragraph format, normally there's no header line, so
+            # this is conservative.
+            if "\t" not in first and len(block) <= 1:
+                continue
+
+        title = block[0]
+        summary = block[1] if len(block) > 1 else ""
+        cv      = block[2] if len(block) > 2 else ""
+        risk    = block[3] if len(block) > 3 else ""
+        prob_text = block[4] if len(block) > 4 else ""
+        topic_override = block[5] if len(block) > 5 else ""
+
+        prob = _parse_probability(prob_text)
+
+        # Resolve topic
+        if topic_override and topic_override in AI_TOPIC_REGISTRY:
+            topic = topic_override
+        elif topic_override:
+            topic = None
+            for k, v in AI_TOPIC_REGISTRY.items():
+                if v.get("label_zh") == topic_override or v.get("label_en") == topic_override:
+                    topic = k
+                    break
+            if not topic:
+                topic = _auto_detect_topic(title, summary)
+        else:
+            topic = _auto_detect_topic(title, summary)
+
+        vps = _auto_generate_validation_points(title, cv)
+
+        rows.append({
+            "title": title,
+            "summary": summary,
+            "cross_validation": cv,
+            "risk": risk,
+            "claimed_probability": prob,
+            "probability_text_raw": prob_text,
+            "topic": topic,
+            "validation_points": vps,
+        })
+
+    return rows
+
+
 def _parse_table_text(text: str, separator: str = "\t") -> list[dict]:
     """Parse a TSV/CSV blob (with optional header row) into thesis dicts.
 
@@ -455,11 +584,22 @@ def _parse_table_text(text: str, separator: str = "\t") -> list[dict]:
 
     Header row (with 影片可確認主題 / title) is auto-detected and skipped.
 
+    v1.10.24: Smart format detection — if input has no tabs but has multi-line
+    structure, automatically dispatch to _parse_paragraph_blocks() instead
+    of silently dropping every row.
+
     Returns a list of dicts with keys: title, summary, cross_validation,
     risk, claimed_probability, topic, validation_points (auto-seeded).
     """
     if not text or not text.strip():
         return []
+
+    # v1.10.24: Auto-detect format and route
+    fmt = _detect_paste_format(text)
+    if fmt == "paragraph":
+        # No tabs but multi-line — treat as paragraph blocks
+        return _parse_paragraph_blocks(text)
+    # else: continue with TSV/CSV logic below (fmt == "tsv" or unknown)
 
     rows: list[dict] = []
     lines = [ln for ln in text.splitlines() if ln.strip()]
@@ -3144,8 +3284,9 @@ def _render_thesis_input_form(lang_zh: bool) -> None:
     if lang_zh:
         expander_label = "➕ 批次匯入論點"
         instruction = (
-            "**一次匯入多篇論點。** 從 Excel / Google Docs 複製你的表格"
-            "(Tab 分隔),貼到下方;或下載為 CSV 檔上傳。\n\n"
+            "**一次匯入多篇論點。** 支援兩種格式:\n\n"
+            "**1. TSV** — 從 Excel / Google Docs 複製表格,Tab 自動分隔\n"
+            "**2. 多行段落** — 從筆記 / Markdown 直接貼上,每篇 5 行(標題 / 解說 / 交叉驗證 / 風險 / 機率),多篇用空白行分隔\n\n"
             "**預期欄位**(順序要對):\n"
             "1. 影片可確認主題 · 2. 解說重點 · 3. 目前局勢交叉驗證 · "
             "4. 風險·反證 · 5. 推估成立機率 · 6. 主題分類(可選)"
@@ -3225,6 +3366,54 @@ def _render_thesis_input_form(lang_zh: bool) -> None:
                     try:
                         parsed_rows = _parse_table_text(paste_text, separator="\t")
                         st.session_state["_thesis_batch_preview"] = parsed_rows
+                        # v1.10.24: Surface a clear error when parse returned nothing.
+                        # Previously this silently set [] and the button looked dead.
+                        if not parsed_rows:
+                            fmt = _detect_paste_format(paste_text)
+                            if lang_zh:
+                                if fmt == "tsv":
+                                    st.error(
+                                        "❌ 偵測到 Tab 分隔格式,但無法解析出任何論點。\n\n"
+                                        "請檢查:\n"
+                                        "• 每列至少要有「標題 + 解說」兩個欄位\n"
+                                        "• 標題或解說不能是空字串"
+                                    )
+                                elif fmt == "paragraph":
+                                    st.error(
+                                        "❌ 偵測到多行段落格式,但無法解析出任何論點。\n\n"
+                                        "請檢查:\n"
+                                        "• 每篇論點至少要有 2 行(標題 + 解說)\n"
+                                        "• 多篇論點之間要用空白行分隔"
+                                    )
+                                else:
+                                    st.error(
+                                        "❌ 無法解析貼上的內容。支援兩種格式:\n\n"
+                                        "**1. TSV(從 Excel / Google Docs 複製)**\n"
+                                        "每列一篇論點,欄位用 Tab 分隔\n\n"
+                                        "**2. 多行段落(從筆記 / Markdown 貼上)**\n"
+                                        "每篇論點 5 行(標題 / 解說 / 交叉驗證 / 風險 / 機率),"
+                                        "多篇之間用空白行分隔"
+                                    )
+                            else:
+                                if fmt == "tsv":
+                                    st.error(
+                                        "❌ TSV format detected but no theses parsed.\n\n"
+                                        "Check that each row has at least title + summary."
+                                    )
+                                elif fmt == "paragraph":
+                                    st.error(
+                                        "❌ Paragraph format detected but no theses parsed.\n\n"
+                                        "Each thesis needs at least 2 lines (title + summary). "
+                                        "Separate multiple theses with a blank line."
+                                    )
+                                else:
+                                    st.error(
+                                        "❌ Cannot parse pasted content. Supported formats:\n\n"
+                                        "**1. TSV** (from Excel / Google Docs): tab-separated, one row per thesis\n\n"
+                                        "**2. Paragraph blocks**: 5 lines per thesis "
+                                        "(title / summary / cross-validation / risk / probability), "
+                                        "separated by blank line"
+                                    )
                     except Exception as e:
                         st.error(f"{parse_failed}: {e}")
 
