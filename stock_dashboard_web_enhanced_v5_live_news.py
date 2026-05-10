@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.9.4
+Version : v1.9.6
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,75 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.9.6 (2026-05-09)  [Fix v1.9.5 silent failure + remove Cockpit/Editor/TAIEX terrain]
+  - BUG FIX (root cause of why Momentum Pulse never rendered in v1.9.5):
+    `math.isfinite` was used inside _momentum_pct, _momentum_linear_score,
+    and the VIX direction scoring — but `import math` was MISSING from
+    this file. First call into these helpers raised NameError, the outer
+    `try/except Exception: return` in render_tomorrow_momentum_pulse
+    swallowed it silently, and the block never appeared.
+    Fix: added `import math` next to the other stdlib imports.
+  - Defensive: removed the silent outer `try/except Exception: return`
+    in render_tomorrow_momentum_pulse. The inner per-fetch try/except
+    blocks already handle yfinance / TWSE failures gracefully, and the
+    builder helpers tolerate None inputs. Removing the catch-all means
+    future bugs surface in Streamlit's error UI instead of disappearing.
+  - REMOVAL (per user request): "今天的市場決策主線整個可以刪掉或移除,
+    我不需要了,我會從這個新的小Table開始":
+      ✗ render_decision_cockpit call site removed from generate_dashboard
+      ✗ render_editor_analysis_block call site removed (also drops
+        加權指數量能地形 since it lives inside the editor block)
+      ✗ Cockpit loading placeholder logic removed (no cockpit = no
+        skeleton needed)
+      ✗ selected_supply_chain_groups initialization simplified (only
+        passed into Supply Chain Lab now)
+    The cockpit / editor FUNCTION DEFINITIONS are kept in the file so
+    other code paths that reference them (e.g. v1.4 News Briefing
+    legacy hooks, debug introspection) don't break — only the
+    generate_dashboard call sites are removed. They're effectively
+    dead code now and can be deleted in a follow-up cleanup if you
+    want to slim the file.
+  - New page order on Main Dashboard:
+      Hero Bar → 📊 明日動能脈搏 → 📅 Snapshot freshness
+      → 🌍 Global Indicator → main dashboard body
+    No more cockpit, no more editor analysis, no more TAIEX terrain.
+
+v1.9.5 (2026-05-09)  [Tomorrow Momentum Pulse — top-of-page momentum table]
+  - New compact 5-row table that renders RIGHT BELOW the Hero Bar
+    (above Snapshot freshness) on the main Dashboard. Reads previous
+    close to estimate next-day directional energy:
+      強 (動力持續) 🟢  ── score ≥ 70
+      中 (震盪盤整) 🟡  ── score 40–69
+      弱 (資金進出偏弱) 🔴 ── score < 40
+  - Two scope-aware scoring engines (selected by user 2026-05-09):
+      Taiwan: 60% TSMC + 40% 大盤
+        - TSMC daily return, 5d momentum, volume vs 20d avg
+        - TAIEX daily return, 5d momentum
+        - TWSE turnover Δ% vs prev day (volume = energy)
+        - 三大法人 net flow sum (signed, normalized by ±200 億)
+      U.S.: Mag7 (75 pts) + VIX (25 pts)
+        - Mag7 equal-weight daily return + 5d momentum
+        - Mag7 breadth (% closing positive) + volume vs 20d
+        - VIX level (lower = stronger) + direction penalty
+  - Each row shows: 訊號名稱 | 數值 | 貢獻分 | 解讀
+    The 5th row is the OVERALL verdict (強/中/弱).
+  - Uses existing data sources — no new yfinance bandwidth on hot cache:
+      Taiwan: fetch_daily_data(["2330.TW", "^TWII"])
+              + fetch_taiwan_market_aggregates() (already cached, returns
+                turnover Δ + foreign/trust/dealer net + D-1/D-2 history)
+      U.S.:   fetch_daily_data(["AAPL", "MSFT", "GOOGL", "META", "AMZN",
+                               "NVDA", "TSLA", "^VIX"])
+  - Build pipeline:
+      build_tomorrow_momentum_pulse_taiwan()  — pure compute, returns
+                                                 dict {score, verdict, rows}
+      build_tomorrow_momentum_pulse_us()      — same shape, US logic
+      render_tomorrow_momentum_pulse(scope)   — fetches + computes + paints
+  - Gated to `dashboard_mode == "General Market"` (per v1.9.4: focused
+    modes don't get top-of-page analysis blocks).
+  - Resilient to fetch failures: when TSMC/TAIEX/Mag7 data missing, the
+    block renders a "資料準備中" placeholder rather than crashing or
+    showing zeros.
 
 v1.9.4 (2026-05-09)  [REVERSE v1.9.1 — Cockpit + editor block only in main Dashboard]
   - User reversed the v1.9.1 decision after testing. Per user 2026-05-09:
@@ -814,6 +883,7 @@ import base64
 import contextlib
 import io
 import json
+import math
 import ssl
 from pathlib import Path
 import re
@@ -7377,7 +7447,7 @@ TARGET_REFERENCE_KEYWORDS = {
     "目標價", "調高", "調降", "上修", "下修", "外資", "法人", "買進", "中立", "賣出",
 }
 
-st.set_page_config(page_title="David Lau Stock Market Vision", page_icon="📈", layout="wide")
+st.set_page_config(page_title="David Lau Designed AI Stock Market Vision", page_icon="📈", layout="wide")
 
 
 
@@ -7467,7 +7537,7 @@ NEWS_DISPLAY_OPTIONS = {
 
 TRANSLATIONS = {
     "English": {
-        "app_name": "David Lau Stock Market Vision",
+        "app_name": "David Lau Designed AI Stock Market Vision",
         "top_intro": "A calmer, more premium market workspace focused on clarity, hierarchy, and deeper exploration across comparison, catalysts, news, and chart structure.",
         "language": "Language",
         "headline_note": "Interface language changes the dashboard chrome. Taiwan tickers now prefer Taiwan/Traditional Chinese news sources when available.",
@@ -7607,7 +7677,7 @@ TRANSLATIONS = {
         "bearish_count": "Bearish {count}",
     },
     "繁體中文": {
-        "app_name": "David Lau 股票市場視野",
+        "app_name": "David Lau Designed AI 股票市場視野",
         "top_intro": "更沉穩、更高級的市場研究工作台，強調清晰層級、內容探索，以及比較、催化劑、新聞與圖表結構之間的串聯。",
         "language": "語言",
         "headline_note": "介面語言會切換儀表板文字與導覽，新聞標題仍保留原始來源語言。",
@@ -7785,7 +7855,7 @@ TRANSLATIONS["English"].update({
 })
 
 TRANSLATIONS["繁體中文"].update({
-    "global_market_indicator": "全球市場指標",
+    "global_market_indicator": "台灣股市走勢狀況",
     "global_market_copy": "這是配合目前趨勢鏡頭的跨市場參考層。先看美國與台灣主要指數現在是同步偏多、分歧，還是整體承壓，再深入研究個股會更有脈絡。",
     "global_market_window": "目前視窗",
     "global_market_last": "最新價格",
@@ -9932,7 +10002,7 @@ def market_scope_label(scope: str) -> str:
 
 # v1.3.9: Top-of-page selector bar.
 # Surfaces Language / Dashboard mode / Market scope right under the
-# "David Lau Stock Market Vision" title so users can switch context without
+# "David Lau Designed AI Stock Market Vision" title so users can switch context without
 # opening the sidebar. This used to live in the sidebar; the same widgets
 # have been REMOVED from there to avoid Streamlit duplicate-key warnings.
 # Other sidebar settings (theme mode, layout mode, device control, watchlist
@@ -12253,6 +12323,1011 @@ def render_global_market_indicator(indicator: dict):
     ).strip()
 
     render_html_block(shell_html)
+
+
+# ============================================================================
+# v1.9.5  Tomorrow Momentum Pulse — top-of-page next-day energy estimator
+# ============================================================================
+# Compact 5-row table that lives RIGHT BELOW the Hero Bar on the main
+# Dashboard. Reads the previous close + recent history to estimate whether
+# the next session is likely to:
+#   強 (動力持續)        score >= 70
+#   中 (震盪盤整)        score 40 - 69
+#   弱 (資金進出偏弱)    score < 40
+#
+# Design choices (per user 2026-05-09):
+#   * Taiwan: 60% TSMC + 40% market — TSMC is ~35-40% of TAIEX, so its
+#     leadership disproportionately drives the index.
+#   * U.S.: 75% Mag7 + 25% VIX — Mag7 is the breadth proxy for tech-led
+#     rallies, VIX is the inverse fear gauge.
+#
+# All scoring is bounded [0, 100]. Each contributing signal contributes a
+# pre-budgeted slice (so a single freak number can't dominate). Failed
+# fetches degrade gracefully — the row shows "—" + 0 contribution rather
+# than crashing the whole table.
+
+# Mag7 universe used for the U.S. score. Equal-weighted within the cohort.
+TOMORROW_MOMENTUM_MAG7_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA",
+]
+
+# Pre-budgeted per-signal point caps. Sum of each scope's caps = 100.
+TOMORROW_MOMENTUM_TAIWAN_BUDGET = {
+    # TSMC slice (60 pts total)
+    "tsmc_daily":   25,
+    "tsmc_5d":      20,
+    "tsmc_volume":  15,
+    # Market slice (40 pts total)
+    "taiex_daily":  10,
+    "taiex_5d":      8,
+    "twse_volume":  12,
+    "instl_flow":   10,
+}
+TOMORROW_MOMENTUM_US_BUDGET = {
+    # Mag7 slice (75 pts total)
+    "mag7_daily":   25,
+    "mag7_5d":      20,
+    "mag7_breadth": 15,
+    "mag7_volume":  15,
+    # VIX slice (25 pts total)
+    "vix_level":    25,
+    # vix_direction is a penalty (subtract up to 5 from vix_level), not a
+    # separate budget line — it's surfaced as its own row but its score
+    # contribution is folded into vix_level.
+}
+
+
+def _momentum_extract_close_volume(daily_data, ticker: str) -> tuple[pd.Series, pd.Series] | tuple[None, None]:
+    """Pull (close_series, volume_series) for one ticker out of the bulk
+    yfinance frame. Returns (None, None) when the ticker isn't present."""
+    if daily_data is None:
+        return None, None
+    try:
+        if isinstance(daily_data.columns, pd.MultiIndex):
+            # yfinance group_by="column" gives ("Field", "Ticker") MultiIndex
+            try:
+                close = daily_data[("Close", ticker)]
+            except KeyError:
+                # Fallback: some yfinance versions swap the order
+                try:
+                    close = daily_data["Close"][ticker]
+                except KeyError:
+                    return None, None
+            try:
+                volume = daily_data[("Volume", ticker)]
+            except KeyError:
+                try:
+                    volume = daily_data["Volume"][ticker]
+                except KeyError:
+                    volume = None
+        else:
+            close = daily_data.get("Close")
+            volume = daily_data.get("Volume")
+        if close is None:
+            return None, None
+        close = close.dropna()
+        if close.empty:
+            return None, None
+        if volume is not None:
+            volume = volume.dropna()
+        return close, volume
+    except Exception:
+        return None, None
+
+
+def _momentum_pct(curr: float, prev: float) -> float | None:
+    """Safe pct-change. Returns None when inputs are unusable."""
+    try:
+        c = float(curr)
+        p = float(prev)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(c) and math.isfinite(p)) or p == 0:
+        return None
+    return (c - p) / p * 100.0
+
+
+def _momentum_linear_score(value: float | None, lo: float, hi: float, max_pts: float) -> float:
+    """Map a value linearly from [lo, hi] to [0, max_pts]. Clamped at edges.
+    Used for return-style signals where 0% earns the midpoint."""
+    if value is None or not math.isfinite(value):
+        return 0.0
+    if hi == lo:
+        return max_pts / 2
+    pct = (float(value) - lo) / (hi - lo)
+    pct = max(0.0, min(1.0, pct))
+    return round(pct * max_pts, 2)
+
+
+def _momentum_volume_score(latest_vol: float | None, avg_vol: float | None, max_pts: float) -> float:
+    """Volume scoring brackets. Latest volume vs the trailing 20-day mean."""
+    if latest_vol is None or avg_vol is None or avg_vol <= 0:
+        return 0.0
+    ratio = float(latest_vol) / float(avg_vol)
+    if ratio >= 1.5:
+        return max_pts
+    if ratio >= 1.2:
+        return round(max_pts * 0.67, 2)
+    if ratio >= 0.9:
+        return round(max_pts * 0.33, 2)
+    return 0.0
+
+
+def _momentum_signed_flow_score(value: float | None, max_pts: float, scale: float = 200.0) -> float:
+    """Signed-flow scoring: ±scale億 → ±max_pts/2 around midpoint."""
+    if value is None or not math.isfinite(value):
+        return 0.0
+    norm = max(-1.0, min(1.0, float(value) / float(scale)))
+    return round((norm + 1) / 2 * max_pts, 2)
+
+
+def _momentum_verdict_from_score(score: float) -> tuple[str, str, str]:
+    """Map total score to (verdict_label, emoji, css_class).
+    Localized via t() at render time."""
+    if score >= 70:
+        return ("strong", "🟢", "momentum-verdict-strong")
+    if score >= 40:
+        return ("neutral", "🟡", "momentum-verdict-neutral")
+    return ("weak", "🔴", "momentum-verdict-weak")
+
+
+def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> dict:
+    """Compute the 7-signal Taiwan momentum score from previous-close data.
+
+    Args:
+        daily_data: yfinance frame containing at minimum 2330.TW + ^TWII
+                    (ideally with ~30 days of history for 20-day vol average)
+        twse_aggs: result from fetch_taiwan_market_aggregates(); contains
+                   turnover Δ% + foreign/trust/dealer net flows
+
+    Returns dict with shape:
+        {
+            "score": float,           # 0-100
+            "verdict_key": str,       # "strong" | "neutral" | "weak"
+            "verdict_emoji": str,
+            "verdict_class": str,
+            "rows": [
+                {"label": "TSMC 收盤漲跌幅", "value_text": "+1.85%",
+                 "contribution": 17.3, "contribution_max": 25,
+                 "interpretation": "領漲", "tone": "positive"},
+                ...
+            ],
+            "data_date": str | None,  # latest close date
+            "ready": bool,            # False = upstream data missing
+            "data_source_note": str,
+        }
+    """
+    rows: list[dict] = []
+    total_score = 0.0
+    budget = TOMORROW_MOMENTUM_TAIWAN_BUDGET
+    data_date: str | None = None
+    components_with_data = 0  # to detect total fetch failure
+
+    # --- TSMC slice (60 pts) -------------------------------------------
+    tsmc_close, tsmc_volume = _momentum_extract_close_volume(daily_data, "2330.TW")
+    if tsmc_close is not None and len(tsmc_close) >= 2:
+        components_with_data += 1
+        try:
+            data_date = tsmc_close.index[-1].strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+        # 1. TSMC daily return
+        tsmc_daily = _momentum_pct(tsmc_close.iloc[-1], tsmc_close.iloc[-2])
+        score_d = _momentum_linear_score(tsmc_daily, -3, 3, budget["tsmc_daily"])
+        total_score += score_d
+        rows.append({
+            "label_zh": "TSMC 收盤漲跌幅",
+            "label_en": "TSMC daily return",
+            "value_text": f"{tsmc_daily:+.2f}%" if tsmc_daily is not None else "—",
+            "contribution": score_d,
+            "contribution_max": budget["tsmc_daily"],
+            "interpretation_zh": (
+                "強勢領漲(+2% 以上)" if (tsmc_daily or 0) >= 2 else
+                "穩健上行" if (tsmc_daily or 0) >= 0.5 else
+                "持平整理" if (tsmc_daily or 0) > -0.5 else
+                "回測偏弱"
+            ),
+            "tone": (
+                "positive" if (tsmc_daily or 0) >= 0.5 else
+                "negative" if (tsmc_daily or 0) <= -0.5 else
+                "neutral"
+            ),
+        })
+
+        # 2. TSMC 5-day momentum
+        if len(tsmc_close) >= 6:
+            tsmc_5d = _momentum_pct(tsmc_close.iloc[-1], tsmc_close.iloc[-6])
+        else:
+            tsmc_5d = None
+        score_5 = _momentum_linear_score(tsmc_5d, -5, 5, budget["tsmc_5d"])
+        total_score += score_5
+        rows.append({
+            "label_zh": "TSMC 5 日動能",
+            "label_en": "TSMC 5d momentum",
+            "value_text": f"{tsmc_5d:+.2f}%" if tsmc_5d is not None else "—",
+            "contribution": score_5,
+            "contribution_max": budget["tsmc_5d"],
+            "interpretation_zh": (
+                "趨勢明顯偏多" if (tsmc_5d or 0) >= 3 else
+                "近 5 日轉強" if (tsmc_5d or 0) >= 1 else
+                "區間震盪" if (tsmc_5d or 0) > -1 else
+                "近 5 日轉弱"
+            ),
+            "tone": (
+                "positive" if (tsmc_5d or 0) >= 1 else
+                "negative" if (tsmc_5d or 0) <= -1 else
+                "neutral"
+            ),
+        })
+
+        # 3. TSMC volume vs 20d
+        if tsmc_volume is not None and len(tsmc_volume) >= 21:
+            latest_vol = float(tsmc_volume.iloc[-1])
+            avg20_vol = float(tsmc_volume.iloc[-21:-1].mean())
+            vol_ratio = latest_vol / avg20_vol if avg20_vol > 0 else None
+        else:
+            latest_vol = None
+            avg20_vol = None
+            vol_ratio = None
+        score_v = _momentum_volume_score(latest_vol, avg20_vol, budget["tsmc_volume"])
+        total_score += score_v
+        rows.append({
+            "label_zh": "TSMC 量能(對 20 日均量)",
+            "label_en": "TSMC volume vs 20d avg",
+            "value_text": f"{vol_ratio:.2f}x" if vol_ratio is not None else "—",
+            "contribution": score_v,
+            "contribution_max": budget["tsmc_volume"],
+            "interpretation_zh": (
+                "放量明顯" if (vol_ratio or 0) >= 1.5 else
+                "量能溫和增加" if (vol_ratio or 0) >= 1.2 else
+                "量能持平" if (vol_ratio or 0) >= 0.9 else
+                "量縮觀望"
+            ),
+            "tone": (
+                "positive" if (vol_ratio or 0) >= 1.2 else
+                "negative" if (vol_ratio or 0) < 0.9 else
+                "neutral"
+            ),
+        })
+    else:
+        # TSMC data missing — push 3 placeholder rows
+        for label_zh, max_pts in [
+            ("TSMC 收盤漲跌幅", budget["tsmc_daily"]),
+            ("TSMC 5 日動能", budget["tsmc_5d"]),
+            ("TSMC 量能(對 20 日均量)", budget["tsmc_volume"]),
+        ]:
+            rows.append({
+                "label_zh": label_zh, "label_en": label_zh,
+                "value_text": "—", "contribution": 0.0,
+                "contribution_max": max_pts,
+                "interpretation_zh": "資料準備中", "tone": "neutral",
+            })
+
+    # --- TAIEX slice (18 pts daily+5d) --------------------------------
+    taiex_close, _ = _momentum_extract_close_volume(daily_data, "^TWII")
+    if taiex_close is not None and len(taiex_close) >= 2:
+        components_with_data += 1
+        # 4. TAIEX daily return
+        taiex_daily = _momentum_pct(taiex_close.iloc[-1], taiex_close.iloc[-2])
+        score_td = _momentum_linear_score(taiex_daily, -2, 2, budget["taiex_daily"])
+        total_score += score_td
+        rows.append({
+            "label_zh": "加權指數漲跌幅",
+            "label_en": "TAIEX daily return",
+            "value_text": f"{taiex_daily:+.2f}%" if taiex_daily is not None else "—",
+            "contribution": score_td,
+            "contribution_max": budget["taiex_daily"],
+            "interpretation_zh": (
+                "大盤強漲(+1% 以上)" if (taiex_daily or 0) >= 1 else
+                "大盤偏多" if (taiex_daily or 0) >= 0.3 else
+                "大盤持平" if (taiex_daily or 0) > -0.3 else
+                "大盤回測"
+            ),
+            "tone": (
+                "positive" if (taiex_daily or 0) >= 0.3 else
+                "negative" if (taiex_daily or 0) <= -0.3 else
+                "neutral"
+            ),
+        })
+
+        # 5. TAIEX 5-day momentum
+        if len(taiex_close) >= 6:
+            taiex_5d = _momentum_pct(taiex_close.iloc[-1], taiex_close.iloc[-6])
+        else:
+            taiex_5d = None
+        score_t5 = _momentum_linear_score(taiex_5d, -3, 3, budget["taiex_5d"])
+        total_score += score_t5
+        rows.append({
+            "label_zh": "加權指數 5 日動能",
+            "label_en": "TAIEX 5d momentum",
+            "value_text": f"{taiex_5d:+.2f}%" if taiex_5d is not None else "—",
+            "contribution": score_t5,
+            "contribution_max": budget["taiex_5d"],
+            "interpretation_zh": (
+                "趨勢偏多" if (taiex_5d or 0) >= 1.5 else
+                "近 5 日轉強" if (taiex_5d or 0) >= 0.5 else
+                "震盪整理" if (taiex_5d or 0) > -0.5 else
+                "趨勢轉弱"
+            ),
+            "tone": (
+                "positive" if (taiex_5d or 0) >= 0.5 else
+                "negative" if (taiex_5d or 0) <= -0.5 else
+                "neutral"
+            ),
+        })
+    else:
+        for label_zh, max_pts in [
+            ("加權指數漲跌幅", budget["taiex_daily"]),
+            ("加權指數 5 日動能", budget["taiex_5d"]),
+        ]:
+            rows.append({
+                "label_zh": label_zh, "label_en": label_zh,
+                "value_text": "—", "contribution": 0.0,
+                "contribution_max": max_pts,
+                "interpretation_zh": "資料準備中", "tone": "neutral",
+            })
+
+    # --- TWSE turnover Δ% (12 pts) ------------------------------------
+    if twse_aggs and twse_aggs.get("turnover_change_pct") is not None:
+        components_with_data += 1
+        turnover_chg = float(twse_aggs["turnover_change_pct"])
+        score_tw = _momentum_linear_score(turnover_chg, -15, 15, budget["twse_volume"])
+        total_score += score_tw
+        rows.append({
+            "label_zh": "市場成交量變動",
+            "label_en": "TWSE turnover Δ%",
+            "value_text": f"{turnover_chg:+.1f}%",
+            "contribution": score_tw,
+            "contribution_max": budget["twse_volume"],
+            "interpretation_zh": (
+                "資金明顯進場" if turnover_chg >= 10 else
+                "成交量溫和放大" if turnover_chg >= 3 else
+                "量能持平" if turnover_chg > -3 else
+                "量縮資金退場"
+            ),
+            "tone": (
+                "positive" if turnover_chg >= 3 else
+                "negative" if turnover_chg <= -3 else
+                "neutral"
+            ),
+        })
+    else:
+        rows.append({
+            "label_zh": "市場成交量變動",
+            "label_en": "TWSE turnover Δ%",
+            "value_text": "—", "contribution": 0.0,
+            "contribution_max": budget["twse_volume"],
+            "interpretation_zh": "資料準備中", "tone": "neutral",
+        })
+
+    # --- 三大法人 net flow (10 pts) -----------------------------------
+    if twse_aggs and any(twse_aggs.get(k) is not None for k in ("foreign_net", "trust_net", "dealer_net")):
+        components_with_data += 1
+        flow_sum = sum(
+            float(twse_aggs.get(k) or 0)
+            for k in ("foreign_net", "trust_net", "dealer_net")
+        )
+        score_inst = _momentum_signed_flow_score(flow_sum, budget["instl_flow"], scale=200.0)
+        total_score += score_inst
+        rows.append({
+            "label_zh": "三大法人合計買賣超",
+            "label_en": "Institutional net flow (3 combined)",
+            "value_text": f"{flow_sum:+.1f}億",
+            "contribution": score_inst,
+            "contribution_max": budget["instl_flow"],
+            "interpretation_zh": (
+                "法人積極買超" if flow_sum >= 100 else
+                "法人小幅買超" if flow_sum >= 20 else
+                "法人態度中性" if flow_sum > -20 else
+                "法人偏向賣壓"
+            ),
+            "tone": (
+                "positive" if flow_sum >= 20 else
+                "negative" if flow_sum <= -20 else
+                "neutral"
+            ),
+        })
+    else:
+        rows.append({
+            "label_zh": "三大法人合計買賣超",
+            "label_en": "Institutional net flow (3 combined)",
+            "value_text": "—", "contribution": 0.0,
+            "contribution_max": budget["instl_flow"],
+            "interpretation_zh": "資料準備中", "tone": "neutral",
+        })
+
+    # --- Verdict -------------------------------------------------------
+    score_clamped = max(0.0, min(100.0, round(total_score, 1)))
+    verdict_key, emoji, css_class = _momentum_verdict_from_score(score_clamped)
+
+    return {
+        "score": score_clamped,
+        "verdict_key": verdict_key,
+        "verdict_emoji": emoji,
+        "verdict_class": css_class,
+        "rows": rows,
+        "data_date": data_date,
+        "ready": components_with_data >= 1,
+        "data_source_note": "依照昨日收盤價估算明日動能(60% TSMC + 40% 大盤量能 / 法人)",
+        "scope": "Taiwan",
+    }
+
+
+def build_tomorrow_momentum_pulse_us(daily_data) -> dict:
+    """Compute the 5-signal U.S. momentum score from previous-close data.
+
+    Args:
+        daily_data: yfinance frame containing the 7 Mag7 tickers + ^VIX
+                    with ~30 days of history.
+    """
+    rows: list[dict] = []
+    total_score = 0.0
+    budget = TOMORROW_MOMENTUM_US_BUDGET
+    data_date: str | None = None
+    components_with_data = 0
+
+    # --- Mag7 aggregate ------------------------------------------------
+    mag7_daily_returns: list[float] = []
+    mag7_5d_returns: list[float] = []
+    mag7_vol_ratios: list[float] = []
+    mag7_positive_count = 0
+    mag7_total_count = 0
+    for ticker in TOMORROW_MOMENTUM_MAG7_TICKERS:
+        close, volume = _momentum_extract_close_volume(daily_data, ticker)
+        if close is None or len(close) < 2:
+            continue
+        try:
+            data_date = close.index[-1].strftime("%Y-%m-%d")
+        except Exception:
+            pass
+        mag7_total_count += 1
+        d = _momentum_pct(close.iloc[-1], close.iloc[-2])
+        if d is not None:
+            mag7_daily_returns.append(d)
+            if d > 0:
+                mag7_positive_count += 1
+        if len(close) >= 6:
+            f = _momentum_pct(close.iloc[-1], close.iloc[-6])
+            if f is not None:
+                mag7_5d_returns.append(f)
+        if volume is not None and len(volume) >= 21:
+            latest_v = float(volume.iloc[-1])
+            avg20_v = float(volume.iloc[-21:-1].mean())
+            if avg20_v > 0:
+                mag7_vol_ratios.append(latest_v / avg20_v)
+
+    if mag7_total_count > 0:
+        components_with_data += 1
+
+    # 1. Mag7 daily avg
+    avg_mag7_daily = (sum(mag7_daily_returns) / len(mag7_daily_returns)) if mag7_daily_returns else None
+    score_md = _momentum_linear_score(avg_mag7_daily, -3, 3, budget["mag7_daily"])
+    total_score += score_md
+    rows.append({
+        "label_zh": "Mag7 平均漲跌幅",
+        "label_en": "Mag7 average daily return",
+        "value_text": f"{avg_mag7_daily:+.2f}%" if avg_mag7_daily is not None else "—",
+        "contribution": score_md,
+        "contribution_max": budget["mag7_daily"],
+        "interpretation_zh": (
+            "科技股全面強漲" if (avg_mag7_daily or 0) >= 1.5 else
+            "科技股偏多" if (avg_mag7_daily or 0) >= 0.3 else
+            "整體持平" if (avg_mag7_daily or 0) > -0.3 else
+            "科技股回測"
+        ),
+        "tone": (
+            "positive" if (avg_mag7_daily or 0) >= 0.3 else
+            "negative" if (avg_mag7_daily or 0) <= -0.3 else
+            "neutral"
+        ),
+    })
+
+    # 2. Mag7 5d avg
+    avg_mag7_5d = (sum(mag7_5d_returns) / len(mag7_5d_returns)) if mag7_5d_returns else None
+    score_m5 = _momentum_linear_score(avg_mag7_5d, -5, 5, budget["mag7_5d"])
+    total_score += score_m5
+    rows.append({
+        "label_zh": "Mag7 5 日平均動能",
+        "label_en": "Mag7 5d momentum",
+        "value_text": f"{avg_mag7_5d:+.2f}%" if avg_mag7_5d is not None else "—",
+        "contribution": score_m5,
+        "contribution_max": budget["mag7_5d"],
+        "interpretation_zh": (
+            "趨勢明顯偏多" if (avg_mag7_5d or 0) >= 3 else
+            "近 5 日轉強" if (avg_mag7_5d or 0) >= 1 else
+            "區間震盪" if (avg_mag7_5d or 0) > -1 else
+            "近 5 日轉弱"
+        ),
+        "tone": (
+            "positive" if (avg_mag7_5d or 0) >= 1 else
+            "negative" if (avg_mag7_5d or 0) <= -1 else
+            "neutral"
+        ),
+    })
+
+    # 3. Mag7 breadth
+    if mag7_total_count > 0:
+        breadth_pct = mag7_positive_count / mag7_total_count
+        if breadth_pct >= 1.0:
+            score_b = budget["mag7_breadth"]
+        elif breadth_pct >= 5/7:
+            score_b = round(budget["mag7_breadth"] * 0.80, 2)
+        elif breadth_pct >= 3/7:
+            score_b = round(budget["mag7_breadth"] * 0.53, 2)
+        elif breadth_pct >= 1/7:
+            score_b = round(budget["mag7_breadth"] * 0.27, 2)
+        else:
+            score_b = 0.0
+    else:
+        breadth_pct = None
+        score_b = 0.0
+    total_score += score_b
+    rows.append({
+        "label_zh": "Mag7 上漲家數比例",
+        "label_en": "Mag7 breadth (% closing positive)",
+        "value_text": f"{mag7_positive_count}/{mag7_total_count}" if mag7_total_count > 0 else "—",
+        "contribution": score_b,
+        "contribution_max": budget["mag7_breadth"],
+        "interpretation_zh": (
+            "全面紅K" if (breadth_pct or 0) >= 1.0 else
+            "多數上漲" if (breadth_pct or 0) >= 5/7 else
+            "漲跌互見" if (breadth_pct or 0) >= 3/7 else
+            "多數下跌"
+        ),
+        "tone": (
+            "positive" if (breadth_pct or 0) >= 5/7 else
+            "negative" if (breadth_pct or 0) < 3/7 else
+            "neutral"
+        ),
+    })
+
+    # 4. Mag7 avg volume vs 20d
+    avg_vol_ratio = (sum(mag7_vol_ratios) / len(mag7_vol_ratios)) if mag7_vol_ratios else None
+    score_v = _momentum_volume_score(avg_vol_ratio, 1.0, budget["mag7_volume"]) if avg_vol_ratio is not None else 0.0
+    total_score += score_v
+    rows.append({
+        "label_zh": "Mag7 平均量能(對 20 日)",
+        "label_en": "Mag7 avg volume vs 20d",
+        "value_text": f"{avg_vol_ratio:.2f}x" if avg_vol_ratio is not None else "—",
+        "contribution": score_v,
+        "contribution_max": budget["mag7_volume"],
+        "interpretation_zh": (
+            "整體放量" if (avg_vol_ratio or 0) >= 1.5 else
+            "量能溫和增加" if (avg_vol_ratio or 0) >= 1.2 else
+            "量能持平" if (avg_vol_ratio or 0) >= 0.9 else
+            "量縮觀望"
+        ),
+        "tone": (
+            "positive" if (avg_vol_ratio or 0) >= 1.2 else
+            "negative" if (avg_vol_ratio or 0) < 0.9 else
+            "neutral"
+        ),
+    })
+
+    # 5. VIX level (with direction penalty)
+    vix_close, _ = _momentum_extract_close_volume(daily_data, "^VIX")
+    if vix_close is not None and len(vix_close) >= 1:
+        components_with_data += 1
+        vix_now = float(vix_close.iloc[-1])
+        if vix_now < 15:
+            base_score = budget["vix_level"]
+            interp = "風險偏好強(VIX < 15)"
+            tone = "positive"
+        elif vix_now < 20:
+            base_score = round(budget["vix_level"] * 0.72, 2)
+            interp = "市場情緒平穩(VIX 15–20)"
+            tone = "positive"
+        elif vix_now < 25:
+            base_score = round(budget["vix_level"] * 0.48, 2)
+            interp = "波動度上升(VIX 20–25)"
+            tone = "neutral"
+        elif vix_now < 30:
+            base_score = round(budget["vix_level"] * 0.24, 2)
+            interp = "避險情緒升溫(VIX 25–30)"
+            tone = "negative"
+        else:
+            base_score = 0.0
+            interp = "高度恐慌(VIX ≥ 30)"
+            tone = "negative"
+
+        # Direction penalty: VIX rising fast = even less stable
+        if len(vix_close) >= 6:
+            vix_5d_change = _momentum_pct(vix_now, float(vix_close.iloc[-6]))
+            if vix_5d_change is not None and vix_5d_change > 10:
+                # Subtract up to 5 pts proportional to how much it rose
+                penalty = min(5.0, (vix_5d_change - 10) / 4)
+                base_score = max(0.0, base_score - penalty)
+                interp += f" + 5日漲幅 {vix_5d_change:+.1f}% 扣分"
+
+        total_score += base_score
+        rows.append({
+            "label_zh": "VIX 恐慌指數",
+            "label_en": "VIX fear gauge",
+            "value_text": f"{vix_now:.2f}",
+            "contribution": round(base_score, 2),
+            "contribution_max": budget["vix_level"],
+            "interpretation_zh": interp,
+            "tone": tone,
+        })
+    else:
+        rows.append({
+            "label_zh": "VIX 恐慌指數",
+            "label_en": "VIX fear gauge",
+            "value_text": "—", "contribution": 0.0,
+            "contribution_max": budget["vix_level"],
+            "interpretation_zh": "資料準備中", "tone": "neutral",
+        })
+
+    # --- Verdict -------------------------------------------------------
+    score_clamped = max(0.0, min(100.0, round(total_score, 1)))
+    verdict_key, emoji, css_class = _momentum_verdict_from_score(score_clamped)
+
+    return {
+        "score": score_clamped,
+        "verdict_key": verdict_key,
+        "verdict_emoji": emoji,
+        "verdict_class": css_class,
+        "rows": rows,
+        "data_date": data_date,
+        "ready": components_with_data >= 1,
+        "data_source_note": "依照昨日收盤價估算明日動能(75% Mag7 + 25% VIX)",
+        "scope": "U.S.",
+    }
+
+
+def _render_tomorrow_momentum_pulse_html(payload: dict, lang_zh: bool) -> str:
+    """Build the HTML for the momentum pulse table. Returns "" when not
+    ready (caller should hide the block)."""
+    if not payload.get("ready"):
+        return ""
+
+    score = payload["score"]
+    verdict_key = payload["verdict_key"]
+    verdict_emoji = payload["verdict_emoji"]
+    verdict_class = payload["verdict_class"]
+    rows = payload["rows"]
+    data_date = payload.get("data_date") or ""
+    scope = payload.get("scope", "Taiwan")
+
+    # Localized strings
+    if lang_zh:
+        title = "明日動能脈搏"
+        subtitle_template = "依{scope}最近收盤估算下一個交易日動能 · 數值愈高代表動力愈強"
+        scope_text = "台股" if scope == "Taiwan" else "美股"
+        col_signal = "訊號"
+        col_value = "數值"
+        col_contribution = "貢獻分"
+        col_interpretation = "解讀"
+        verdict_label = {
+            "strong":  "強 · 動力持續",
+            "neutral": "中 · 震盪盤整",
+            "weak":    "弱 · 資金進出偏弱",
+        }[verdict_key]
+        score_suffix = "分 / 100"
+        date_prefix = "資料基準"
+        source_note = payload.get("data_source_note", "")
+    else:
+        title = "Tomorrow Momentum Pulse"
+        subtitle_template = "Estimating next-session energy from {scope} previous closes · higher = stronger"
+        scope_text = "Taiwan" if scope == "Taiwan" else "U.S."
+        col_signal = "Signal"
+        col_value = "Value"
+        col_contribution = "Score"
+        col_interpretation = "Read"
+        verdict_label = {
+            "strong":  "Strong · momentum continues",
+            "neutral": "Neutral · range-bound",
+            "weak":    "Weak · liquidity thinning",
+        }[verdict_key]
+        score_suffix = " / 100"
+        date_prefix = "As of"
+        source_note = (
+            "Computed from previous close (60% TSMC + 40% market)"
+            if scope == "Taiwan"
+            else "Computed from previous close (75% Mag7 + 25% VIX)"
+        )
+
+    # Build row HTML
+    row_html_parts: list[str] = []
+    for row in rows:
+        label = row.get("label_zh") if lang_zh else row.get("label_en", row.get("label_zh", ""))
+        value = row.get("value_text", "—")
+        contrib = row.get("contribution", 0.0)
+        contrib_max = row.get("contribution_max", 0)
+        contrib_pct = (float(contrib) / float(contrib_max) * 100) if contrib_max else 0
+        contrib_pct = max(0.0, min(100.0, contrib_pct))
+        interp = row.get("interpretation_zh") if lang_zh else row.get("interpretation_zh", "")
+        tone = row.get("tone", "neutral")
+        row_html_parts.append(
+            f'<div class="momentum-row momentum-tone-{escape(tone)}">'
+            f'  <div class="momentum-cell-label">{escape(str(label))}</div>'
+            f'  <div class="momentum-cell-value">{escape(str(value))}</div>'
+            f'  <div class="momentum-cell-contribution">'
+            f'    <div class="momentum-bar-track">'
+            f'      <div class="momentum-bar-fill" style="width:{contrib_pct:.1f}%"></div>'
+            f'    </div>'
+            f'    <span class="momentum-bar-text">{contrib:.1f} / {contrib_max}</span>'
+            f'  </div>'
+            f'  <div class="momentum-cell-interpretation">{escape(str(interp))}</div>'
+            f'</div>'
+        )
+
+    rows_block = "".join(row_html_parts)
+    date_block = (
+        f'<span class="momentum-date">· {escape(date_prefix)} {escape(data_date)}</span>'
+        if data_date else ""
+    )
+    subtitle = subtitle_template.format(scope=scope_text)
+
+    return textwrap.dedent(
+        f"""
+        <div class="momentum-pulse-shell">
+            <div class="momentum-pulse-head">
+                <div class="momentum-pulse-head-text">
+                    <div class="momentum-pulse-title">📊 {escape(title)}</div>
+                    <div class="momentum-pulse-subtitle">{escape(subtitle)}{date_block}</div>
+                </div>
+                <div class="momentum-pulse-verdict {escape(verdict_class)}">
+                    <div class="momentum-verdict-emoji">{verdict_emoji}</div>
+                    <div class="momentum-verdict-text">
+                        <div class="momentum-verdict-label">{escape(verdict_label)}</div>
+                        <div class="momentum-verdict-score">{score:.1f}<span class="momentum-verdict-suffix">{escape(score_suffix)}</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="momentum-pulse-table">
+                <div class="momentum-row momentum-row-header">
+                    <div class="momentum-cell-label">{escape(col_signal)}</div>
+                    <div class="momentum-cell-value">{escape(col_value)}</div>
+                    <div class="momentum-cell-contribution">{escape(col_contribution)}</div>
+                    <div class="momentum-cell-interpretation">{escape(col_interpretation)}</div>
+                </div>
+                {rows_block}
+            </div>
+            <div class="momentum-pulse-foot">{escape(source_note)}</div>
+        </div>
+        """
+    ).strip()
+
+
+# CSS styles for the momentum pulse block. Injected once per session via
+# st.session_state guard. Tailored to match the existing dashboard's
+# dark-friendly card aesthetic.
+_TOMORROW_MOMENTUM_CSS = """
+<style>
+.momentum-pulse-shell {
+    background: linear-gradient(180deg, rgba(20, 26, 45, 0.92), rgba(14, 18, 32, 0.92));
+    border: 1px solid rgba(96, 110, 145, 0.35);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 8px 0 14px 0;
+    color: #e9ecf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
+                 "Microsoft JhengHei", sans-serif;
+}
+.momentum-pulse-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.momentum-pulse-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #f4f6fb;
+    letter-spacing: 0.2px;
+}
+.momentum-pulse-subtitle {
+    font-size: 12.5px;
+    color: #98a2b8;
+    margin-top: 2px;
+    line-height: 1.4;
+}
+.momentum-date {
+    color: #7a8499;
+    margin-left: 4px;
+}
+.momentum-pulse-verdict {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(96, 110, 145, 0.3);
+    min-width: 220px;
+}
+.momentum-verdict-emoji {
+    font-size: 28px;
+    line-height: 1;
+}
+.momentum-verdict-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #d8dde9;
+    letter-spacing: 0.3px;
+}
+.momentum-verdict-score {
+    font-size: 22px;
+    font-weight: 700;
+    color: #f9fafc;
+    margin-top: 2px;
+    line-height: 1.1;
+}
+.momentum-verdict-suffix {
+    font-size: 11px;
+    font-weight: 500;
+    color: #98a2b8;
+    margin-left: 4px;
+}
+.momentum-verdict-strong {
+    background: linear-gradient(135deg, rgba(46, 160, 102, 0.22), rgba(46, 160, 102, 0.08));
+    border-color: rgba(94, 198, 137, 0.55);
+}
+.momentum-verdict-strong .momentum-verdict-label { color: #8be8b1; }
+.momentum-verdict-neutral {
+    background: linear-gradient(135deg, rgba(220, 175, 60, 0.22), rgba(220, 175, 60, 0.08));
+    border-color: rgba(230, 195, 95, 0.55);
+}
+.momentum-verdict-neutral .momentum-verdict-label { color: #f4d68a; }
+.momentum-verdict-weak {
+    background: linear-gradient(135deg, rgba(220, 70, 80, 0.22), rgba(220, 70, 80, 0.08));
+    border-color: rgba(232, 110, 120, 0.55);
+}
+.momentum-verdict-weak .momentum-verdict-label { color: #f4a3aa; }
+.momentum-pulse-table {
+    background: rgba(8, 11, 22, 0.5);
+    border-radius: 10px;
+    border: 1px solid rgba(96, 110, 145, 0.18);
+    overflow: hidden;
+}
+.momentum-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1.4fr) minmax(80px, 0.7fr) minmax(150px, 1.1fr) minmax(180px, 1.5fr);
+    gap: 14px;
+    padding: 9px 14px;
+    font-size: 13px;
+    align-items: center;
+    border-bottom: 1px solid rgba(96, 110, 145, 0.12);
+}
+.momentum-row:last-child { border-bottom: none; }
+.momentum-row-header {
+    background: rgba(35, 44, 70, 0.55);
+    font-weight: 600;
+    color: #b8c0d4;
+    font-size: 11.5px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.momentum-cell-label {
+    color: #e1e5ee;
+    font-weight: 500;
+}
+.momentum-cell-value {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #f4f6fb;
+}
+.momentum-cell-interpretation {
+    color: #c2c8d8;
+    font-size: 12.5px;
+}
+.momentum-cell-contribution {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.momentum-bar-track {
+    flex: 1;
+    height: 6px;
+    background: rgba(96, 110, 145, 0.25);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.momentum-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #5b8def, #4cd0a8);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.momentum-bar-text {
+    font-size: 11.5px;
+    color: #a9b0c4;
+    font-variant-numeric: tabular-nums;
+    min-width: 64px;
+    text-align: right;
+}
+.momentum-tone-positive .momentum-cell-value { color: #6fd99a; }
+.momentum-tone-positive .momentum-bar-fill { background: linear-gradient(90deg, #4cd0a8, #6fd99a); }
+.momentum-tone-negative .momentum-cell-value { color: #f08894; }
+.momentum-tone-negative .momentum-bar-fill { background: linear-gradient(90deg, #d96670, #f08894); }
+.momentum-tone-neutral .momentum-cell-value { color: #f4d68a; }
+.momentum-pulse-foot {
+    margin-top: 9px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: #7a8499;
+    font-style: italic;
+    line-height: 1.4;
+}
+.momentum-row-header .momentum-cell-value,
+.momentum-row-header .momentum-cell-label,
+.momentum-row-header .momentum-cell-contribution,
+.momentum-row-header .momentum-cell-interpretation {
+    color: #b8c0d4;
+}
+@media (max-width: 900px) {
+    .momentum-pulse-head {
+        grid-template-columns: 1fr;
+    }
+    .momentum-pulse-verdict {
+        min-width: 0;
+    }
+    .momentum-row {
+        grid-template-columns: minmax(120px, 1.4fr) minmax(60px, 0.8fr);
+        grid-template-rows: auto auto;
+    }
+    .momentum-cell-contribution { grid-column: 1 / -1; }
+    .momentum-cell-interpretation { grid-column: 1 / -1; font-size: 12px; }
+}
+</style>
+"""
+
+
+def _ensure_tomorrow_momentum_css():
+    """Inject the CSS once per session."""
+    if not st.session_state.get("_tomorrow_momentum_css_injected"):
+        render_html_block(_TOMORROW_MOMENTUM_CSS)
+        st.session_state["_tomorrow_momentum_css_injected"] = True
+
+
+def render_tomorrow_momentum_pulse(market_scope: str) -> None:
+    """Top-level entry: fetch + compute + render the momentum pulse table.
+
+    Called from generate_dashboard right after the Hero Bar (and only when
+    dashboard_mode == "General Market" — see v1.9.4).
+
+    v1.9.6: The outer `try/except Exception: return` was removed because
+    it was masking a `NameError: math` bug that prevented the block from
+    rendering at all. The inner per-fetch try/except blocks already
+    handle yfinance / TWSE failures gracefully, and the builder helpers
+    tolerate None inputs and degrade to a "資料準備中" placeholder.
+    Letting real bugs surface in Streamlit's error UI is preferable to
+    silent disappearance.
+    """
+    scope = _normalize_market_scope(market_scope)
+    lang_zh = _news_briefing_is_zh()
+
+    if scope == "Taiwan only":
+        # Need ~30 trading days for 20-day vol average.
+        try:
+            daily_data = fetch_daily_data(["2330.TW", "^TWII"], "3mo", "1d")
+        except Exception:
+            daily_data = None
+        try:
+            twse_aggs = fetch_taiwan_market_aggregates(
+                datetime.now(TW_TZ).strftime("%Y-%m-%d")
+            )
+        except Exception:
+            twse_aggs = None
+        payload = build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs)
+    else:
+        tickers = TOMORROW_MOMENTUM_MAG7_TICKERS + ["^VIX"]
+        try:
+            daily_data = fetch_daily_data(tickers, "3mo", "1d")
+        except Exception:
+            daily_data = None
+        payload = build_tomorrow_momentum_pulse_us(daily_data)
+
+    if not payload.get("ready"):
+        return
+
+    _ensure_tomorrow_momentum_css()
+    html = _render_tomorrow_momentum_pulse_html(payload, lang_zh=lang_zh)
+    if html:
+        render_html_block(html)
+
 
 def build_taiwan_benchmark_context(ticker: str, price_series: pd.Series, lens_meta: dict | None = None) -> dict:
     if not is_taiwan_ticker(ticker):
@@ -39122,6 +40197,15 @@ def generate_dashboard():
         render_taiwan_futures_dashboard(layout_mode=layout_mode)
         return
 
+    # v1.9.5: Tomorrow Momentum Pulse — compact 5-row table that estimates
+    # next-session strength from the previous close. Lives ABOVE the
+    # snapshot freshness bar so it's the first analytical block users
+    # see when they enter the main Dashboard. Gated to General Market
+    # mode only (per v1.9.4 — focused modes don't show analysis blocks).
+    if dashboard_mode == "General Market":
+        _momentum_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
+        render_tomorrow_momentum_pulse(_momentum_scope)
+
     dashboard_tickers = (
         [ticker for ticker in tickers if is_taiwan_active_etf(ticker)]
         if dashboard_mode == "Active ETF Lab"
@@ -39130,21 +40214,10 @@ def generate_dashboard():
         else tickers
     )
 
-    # v1.9.4: Loading placeholder is the cockpit's pre-paint skeleton
-    # ("今天市場決策主線預備中"), so it's only relevant when the cockpit
-    # itself will render. Gated to General Market mode only — Active
-    # ETF Lab / Supply Chain Lab don't show the cockpit and have their
-    # own internal `with st.spinner(...)` loaders during data fetch.
-    cockpit_loading_placeholder = None
-    if dashboard_mode == "General Market":
-        cockpit_loading_placeholder = render_cockpit_loading_placeholder(
-            lang_zh=_news_briefing_is_zh(),
-            sub_message=(
-                "正在抓取今日行情、主動式 ETF 與供應鏈訊號…請稍候 3–8 秒。"
-                if _news_briefing_is_zh() else
-                "Fetching market data, active ETF flow, and supply-chain signals… 3–8 seconds."
-            ),
-        )
+    # v1.9.6: Cockpit loading placeholder removed — cockpit itself was
+    # removed from main Dashboard per user request. The new top-of-page
+    # block is the Tomorrow Momentum Pulse table, which renders fast
+    # enough that no skeleton is needed.
 
     # v1.9.2: Data fetch is now guarded by `if dashboard_tickers`. With an
     # empty watchlist (common for first-time users in Active ETF Lab)
@@ -39276,19 +40349,10 @@ def generate_dashboard():
     _empty_tickers_state = not dashboard_tickers
     _data_error_state = bool(dashboard_tickers) and (daily_data is None or daily_data.empty)
 
-    # v1.4.7 / v1.9.1 / v1.9.2: Clear the cockpit loading placeholder NOW so
-    # the global market indicator + cockpit render in the natural top-down
-    # order. Runs for ALL three modes regardless of whether the watchlist
-    # is empty or the fetch failed.
-    if cockpit_loading_placeholder is not None:
-        cockpit_loading_placeholder.empty()
-
     # v1.9.2: Common header — runs unconditionally. Even when the user
     # has an empty Active ETF / Supply Chain watchlist, this still
-    # renders so they see the cockpit / editor / global indicator
-    # context while picking tickers. Per user feedback in v1.9.1 →
-    # "在台股的狀態下就沒有達到我的要求" — Taiwan scope was hitting the
-    # empty-tickers early return BEFORE the common header could render.
+    # renders so they see the global indicator context while picking
+    # tickers.
     #
     # v1.6.0: SNAPSHOT-FIRST PATH
     # Try to render from the daily-prefetched Supabase snapshot. When the
@@ -39328,41 +40392,21 @@ def generate_dashboard():
         )
         render_global_market_indicator(global_indicator)
 
-    # v1.9.4: Decision Cockpit + Editor analysis block now ONLY render
-    # in General Market mode. Per user 2026-05-09: "只要使用者選擇主
-    # Dashboad 以外的Dashboard, 今天市場決策主線和版主特別分析與加權
-    # 指數量能地形就應該要隱藏起來". This reverses v1.9.1 (which made
-    # them universal) — the user tested it and decided focused modes
-    # like Active ETF Lab / Supply Chain Lab should NOT show the
-    # general-market analysis blocks.
+    # v1.9.6: Decision Cockpit + Editor Analysis block + TAIEX volume
+    # terrain were REMOVED per user request 2026-05-09: "今天的市場決策
+    # 主線整個可以刪掉或移除,我不需要了,我會從這個新的小Table開始".
+    # The new top-of-page block is the Tomorrow Momentum Pulse table
+    # (rendered right after Hero Bar, see render_tomorrow_momentum_pulse).
     #
-    # v1.9.2: When dashboard_tickers is empty and daily_data is None,
-    # the cockpit's snapshot path takes over; without snapshot the
-    # Q1-Q4 builders all degrade gracefully.
-    # v1.8.1: US-only mode skips the editor block entirely. The TAIEX
-    # volume terrain is Taiwan-specific data, and the editor analysis
-    # cards are written about Taiwan supply-chain themes.
-    if dashboard_mode == "General Market":
-        render_decision_cockpit(
-            daily_data,
-            intraday_data,
-            dashboard_tickers,
-            lens_meta,
-            dashboard_mode=dashboard_mode,
-            selected_supply_chain_groups=selected_supply_chain_groups,
-            skip_loading_placeholder=True,
-            prefetched_snapshot=snapshot_row if not force_live else None,
-        )
-        _editor_block_scope = _normalize_market_scope(
-            st.session_state.get("dashboard_market_scope", "Taiwan only")
-        )
-        if _editor_block_scope != "U.S. only":
-            render_editor_analysis_block(lang_zh=_news_briefing_is_zh())
+    # The function definitions for render_decision_cockpit and
+    # render_editor_analysis_block are preserved in the file as dead code
+    # so any other reference (debug paths, future re-enablement) doesn't
+    # break — but they are no longer called from generate_dashboard.
 
-    # v1.9.2: Empty-tickers and data-error early returns moved here, AFTER
-    # the common header has rendered. The user now always sees the cockpit
-    # / editor / global indicator before being told their watchlist is
-    # empty or the data fetch failed.
+    # v1.9.2: Empty-tickers and data-error early returns. The user sees
+    # the freshness bar + global indicator + (in main Dashboard) the
+    # momentum pulse before being told their watchlist is empty or the
+    # data fetch failed.
     if _empty_tickers_state:
         if dashboard_mode == "Active ETF Lab":
             st.warning(t("active_etf_no_dashboard_data"))
