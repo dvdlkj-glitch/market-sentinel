@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.18
+Version : v1.10.20
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,102 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.20 (2026-05-10)  [Fix duplicate user_thesis IDs from batch import + bullet-proof checkbox keys]
+
+  - User reported: StreamlitDuplicateElementKey crash when opening
+    the user-content manager — same checkbox key registered twice.
+  - Root cause: _make_user_id() returned f"{prefix}-{int(time())}"
+    (second-precision timestamp). When the batch import loop in
+    _render_thesis_input_form looped through 9 theses in a fraction
+    of a second, all 9 got the IDENTICAL timestamp → identical IDs.
+    Previous patches didn't notice because:
+      - HTML card rendering doesn't enforce unique keys
+      - Validation tracker iterated theses without dict lookups
+      - Trend history used the duplicate ID as dict key, so multiple
+        theses silently shared one history (subtle bug we missed)
+    v1.10.19's manager panel uses st.checkbox(key=...) which
+    strictly enforces uniqueness, so it crashed loud.
+  - Two-part fix:
+    PART A: Make _make_user_id() truly unique going forward
+      - Use time.time_ns() (nanosecond precision) + 4-digit random
+        suffix to be safe against same-nanosecond calls
+      - Existing user data is NOT migrated — old duplicate IDs
+        stay as they are (we deal with them in PART B)
+    PART B: Make the manager panel resilient to legacy duplicate IDs
+      - Checkbox keys now use the LIST INDEX as a stable, unique
+        suffix: f"user_manager_thesis_{list_idx}_{thesis_id}"
+      - Same for synth: f"user_manager_synth_{list_idx}"
+      - This means duplicate IDs render correctly in the manager,
+        even though selection state is keyed on thesis_id (so
+        deleting "the one with that ID" deletes ALL with that ID,
+        which is actually fine — they're identical from the user's
+        perspective if they came from the same batch import)
+  - Also: added a one-time data hygiene helper that user can
+    optionally call to dedupe their JSON file. NOT auto-run because
+    that could surprise users who deliberately have duplicates
+    (unlikely but possible).
+  - Lessons:
+    1. ID generators must use nanosecond precision + randomness,
+       not second precision. The single-second precision was a
+       holdover from when I was thinking "users add one thing
+       at a time" — batch import broke that assumption.
+    2. Streamlit widgets exposed a bug that HTML rendering hid.
+       This is good — it forced us to fix the underlying issue.
+    3. Whenever a list could contain "logically equal" items,
+       always include the list index in the widget key, never
+       trust ID-only keys.
+
+v1.10.19 (2026-05-10)  [CRITICAL FIX — anchor-click selection broken; switch to Streamlit native buttons]
+
+  - User reported: clicking the "☐ 選取" button on an AI thesis card
+    refreshes the page but doesn't actually toggle the selection
+    state. Bonus visual bug: the button overlaps the "推估成立 62%"
+    pill in the card header.
+  - Root cause analysis (long-running issue across multiple patches):
+    The v1.10.6+ pattern of using HTML <a href="?param=value"> as
+    "Streamlit-friendly" interactive elements assumed that clicking
+    such anchors triggers a Streamlit RERUN (which preserves
+    st.session_state). In practice, especially on mobile browsers,
+    these anchor clicks trigger a HARD PAGE RELOAD — which wipes
+    session_state to empty before our handler can read the URL param.
+    Result: every "click" appears to do nothing because:
+      1. URL changes to ?toggle_select_thesis=...
+      2. Page reloads → session_state wiped
+      3. _resolve_delete_request reads param, writes to session_state
+      4. URL param is cleared (good)
+      5. Render reads selection set → selection set is back to {}
+         because (3) wrote into a fresh session
+    This affected: multi-select toggle (v1.10.16), single-card
+    delete (v1.10.15), and potentially the master expand-all toggle
+    (v1.10.6) too. Desktop sometimes worked because the browser
+    sometimes preserved the WebSocket connection across the URL change,
+    but this was inconsistent and definitely broken on mobile.
+  - Fix: replace ALL action buttons in cards with Streamlit native
+    st.button widgets, which communicate via WebSocket and therefore
+    PRESERVE session_state across interactions.
+  - Architectural change: AI thesis cards and synthesis cards now
+    render as "HTML body + Streamlit button row below" — placed in
+    st.columns to retain the grid layout. The HTML body (~95% of the
+    visible card) is unchanged; only the actions row moved out.
+  - Visual fix bundled in: card header now has space for the prob-pill
+    AND the action button without overlap, because the action button
+    is no longer absolute-positioned over the header.
+  - Selection bar + confirmation panel: also rebuilt as Streamlit
+    components instead of HTML anchors. Now reliable.
+  - All v1.10.16 features preserved: multi-select, lock indicator
+    for built-in cards, selection bar with count, confirmation panel
+    with title list before commit.
+  - Removed: URL parameter handlers for the action types (toggle_*,
+    clear_selection, show_delete_confirm, execute_delete). These are
+    now session_state changes triggered by st.button clicks, not URL
+    params. The handlers are kept for the v1.10.15 backward-compat
+    paths (delete_thesis_pending / delete_thesis_confirm) in case
+    anyone has bookmarked URLs, but they're no longer the primary
+    interaction mechanism.
+  - Tradeoff: cards are now slightly slower to render (st.button
+    per card adds Streamlit widget overhead) and the layout is
+    less pure HTML. But "actually works" beats "elegant but broken".
 
 v1.10.18 (2026-05-10)  [AI Analysis dispatch bug fix + Phase-1 responsive design]
   

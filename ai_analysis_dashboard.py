@@ -209,8 +209,17 @@ def _save_user_data(data: dict) -> bool:
 
 
 def _make_user_id(prefix: str = "user") -> str:
-    """Generate a unique-ish ID for a new user-added item."""
-    return f"{prefix}-{int(_time.time())}"
+    """Generate a TRULY unique ID for a new user-added item.
+
+    v1.10.20: Switched from int(time()) (second precision) to
+    time.time_ns() (nanosecond) + 4-digit random suffix. Previously,
+    a batch-import loop processing 9 theses in a fraction of a second
+    produced 9 identical IDs because they all rounded to the same
+    second. Nanosecond precision + random suffix makes collision
+    practically impossible.
+    """
+    import random
+    return f"{prefix}-{_time.time_ns()}-{random.randint(1000, 9999)}"
 
 
 # Smart detection — light heuristic, just to give the user clickable
@@ -1292,14 +1301,15 @@ _AI_ANALYSIS_CSS = """
 .ai-card-section-risk { color: #f4a3aa; }
 .ai-card-section-cross { color: #c2c8d8; }
 
-/* v1.10.15 — card-corner action buttons (delete / lock indicator) */
+/* v1.10.15 — card-corner action buttons (delete / lock indicator)
+   v1.10.19 — repositioned to TOP of card as a full-width banner-style
+   tag, so it doesn't overlap with the prob-pill in the header. */
 .ai-card-actions {
-    position: absolute;
-    top: 10px;
-    right: 10px;
     display: inline-flex;
     gap: 6px;
     align-items: center;
+    margin-bottom: 2px;
+    /* not absolute — sits at top of flex column */
 }
 .ai-card-action-btn {
     display: inline-flex;
@@ -1351,6 +1361,19 @@ _AI_ANALYSIS_CSS = """
     background: rgba(96,110,145,.12);
     color: #98a2b8;
     border-color: rgba(96,110,145,.18);
+}
+
+/* v1.10.19 — User-added badge (display-only; actions moved to manager panel) */
+.ai-card-action-user {
+    color: #8be8b1;
+    background: rgba(76,208,168,.12);
+    border-color: rgba(76,208,168,.30);
+    cursor: default;
+}
+.ai-card-action-user:hover {
+    background: rgba(76,208,168,.12);
+    color: #8be8b1;
+    border-color: rgba(76,208,168,.30);
 }
 
 /* v1.10.16 — multi-select states */
@@ -2725,26 +2748,18 @@ def _render_ai_card_html(thesis: dict, validation: dict, lang_zh: bool) -> str:
     label_validation = "目前驗證" if lang_zh else "Validation"
     label_claimed = "推估成立" if lang_zh else "Claimed"
 
-    # v1.10.16: Selection toggle (multi-select)
+    # v1.10.19: Action buttons in cards reverted to display-only lock
+    # indicator. Selection is now handled in _render_user_content_manager
+    # above the cards (with reliable Streamlit native widgets).
     if _is_user_added_thesis(thesis):
-        if _is_thesis_selected(thesis_id):
-            sel_label = "☑ 已選" if lang_zh else "☑ Selected"
-            actions_html = (
-                f'<div class="ai-card-actions">'
-                f'  <a class="ai-card-action-btn ai-card-action-selected" '
-                f'     href="?toggle_select_thesis={escape(thesis_id)}" target="_self">'
-                f'     {escape(sel_label)}</a>'
-                f'</div>'
-            )
-        else:
-            sel_label = "☐ 選取" if lang_zh else "☐ Select"
-            actions_html = (
-                f'<div class="ai-card-actions">'
-                f'  <a class="ai-card-action-btn ai-card-action-select" '
-                f'     href="?toggle_select_thesis={escape(thesis_id)}" target="_self">'
-                f'     {escape(sel_label)}</a>'
-                f'</div>'
-            )
+        # User-added — show a small "你新增" badge. Selection happens in manager.
+        user_label = "✏️ 你新增" if lang_zh else "✏️ User-added"
+        actions_html = (
+            f'<div class="ai-card-actions">'
+            f'  <span class="ai-card-action-btn ai-card-action-user">'
+            f'     {escape(user_label)}</span>'
+            f'</div>'
+        )
     else:
         # Built-in (read-only) — show lock indicator
         lock_label = "🔒 內建" if lang_zh else "🔒 Built-in"
@@ -2941,26 +2956,16 @@ def _render_ai_synthesis_html(synthesis: dict, lang_zh: bool, daily_data=None) -
             tag_text = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"][idx] \
                        if idx < 8 else f"#{idx+1}"
 
-        # v1.10.16: Selection toggle (multi-select)
+        # v1.10.19: Action area is display-only. Deletion happens in
+        # _render_user_content_manager (manager panel above cards).
         if is_user and user_synth_idx is not None:
-            if _is_synth_selected(user_synth_idx):
-                sel_label = "☑ 已選" if lang_zh else "☑ Selected"
-                actions_html = (
-                    f'<div class="ai-card-actions">'
-                    f'  <a class="ai-card-action-btn ai-card-action-selected" '
-                    f'     href="?toggle_select_synth={user_synth_idx}" target="_self">'
-                    f'     {escape(sel_label)}</a>'
-                    f'</div>'
-                )
-            else:
-                sel_label = "☐ 選取" if lang_zh else "☐ Select"
-                actions_html = (
-                    f'<div class="ai-card-actions">'
-                    f'  <a class="ai-card-action-btn ai-card-action-select" '
-                    f'     href="?toggle_select_synth={user_synth_idx}" target="_self">'
-                    f'     {escape(sel_label)}</a>'
-                    f'</div>'
-                )
+            user_label = "✏️ 你新增" if lang_zh else "✏️ User-added"
+            actions_html = (
+                f'<div class="ai-card-actions">'
+                f'  <span class="ai-card-action-btn ai-card-action-user">'
+                f'     {escape(user_label)}</span>'
+                f'</div>'
+            )
         else:
             lock_label = "🔒 內建" if lang_zh else "🔒 Built-in"
             actions_html = (
@@ -3538,110 +3543,278 @@ def _render_synthesis_input_form(lang_zh: bool) -> None:
                     st.error(save_io_err)
 
 
-def _render_selection_bar_and_confirm(merged_theses: list[dict],
-                                       merged_synthesis: dict,
-                                       lang_zh: bool) -> None:
-    """v1.10.16: Render the selection bar (showing N items selected) and
-    optionally the inline confirmation panel.
+def _render_user_content_manager(merged_theses: list[dict],
+                                  merged_synthesis: dict,
+                                  lang_zh: bool) -> None:
+    """v1.10.19: User-content management section using native Streamlit widgets.
 
-    Called once per render. Reads selection state from session_state,
-    looks up titles from the merged data so the confirmation panel can
-    list what's about to be deleted.
+    Replaces the v1.10.16 HTML-anchor based selection UI which was unreliable
+    on mobile (anchor clicks triggered hard page reloads that wiped session_state
+    before our handlers could read URL params).
+
+    This section appears ABOVE the cards grid. Lists every user-added item
+    with a checkbox; provides a [🗑 刪除選取] button + confirmation flow.
+    Built-in items don't appear here (they're not deletable anyway).
+
+    All interactions go through st.button / st.checkbox which use Streamlit's
+    WebSocket and PRESERVE session_state correctly.
     """
-    sel_thesis: set = st.session_state.get("_delete_selection_thesis", set())
-    sel_synth: set = st.session_state.get("_delete_selection_synth", set())
-    total = len(sel_thesis) + len(sel_synth)
+    # Find user-added items
+    user_theses = [t for t in merged_theses if _is_user_added_thesis(t)]
+    user_synth_paragraphs = [(idx_in_user_synth, p)
+                              for idx_in_user_synth, p in enumerate(
+                                  [pp for pp in merged_synthesis.get("paragraphs", [])
+                                   if _is_user_added_synth(pp)]
+                              )]
 
-    if total == 0:
-        return  # Nothing selected → don't show the bar
+    # If no user-added content, nothing to manage
+    if not user_theses and not user_synth_paragraphs:
+        return
 
-    # === Selection bar ===
+    # Header (collapsible toggle, like the input form pattern)
+    toggle_key = "_user_manager_open"
+    is_open = st.session_state.get(toggle_key, False)
+
+    n_user_theses = len(user_theses)
+    n_user_synth = len(user_synth_paragraphs)
+    n_total = n_user_theses + n_user_synth
+
     if lang_zh:
-        count_label = f"已選 <span class='ai-selection-count-num'>{total}</span> 篇 (論點 {len(sel_thesis)} + 整體判斷 {len(sel_synth)})"
+        btn_label = (f"✕ 關閉管理面板"
+                      if is_open else
+                      f"🗂 管理你新增的論點 / 整體判斷 ({n_total} 篇)")
+        section_title = "🗂 管理你新增的內容"
+        thesis_section_label = f"論點({n_user_theses} 篇)"
+        synth_section_label = f"整體判斷段落({n_user_synth} 段)"
+        no_selection_msg = "勾選下面的項目,然後點「🗑 刪除選取」"
         delete_btn = "🗑 刪除選取"
         clear_btn = "✕ 全部取消"
+        confirm_title = "⚠️ 確認刪除以下項目?"
+        confirm_btn = "✓ 確定刪除"
+        cancel_btn = "✕ 取消"
+        warn_note = "刪除後無法復原。整體判斷的 7 日趨勢歷史也會一併清空。"
+        select_all_btn = "全選"
+        none_msg = "目前沒有你新增的內容,請先用上方表單新增"
     else:
-        count_label = f"<span class='ai-selection-count-num'>{total}</span> selected (theses {len(sel_thesis)} + synth {len(sel_synth)})"
+        btn_label = ("✕ Close Manager"
+                      if is_open else
+                      f"🗂 Manage Your Added Items ({n_total})")
+        section_title = "🗂 Manage Your Items"
+        thesis_section_label = f"Theses ({n_user_theses})"
+        synth_section_label = f"Synthesis ({n_user_synth})"
+        no_selection_msg = "Check items below, then click 'Delete Selected'"
         delete_btn = "🗑 Delete Selected"
         clear_btn = "✕ Clear All"
+        confirm_title = "⚠️ Confirm deletion?"
+        confirm_btn = "✓ Confirm Delete"
+        cancel_btn = "✕ Cancel"
+        warn_note = "This cannot be undone. Synthesis trend history will also reset."
+        select_all_btn = "Select All"
+        none_msg = "No user-added content yet"
 
-    bar_html = textwrap.dedent(f"""
-        <div class="ai-selection-bar">
-            <div class="ai-selection-count">☑ {count_label}</div>
-            <div class="ai-selection-actions">
-                <a class="ai-selection-btn ai-selection-btn-danger" href="?show_delete_confirm=1" target="_self">{escape(delete_btn)}</a>
-                <a class="ai-selection-btn" href="?clear_selection=1" target="_self">{escape(clear_btn)}</a>
-            </div>
-        </div>
-    """).strip()
-    _render_html_block(bar_html)
+    btn_type = "secondary" if is_open else "primary"
+    if st.button(btn_label, key="user_manager_toggle", type=btn_type):
+        st.session_state[toggle_key] = not is_open
+        st.rerun()
 
-    # === Confirmation panel (only when user clicked "刪除選取") ===
-    if not st.session_state.get("_delete_confirm_open"):
+    if not is_open:
+        return
+
+    st.markdown(f"### {section_title}")
+
+    # Initialize selection sets in session_state
+    sel_thesis = st.session_state.setdefault("_delete_selection_thesis", set())
+    sel_synth = st.session_state.setdefault("_delete_selection_synth", set())
+
+    # ===== Thesis section =====
+    if user_theses:
+        st.markdown(f"**{thesis_section_label}**")
+
+        # Select-all helper
+        col_sa, _ = st.columns([1, 5])
+        with col_sa:
+            if st.button(select_all_btn, key="user_manager_select_all_thesis"):
+                for t in user_theses:
+                    sel_thesis.add(str(t.get("id", "")))
+                st.rerun()
+
+        # v1.10.20: Detect legacy duplicate IDs (from pre-v1.10.20 batch imports
+        # where ID generation was second-precision). Warn user that ticking
+        # one checkbox will delete all rows sharing that ID.
+        from collections import Counter
+        id_counts = Counter(str(t.get("id", "")) for t in user_theses)
+        duplicate_ids = {tid for tid, n in id_counts.items() if n > 1}
+        if duplicate_ids:
+            if lang_zh:
+                st.warning(
+                    f"⚠️ 偵測到 {len(duplicate_ids)} 組 ID 重複的論點"
+                    f"(舊版批次匯入造成,v1.10.20 已修)。"
+                    f"勾選任一個 → 同 ID 的全部會一起刪除。"
+                )
+            else:
+                st.warning(
+                    f"⚠️ Detected {len(duplicate_ids)} group(s) of theses with "
+                    f"duplicate IDs (legacy from pre-v1.10.20 batch imports). "
+                    f"Ticking any one will delete all rows sharing that ID."
+                )
+
+        for list_idx, t in enumerate(user_theses):
+            tid = str(t.get("id", ""))
+            title = t.get("title", "(無標題)") if lang_zh else t.get("title", "(untitled)")
+            prob = t.get("claimed_probability", 50)
+            topic_key = t.get("topic", "uncategorized")
+            topic_cfg = AI_TOPIC_REGISTRY.get(topic_key, AI_TOPIC_REGISTRY.get("uncategorized", {}))
+            topic_emoji = topic_cfg.get("emoji", "🗂")
+
+            # v1.10.20: Use list_idx in key, NOT just thesis_id, because legacy
+            # data may have duplicate IDs (from v1.10.12-v1.10.19 batch imports
+            # with second-precision timestamps). The list index is always unique.
+            checkbox_key = f"user_manager_thesis_{list_idx}_{tid}"
+            currently_selected = tid in sel_thesis
+            new_state = st.checkbox(
+                f"{topic_emoji} {title}  ·  推估 {prob}%" if lang_zh
+                else f"{topic_emoji} {title}  ·  Claimed {prob}%",
+                value=currently_selected,
+                key=checkbox_key,
+            )
+            if new_state and not currently_selected:
+                sel_thesis.add(tid)
+            elif not new_state and currently_selected:
+                sel_thesis.discard(tid)
+
+    # ===== Synthesis section =====
+    if user_synth_paragraphs:
+        st.markdown(f"**{synth_section_label}**")
+
+        col_sa, _ = st.columns([1, 5])
+        with col_sa:
+            if st.button(select_all_btn, key="user_manager_select_all_synth"):
+                for idx, _ in user_synth_paragraphs:
+                    sel_synth.add(idx)
+                st.rerun()
+
+        for idx_in_user_synth, p in user_synth_paragraphs:
+            lead = p.get("lead", "(無主旨)" if lang_zh else "(no lead)")
+            lead_short = lead if len(lead) <= 60 else lead[:59] + "…"
+
+            checkbox_key = f"user_manager_synth_{idx_in_user_synth}"
+            currently_selected = idx_in_user_synth in sel_synth
+            new_state = st.checkbox(
+                f"📝 {lead_short}",
+                value=currently_selected,
+                key=checkbox_key,
+            )
+            if new_state and not currently_selected:
+                sel_synth.add(idx_in_user_synth)
+            elif not new_state and currently_selected:
+                sel_synth.discard(idx_in_user_synth)
+
+    # ===== Action buttons =====
+    n_selected = len(sel_thesis) + len(sel_synth)
+    st.markdown("---")
+
+    if n_selected == 0:
+        st.caption(no_selection_msg)
         return
 
     if lang_zh:
-        confirm_title = f"⚠️ 確認刪除以下 {total} 篇?"
-        thesis_section_label = f"AI 論點({len(sel_thesis)} 篇)"
-        synth_section_label = f"AI 整體判斷({len(sel_synth)} 段)"
-        confirm_btn = "✓ 確定刪除"
-        cancel_btn = "✕ 取消"
-        warn_note = "刪除後無法復原。整體判斷的 7 日趨勢歷史也會一併清空(因為段落 index 會 shift)。"
+        selected_count_msg = f"已選 **{n_selected} 篇**"
     else:
-        confirm_title = f"⚠️ Confirm deleting {total} item(s)?"
-        thesis_section_label = f"AI Theses ({len(sel_thesis)})"
-        synth_section_label = f"Synthesis ({len(sel_synth)})"
-        confirm_btn = "✓ Confirm Delete"
-        cancel_btn = "✕ Cancel"
-        warn_note = "This cannot be undone. Synthesis 7-day trend history will also reset."
+        selected_count_msg = f"**{n_selected}** selected"
+    st.markdown(selected_count_msg)
 
-    # Build the list of titles to be deleted
-    titles_html_parts: list[str] = []
+    confirm_open = st.session_state.get("_user_manager_confirm_open", False)
+
+    if not confirm_open:
+        col_del, col_clr, _ = st.columns([2, 2, 4])
+        with col_del:
+            if st.button(delete_btn, key="user_manager_delete_btn",
+                         type="primary", use_container_width=True):
+                st.session_state["_user_manager_confirm_open"] = True
+                st.rerun()
+        with col_clr:
+            if st.button(clear_btn, key="user_manager_clear_btn",
+                         use_container_width=True):
+                sel_thesis.clear()
+                sel_synth.clear()
+                st.rerun()
+    else:
+        # Confirmation panel
+        st.error(confirm_title)
+
+        # List items to be deleted
+        if sel_thesis:
+            st.markdown(f"**{thesis_section_label}**")
+            for t in user_theses:
+                if str(t.get("id", "")) in sel_thesis:
+                    st.markdown(f"  • {t.get('title', '(無標題)')}")
+
+        if sel_synth:
+            st.markdown(f"**{synth_section_label}**")
+            for idx, p in user_synth_paragraphs:
+                if idx in sel_synth:
+                    lead = p.get("lead", "(無主旨)")
+                    st.markdown(f"  • {lead[:80]}")
+
+        st.warning(f"⚠️ {warn_note}")
+
+        col_cancel, col_confirm = st.columns(2)
+        with col_cancel:
+            if st.button(cancel_btn, key="user_manager_cancel_btn",
+                         use_container_width=True):
+                st.session_state["_user_manager_confirm_open"] = False
+                st.rerun()
+        with col_confirm:
+            if st.button(confirm_btn, key="user_manager_confirm_btn",
+                         type="primary", use_container_width=True):
+                _execute_bulk_delete(sel_thesis, sel_synth)
+                # Clear all delete-related state
+                sel_thesis.clear()
+                sel_synth.clear()
+                st.session_state["_user_manager_confirm_open"] = False
+                st.rerun()
+
+
+def _execute_bulk_delete(sel_thesis: set, sel_synth: set) -> None:
+    """v1.10.19: Actual delete logic, called from the manager UI button.
+    Previously this was triggered via ?execute_delete=1 URL param in
+    _resolve_delete_request — now called directly from a Streamlit button."""
+    if not sel_thesis and not sel_synth:
+        return
+
+    data = _load_user_data()
 
     if sel_thesis:
-        titles_html_parts.append(f'<div style="font-size:12px;color:#98a2b8;margin-top:8px;font-weight:600">{escape(thesis_section_label)}</div>')
-        # Look up titles from merged_theses
-        for t in merged_theses:
-            tid = str(t.get("id", ""))
-            if tid in sel_thesis:
-                titles_html_parts.append(
-                    f'<div class="ai-delete-confirm-list-item">{escape(t.get("title", "(無標題)"))}</div>'
-                )
+        data["user_theses"] = [
+            t for t in data.get("user_theses", [])
+            if str(t.get("id", "")) not in sel_thesis
+        ]
+        history = st.session_state.get(_ai_thesis_history_key(), {})
+        for tid in sel_thesis:
+            history.pop(tid, None)
 
     if sel_synth:
-        titles_html_parts.append(f'<div style="font-size:12px;color:#98a2b8;margin-top:8px;font-weight:600">{escape(synth_section_label)}</div>')
-        # Synth selection is by user_synthesis index, but we need to find them in merged_synthesis
-        # (paragraphs = built-in + user, in that order)
-        builtin_count = sum(
-            1 for p in merged_synthesis.get("paragraphs", [])
-            if not _is_user_added_synth(p)
-        )
-        all_paragraphs = merged_synthesis.get("paragraphs", [])
-        # Filter just user-added ones
-        user_paragraphs = [p for p in all_paragraphs if _is_user_added_synth(p)]
-        for idx in sorted(sel_synth):
-            if 0 <= idx < len(user_paragraphs):
-                lead = user_paragraphs[idx].get("lead", "(無主旨)")
-                # Truncate long leads
-                lead_short = lead if len(lead) <= 60 else lead[:59] + "…"
-                titles_html_parts.append(
-                    f'<div class="ai-delete-confirm-list-item">{escape(lead_short)}</div>'
-                )
+        user_synth_list = data.get("user_synthesis", [])
+        for idx in sorted(sel_synth, reverse=True):
+            if 0 <= idx < len(user_synth_list):
+                user_synth_list.pop(idx)
+        history = st.session_state.get(_ai_thesis_history_key(), {})
+        stale_keys = [k for k in list(history.keys()) if k.startswith("synthesis-")]
+        for k in stale_keys:
+            history.pop(k, None)
 
-    titles_html = "".join(titles_html_parts)
+    _save_user_data(data)
 
-    panel_html = textwrap.dedent(f"""
-        <div class="ai-delete-confirm-panel">
-            <div class="ai-delete-confirm-title">{escape(confirm_title)}</div>
-            <div class="ai-delete-confirm-list">{titles_html}</div>
-            <div style="font-size:11.5px;color:#f4a3aa;font-style:italic;margin-bottom:14px">⚠️ {escape(warn_note)}</div>
-            <div class="ai-delete-confirm-actions">
-                <a class="ai-selection-btn" href="?clear_selection=1" target="_self">{escape(cancel_btn)}</a>
-                <a class="ai-selection-btn ai-selection-btn-danger" href="?execute_delete=1" target="_self">{escape(confirm_btn)}</a>
-            </div>
-        </div>
-    """).strip()
-    _render_html_block(panel_html)
+
+# ----------------------------------------------------------------------------
+# v1.10.19 — _render_selection_bar_and_confirm is kept as a no-op stub for
+# backward compat (in case any caller still references it). The real work is
+# now done in _render_user_content_manager above.
+# ----------------------------------------------------------------------------
+def _render_selection_bar_and_confirm(merged_theses, merged_synthesis, lang_zh):
+    """DEPRECATED — replaced by _render_user_content_manager in v1.10.19.
+    Kept as a no-op for any external code that might call it."""
+    pass
 
 
 def render_ai_analysis_share_dashboard() -> None:
@@ -3700,10 +3873,10 @@ def render_ai_analysis_share_dashboard() -> None:
     _render_thesis_input_form(lang_zh)
     _render_synthesis_input_form(lang_zh)
 
-    # v1.10.16: Selection bar + confirmation panel (only renders when at least
-    # one item selected). Sits between the input forms and the cards so it's
-    # visible to scroll context.
-    _render_selection_bar_and_confirm(merged_theses, merged_synthesis, lang_zh)
+    # v1.10.19: User content manager — replaces the v1.10.16 HTML-anchor
+    # selection bar with a native Streamlit checkbox+button UI.
+    # Sits between the input forms and the cards so it's reachable.
+    _render_user_content_manager(merged_theses, merged_synthesis, lang_zh)
 
     # ----- Block 1: AI 論點卡片 (v1.10.5: now grouped by topic) -----
     section_title = "📋 AI 論點卡片" if lang_zh else "📋 AI Theses"
