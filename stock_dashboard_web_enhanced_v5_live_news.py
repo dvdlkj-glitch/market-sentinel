@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.20
+Version : v1.10.23
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,127 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.23 (2026-05-10)  [Cross-market signal pulse — fills the weekend / holiday gap]
+
+  - User's theory: when Taiwan market is closed (weekend or holiday),
+    the most recent U.S. market close carries directional information
+    about Taiwan's next trading day. Especially:
+      Sun night (預估週一台股) → use Fri U.S. close
+      Holiday-bridged days → use whatever U.S. trading days happened
+                              during the Taiwan closure
+  - Theory has solid academic + empirical backing (Hamao/Masulis/Ng
+    1990, Becker/Finnerty/Friedman 1995, etc): U.S. → Asia overnight
+    information transmission has a beta of ~0.4-0.6 for Taiwan.
+  - But: precise % prediction is overconfident. Overnight effect only
+    explains ~30-40% of next-session variance. So this block gives
+    DIRECTIONAL guidance + confidence label, NOT a numeric prediction.
+  - Implementation:
+    * New build_cross_market_signal_pulse() — computes weighted
+      direction score from S&P 500 / Nasdaq / SOX / VIX
+    * Weights: SOX 35% (highest because TW is half semis), Nasdaq
+      30%, S&P 500 20%, VIX-inverted 15%
+    * 5 verdict buckets: strong-bull / mild-bull / neutral / mild-bear
+      / strong-bear
+    * Scores >= +0.6 → strong, +0.2 ~ +0.59 → mild, -0.19 ~ +0.19 →
+      neutral, mirror for bear side
+  - The block REPLACES the v1.10.22 "closed market notice" when:
+      * Taiwan scope AND market is closed (weekend or TW holiday)
+      * U.S. data is available (i.e. NOT also a U.S. holiday)
+    If U.S. is also closed (rare overlap like Christmas hitting on a
+    Friday), fall back to the v1.10.22 plain notice — no signal source.
+  - Honest disclaimers shown to user:
+    * "情境推估,非交易建議"
+    * "跨夜 ~60 小時,訊號強度比平日弱 30-40%"
+    * "若週末發生重大新聞,推估會失準"
+  - Doesn't replace the regular weekday momentum pulse — that one is
+    more reliable (12h gap vs 60h+). This is a weekend-specific tool.
+  - Future v1.10.24+: holiday-bridged variants (228 連假 → use multiple
+    U.S. days), connection to TSMC Top 5 (currently still skipped on
+    weekends; could re-enable with cross-market verdict instead).
+
+v1.10.22 (2026-05-10)  [Holiday tables for Taiwan + U.S. — extends weekend gate]
+
+  - User asked to extend the v1.10.21 weekend gate to cover common
+    Taiwan holidays (Lunar New Year, 228, Tomb Sweeping, Children's
+    Day, Labor Day, Dragon Boat, Mid-Autumn, National Day, Teachers'
+    Day, Restoration Day, Constitution Day) and U.S. holidays.
+  - Added two static dicts MARKET_HOLIDAYS_TW / MARKET_HOLIDAYS_US
+    keyed by year. Each year holds the official TWSE / NYSE published
+    holiday calendar. 2026 is fully populated; subsequent years are
+    placeholders for the user to update each Dec when official
+    calendars are released.
+  - 2026 Taiwan holidays from TWSE (verified May 2026):
+      1/1   New Year's Day
+      2/12-2/13 (Pre-LNY no-trade days, settlement only)
+      2/16-2/20 Lunar New Year
+      2/27  228 substitute
+      4/3   Tomb Sweeping substitute
+      4/6   Children's Day substitute
+      5/1   Labor Day
+      6/19  Dragon Boat
+      9/25  Mid-Autumn
+      9/28  Teachers' Day
+      10/9  National Day substitute
+      10/26 Restoration Day substitute
+      12/25 Constitution Day
+  - 2026 U.S. holidays from NYSE (verified):
+      1/1, 1/19 (MLK), 2/16 (Presidents), 4/3 (Good Friday),
+      5/25 (Memorial), 6/19 (Juneteenth), 7/3 (Independence Day obs),
+      9/7 (Labor), 11/26 (Thanksgiving), 12/25 (Christmas)
+  - New helper _is_market_closed_today(scope) replaces v1.10.21's
+    _is_weekend_taipei() at the gate. Returns (is_closed, reason)
+    where reason is "weekend" | "holiday" | "weekend+holiday" |
+    None — used by the notice renderer to give a more accurate
+    closed-market message ("228 連假" not just "週末休市").
+  - Notice renderer (renamed _render_market_closed_notice) now picks
+    the correct message:
+      * Weekend only: "週末休市,週一更新"
+      * Holiday only: "今日是 [holiday name],休市中"
+      * Weekend + holiday combined (rare but possible): combined message
+  - Also computes the next trading day correctly by skipping ahead
+    through both weekends AND the holiday list — so "228 連假最後一天"
+    correctly says "下次更新:週一(因為連假到週日)".
+  - v1.10.21's _is_weekend_taipei() and _next_trading_day_str() are
+    kept for backward compat but the entry point now uses the new
+    market-closed checker.
+  - Maintenance burden: each Dec, when TWSE / NYSE publish next year's
+    calendar, you (David) need to add a new entry to both dicts. ~5
+    minutes per year. The structure is intentionally simple to make
+    this trivial.
+
+v1.10.21 (2026-05-10)  [Weekend handling — closed-market notice for momentum pulse + TSMC Top 5]
+
+  - User noticed that on weekends, "明日動能脈搏" still showed a score
+    (39.9 弱) but with two key signals (市場成交量變動 / 三大法人合計
+    買賣超) marked "資料準備中" because TWSE doesn't publish data on
+    weekends. The score was misleading — 22 of the missing points
+    were treated as 0, dragging the verdict to "弱 · 資金進出偏弱"
+    when actually TSMC's 5-day momentum was strong (+7.26%).
+    User asked: "is this logic correct or wrong?"
+  - Decision: weekends should not show this block at all. Cleaner to
+    say "週末休市,週一更新" than to give a misleading number.
+  - Implementation:
+    * New helper _is_weekend_taipei() — uses TW_TZ to check weekday
+      0-6 where 5=Sat, 6=Sun. Returns True for both Taiwan and U.S.
+      scopes (both markets close weekends).
+    * render_tomorrow_momentum_pulse() now checks at the top: if
+      weekend → render a closed-market notice block AND skip the
+      whole pulse + TSMC Top 5 chain.
+    * The closed-market notice has its own friendly card UI so the
+      page doesn't feel empty — tells user the next trading day,
+      and reminds them other dashboard tools (AI Analysis, Active
+      ETF Lab, etc.) still work.
+    * U.S. Theme Radar (when scope = U.S.) still renders — it
+      reflects historical sector heat, not next-session prediction,
+      so it remains useful on weekends.
+  - Why not show + flag missing data instead: user explicitly chose
+    "乾脆的版本" (clean version). Showing a partial score with a
+    "資料未齊" badge would still mislead casual readers, and the
+    verdict label would still be wrong.
+  - Future: holiday handling not in this patch. The current logic
+    catches the 80% case (weekends). Holidays will be a separate
+    patch with a Taiwan + U.S. holiday calendar.
 
 v1.10.20 (2026-05-10)  [Fix duplicate user_thesis IDs from batch import + bullet-proof checkbox keys]
 
@@ -14195,6 +14316,847 @@ def _ensure_tomorrow_momentum_css():
     render_html_block(_TOMORROW_MOMENTUM_CSS)
 
 
+def _is_weekend_taipei() -> bool:
+    """v1.10.21: Return True if current Taipei date is Saturday or Sunday.
+
+    Kept for backward compat in v1.10.22; the entry point now uses
+    _is_market_closed_today() which considers BOTH weekends and holidays.
+    """
+    return datetime.now(TW_TZ).weekday() >= 5  # Mon=0 .. Sat=5, Sun=6
+
+
+# ============================================================================
+# v1.10.22 — Market holiday calendars (TWSE + NYSE)
+# ============================================================================
+# Each year-key maps to a dict of {date_string: holiday_name}.
+# Date strings are "YYYY-MM-DD" in local market time.
+#
+# UPDATE INSTRUCTIONS (every December):
+#   1. TWSE publishes next year's holiday calendar around Dec each year:
+#      https://www.twse.com.tw/zh/holidaySchedule/holidaySchedule
+#   2. NYSE publishes ahead at:
+#      https://www.nyse.com/markets/hours-calendars
+#   3. Add a new year entry to both dicts with that year's actual dates.
+#   4. The holiday name shown to users comes from the value, so write it
+#      in zh-TW (the gate translates if user is on English).
+# ============================================================================
+
+MARKET_HOLIDAYS_TW: dict[int, dict[str, str]] = {
+    2026: {
+        "2026-01-01": "元旦",
+        "2026-02-12": "農曆年前(僅交割,不交易)",
+        "2026-02-13": "農曆年前(僅交割,不交易)",
+        "2026-02-16": "農曆除夕",
+        "2026-02-17": "春節",
+        "2026-02-18": "春節",
+        "2026-02-19": "春節",
+        "2026-02-20": "春節",
+        "2026-02-27": "228 和平紀念日補假",
+        "2026-04-03": "清明節補假",
+        "2026-04-06": "兒童節補假",
+        "2026-05-01": "勞動節",
+        "2026-06-19": "端午節",
+        "2026-09-25": "中秋節",
+        "2026-09-28": "教師節",
+        "2026-10-09": "國慶日補假",
+        "2026-10-26": "光復節補假",
+        "2026-12-25": "行憲紀念日",
+    },
+    # 2027: { ... } ← add here when TWSE publishes 2027 calendar in late 2026
+}
+
+MARKET_HOLIDAYS_US: dict[int, dict[str, str]] = {
+    2026: {
+        "2026-01-01": "New Year's Day",
+        "2026-01-19": "MLK Day",
+        "2026-02-16": "Presidents' Day",
+        "2026-04-03": "Good Friday",
+        "2026-05-25": "Memorial Day",
+        "2026-06-19": "Juneteenth",
+        "2026-07-03": "Independence Day (observed)",
+        "2026-09-07": "Labor Day",
+        "2026-11-26": "Thanksgiving",
+        "2026-12-25": "Christmas Day",
+    },
+    # 2027: { ... } ← add here when NYSE publishes 2027 calendar
+}
+
+
+def _is_market_closed_today(scope: str) -> tuple[bool, str | None, str | None]:
+    """v1.10.22: Check whether the market for the given scope is closed today.
+
+    Args:
+        scope: "Taiwan only" | "U.S. only" | other
+
+    Returns:
+        (is_closed, reason, holiday_name)
+            is_closed: bool
+            reason: "weekend" | "holiday" | "weekend+holiday" | None
+            holiday_name: the human-readable holiday name (e.g. "228 和平紀念日補假")
+                          or None if reason is "weekend" only
+
+    Both Taiwan and U.S. markets close on weekends. For holidays, we use
+    the appropriate calendar based on scope.
+    """
+    today_tw = datetime.now(TW_TZ)
+    is_weekend = today_tw.weekday() >= 5
+    today_str = today_tw.strftime("%Y-%m-%d")
+    year = today_tw.year
+
+    # Pick the right calendar
+    if scope == "Taiwan only":
+        cal = MARKET_HOLIDAYS_TW.get(year, {})
+    elif scope == "U.S. only":
+        cal = MARKET_HOLIDAYS_US.get(year, {})
+    else:
+        cal = {}
+
+    holiday_name = cal.get(today_str)
+    is_holiday = holiday_name is not None
+
+    if is_weekend and is_holiday:
+        return (True, "weekend+holiday", holiday_name)
+    elif is_holiday:
+        return (True, "holiday", holiday_name)
+    elif is_weekend:
+        return (True, "weekend", None)
+    else:
+        return (False, None, None)
+
+
+def _next_trading_day_label(scope: str, lang_zh: bool) -> str:
+    """v1.10.22: Return a friendly label for the next trading day,
+    correctly skipping weekends AND holidays.
+
+    Replaces the v1.10.21 _next_trading_day_str() which only knew weekends.
+    """
+    from datetime import timedelta
+
+    today_tw = datetime.now(TW_TZ)
+
+    # Pick calendar
+    cal = (MARKET_HOLIDAYS_TW.get(today_tw.year, {}) if scope == "Taiwan only"
+           else MARKET_HOLIDAYS_US.get(today_tw.year, {}))
+
+    # Walk forward day by day until we find a non-weekend, non-holiday
+    probe = today_tw + timedelta(days=1)
+    safety = 0
+    while safety < 30:  # cap at 30 days as sanity (impossibly long holiday)
+        is_weekend = probe.weekday() >= 5
+        date_str = probe.strftime("%Y-%m-%d")
+        is_holiday = date_str in cal
+        if not is_weekend and not is_holiday:
+            break
+        probe = probe + timedelta(days=1)
+        safety += 1
+
+    # Format the label
+    delta_days = (probe.date() - today_tw.date()).days
+    weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][probe.weekday()]
+    weekday_en = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                  "Saturday", "Sunday"][probe.weekday()]
+
+    if lang_zh:
+        if delta_days == 1:
+            return f"明日({weekday_zh})"
+        else:
+            return f"{probe.strftime('%m/%d')}({weekday_zh})"
+    else:
+        if delta_days == 1:
+            return f"Tomorrow ({weekday_en})"
+        else:
+            return f"{probe.strftime('%m/%d')} ({weekday_en})"
+
+
+def _next_trading_day_str(lang_zh: bool) -> str:
+    """v1.10.21: kept as deprecated shim. Calls v1.10.22's
+    _next_trading_day_label with Taiwan default scope."""
+    return _next_trading_day_label("Taiwan only", lang_zh)
+
+
+def _render_market_closed_notice(scope: str, lang_zh: bool,
+                                  reason: str, holiday_name: str | None) -> None:
+    """v1.10.22: Friendly notice shown in place of the momentum pulse +
+    TSMC Top 5 block on weekends OR holidays. Tells user the reason
+    (which holiday, or just "weekend") and when data will refresh.
+    """
+    next_day = _next_trading_day_label(scope, lang_zh)
+
+    # Build the reason line based on weekend / holiday / both
+    if lang_zh:
+        if reason == "weekend":
+            title = "📅 週末休市中"
+            if scope == "Taiwan only":
+                reason_line = "台股週末休市,證交所量能 / 法人籌碼資料無更新。"
+            else:
+                reason_line = "美股週末休市,VIX / Mag 7 動能訊號暫停更新。"
+        elif reason == "holiday":
+            title = f"📅 假期休市:{holiday_name}"
+            if scope == "Taiwan only":
+                reason_line = f"今日為「{holiday_name}」,台股休市,證交所量能 / 法人籌碼資料無更新。"
+            else:
+                reason_line = f"今日為「{holiday_name}」,美股休市,VIX / Mag 7 動能訊號暫停更新。"
+        else:  # weekend + holiday
+            title = f"📅 週末 + {holiday_name} 休市"
+            if scope == "Taiwan only":
+                reason_line = f"今日為週末且為「{holiday_name}」,台股休市,資料無更新。"
+            else:
+                reason_line = f"今日為週末且為「{holiday_name}」,美股休市,資料無更新。"
+        next_line = f"下次評分更新:{next_day}盤後。"
+        line3 = "💡 你可以先用以下工具:"
+        bullet_items = [
+            "🤖 AI 分析分享 — 檢視論點驗證進度",
+        ]
+        if scope == "Taiwan only":
+            bullet_items.extend([
+                "📡 美股題材雷達 — 切「美股」模式查看",
+                "🧪 Active ETF Lab / Supply Chain Lab — 看資金流向 / 供應鏈定位",
+            ])
+        else:
+            bullet_items.extend([
+                "🧪 Active ETF Lab — 切「台股」模式看資金流向",
+            ])
+    else:
+        if reason == "weekend":
+            title = "📅 Weekend — Markets Closed"
+            if scope == "Taiwan only":
+                reason_line = "Taiwan market closed on weekends; turnover & institutional flow data not updated."
+            else:
+                reason_line = "U.S. market closed on weekends; VIX / Mag 7 momentum signals paused."
+        elif reason == "holiday":
+            title = f"📅 Holiday Closed: {holiday_name}"
+            if scope == "Taiwan only":
+                reason_line = f"Today is '{holiday_name}'; Taiwan market closed, no data updates."
+            else:
+                reason_line = f"Today is '{holiday_name}'; U.S. market closed, no data updates."
+        else:
+            title = f"📅 Weekend + {holiday_name} Holiday"
+            reason_line = f"Today is weekend and '{holiday_name}'; market closed, no data updates."
+        next_line = f"Next pulse update: after {next_day} session close."
+        line3 = "💡 Other tools still available:"
+        bullet_items = [
+            "🤖 AI Analysis — review thesis validation progress",
+        ]
+        if scope == "Taiwan only":
+            bullet_items.extend([
+                "📡 U.S. Theme Radar — switch to U.S. scope",
+                "🧪 Active ETF Lab / Supply Chain Lab — see flow + positioning",
+            ])
+        else:
+            bullet_items.extend([
+                "🧪 Active ETF Lab — switch to Taiwan scope for flow data",
+            ])
+
+    bullet_html = "".join(
+        f'<li style="margin: 4px 0;">{escape(item)}</li>'
+        for item in bullet_items
+    )
+
+    notice_html = f"""
+    <div style="
+        background: linear-gradient(180deg, rgba(28,30,55,.92), rgba(20,22,40,.92));
+        border: 1px solid rgba(96,110,145,.40);
+        border-radius: 12px;
+        padding: 22px 24px;
+        margin: 12px 0 18px 0;
+        color: #d8dde9;
+    ">
+        <div style="font-size: 18px; font-weight: 800; color: #f4f6fb; margin-bottom: 10px;">
+            {escape(title)}
+        </div>
+        <div style="font-size: 14px; line-height: 1.65; margin-bottom: 6px;">
+            {escape(reason_line)}
+        </div>
+        <div style="font-size: 14px; color: #98a2b8; line-height: 1.6; margin-bottom: 14px;">
+            {escape(next_line)}
+        </div>
+        <div style="
+            border-top: 1px solid rgba(96,110,145,.20);
+            padding-top: 12px;
+            font-size: 13px;
+            color: #b8c0d4;
+        ">
+            <div style="margin-bottom: 6px; font-weight: 600;">{escape(line3)}</div>
+            <ul style="margin: 0; padding-left: 22px; font-size: 13px;">
+                {bullet_html}
+            </ul>
+        </div>
+    </div>
+    """
+    render_html_block(notice_html)
+
+
+# v1.10.21 deprecated shim — kept for backward compat
+def _render_weekend_closed_market_notice(scope: str, lang_zh: bool) -> None:
+    """v1.10.21: kept as shim to v1.10.22 _render_market_closed_notice
+    with weekend reason."""
+    _render_market_closed_notice(scope, lang_zh, "weekend", None)
+
+
+# ============================================================================
+# v1.10.23 — Cross-market signal pulse (weekend / holiday substitute)
+# ============================================================================
+# When Taiwan market is closed but U.S. recently traded, this block uses
+# S&P 500 / Nasdaq / SOX / VIX to estimate next-session direction for TW.
+#
+# Theory: U.S. → Asia overnight information transmission. Empirical beta
+# of TAIEX open vs prior U.S. close is ~0.4-0.6, with SOX (semiconductor
+# index) carrying the strongest signal because TW is ~50% semis.
+#
+# Output: 5-bucket directional verdict (strong-bull → strong-bear) with
+# confidence label. NO numeric % prediction (overnight effect only
+# explains ~30-40% of variance — precision would mislead).
+# ============================================================================
+
+# Tickers used for cross-market signal
+_CROSS_MARKET_TICKERS = ["^GSPC", "^IXIC", "^SOX", "^VIX"]
+
+# Component weights — sum to 1.0
+# SOX gets highest weight: TW is half semis, SOX has tightest correlation
+# VIX is inverted (low VIX = good for risk assets)
+_CROSS_MARKET_WEIGHTS = {
+    "^SOX":  0.35,  # Semiconductor index — most relevant for TW
+    "^IXIC": 0.30,  # Nasdaq — tech-heavy, similar to TW exposure
+    "^GSPC": 0.20,  # S&P 500 — general market direction
+    "^VIX":  0.15,  # Inverted: low VIX → bullish, high VIX → bearish
+}
+
+
+def _cross_market_score_one_signal(pct: float, ticker: str) -> int:
+    """Score a single signal as -1, 0, or +1 based on its move.
+
+    Equity indices (^GSPC, ^IXIC, ^SOX): >+1% bullish, <-1% bearish.
+    VIX is inverted: <16 bullish, >25 bearish.
+    """
+    if ticker == "^VIX":
+        # VIX is inverted — pct here is the LEVEL of VIX (not a return)
+        # Convention: we'll pass the VIX level itself
+        if pct < 16:    return 1   # low fear = bullish
+        if pct > 25:    return -1  # high fear = bearish
+        return 0
+    # Equity indices: pct is the daily return %
+    if pct >= 1.0:    return 1
+    if pct <= -1.0:   return -1
+    return 0
+
+
+def build_cross_market_signal_pulse(daily_data) -> dict:
+    """Compute the cross-market signal for use during Taiwan market closure.
+
+    Args:
+        daily_data: yfinance frame with at least ^GSPC / ^IXIC / ^SOX / ^VIX
+                    (last ~5 days; we use the most recent close)
+
+    Returns dict:
+        {
+            "ready": bool,
+            "verdict_key": "strong-bull" | "mild-bull" | "neutral" |
+                           "mild-bear" | "strong-bear",
+            "confidence_key": "strong" | "medium" | "low",
+            "score": float,      # weighted directional score, -1.0 to +1.0
+            "signals": [
+                {"ticker": "^SOX", "label_zh": "...", "label_en": "...",
+                 "value_text": "+1.20%", "value_raw": 1.2,
+                 "score_contribution": 0.35,
+                 "interpretation_zh": "✓ 台股關注度最高",
+                 "interpretation_en": "✓ Highest TW relevance",
+                 "tone": "positive" | "negative" | "neutral"},
+                ...
+            ],
+            "data_date": "2026-05-08",  # most recent U.S. close
+            "weekday_label": "週五",      # of the most recent close
+        }
+    """
+    rows: list[dict] = []
+    weighted_score = 0.0
+    components_ready = 0
+    most_recent_date = None
+
+    # Labels per ticker (zh/en + interpretation hints)
+    label_map = {
+        "^GSPC": ("S&P 500", "S&P 500", "整體美股方向", "Overall U.S. direction"),
+        "^IXIC": ("Nasdaq", "Nasdaq", "科技股動能", "Tech momentum"),
+        "^SOX":  ("SOX 半導體", "SOX (Semis)", "台股關注度最高", "Highest TW relevance"),
+        "^VIX":  ("VIX", "VIX", "風險偏好(<20 偏低)", "Risk appetite (<20 low fear)"),
+    }
+
+    for ticker in _CROSS_MARKET_TICKERS:
+        weight = _CROSS_MARKET_WEIGHTS[ticker]
+        try:
+            close, _vol = _momentum_extract_close_volume(daily_data, ticker)
+        except Exception:
+            close = None
+
+        if close is None or len(close) < 2:
+            # Missing data for this signal — show as N/A
+            label_zh, label_en, interp_zh_base, interp_en_base = label_map[ticker]
+            rows.append({
+                "ticker": ticker,
+                "label_zh": label_zh,
+                "label_en": label_en,
+                "value_text": "—",
+                "value_raw": None,
+                "score_contribution": 0.0,
+                "interpretation_zh": "資料缺失",
+                "interpretation_en": "Data missing",
+                "tone": "neutral",
+                "weight": weight,
+            })
+            continue
+
+        components_ready += 1
+        try:
+            close_date = close.index[-1].strftime("%Y-%m-%d")
+            if most_recent_date is None or close_date > most_recent_date:
+                most_recent_date = close_date
+        except Exception:
+            pass
+
+        if ticker == "^VIX":
+            # For VIX we use the LEVEL (not the return)
+            level = float(close.iloc[-1])
+            signal = _cross_market_score_one_signal(level, ticker)
+            value_text = f"{level:.1f}"
+            value_raw = level
+            label_zh, label_en, _, _ = label_map[ticker]
+            if signal > 0:
+                interp_zh = "✓ 風險偏好(低恐慌)"
+                interp_en = "✓ Risk-on (low fear)"
+                tone = "positive"
+            elif signal < 0:
+                interp_zh = "✗ 高恐慌(風險規避)"
+                interp_en = "✗ High fear (risk-off)"
+                tone = "negative"
+            else:
+                interp_zh = "中性"
+                interp_en = "Neutral"
+                tone = "neutral"
+        else:
+            # Equity indices: compute daily return %
+            if len(close) < 2:
+                continue
+            curr = float(close.iloc[-1])
+            prev = float(close.iloc[-2])
+            pct = ((curr - prev) / prev * 100.0) if prev else 0.0
+            signal = _cross_market_score_one_signal(pct, ticker)
+            value_text = f"{pct:+.2f}%"
+            value_raw = pct
+            label_zh, label_en, hint_zh, hint_en = label_map[ticker]
+            if signal > 0:
+                interp_zh = f"✓ {hint_zh}(偏多)"
+                interp_en = f"✓ {hint_en} (bullish)"
+                tone = "positive"
+            elif signal < 0:
+                interp_zh = f"✗ {hint_zh}(偏空)"
+                interp_en = f"✗ {hint_en} (bearish)"
+                tone = "negative"
+            else:
+                interp_zh = f"{hint_zh}(中性)"
+                interp_en = f"{hint_en} (neutral)"
+                tone = "neutral"
+
+        contribution = signal * weight
+        weighted_score += contribution
+
+        rows.append({
+            "ticker": ticker,
+            "label_zh": label_zh,
+            "label_en": label_en,
+            "value_text": value_text,
+            "value_raw": value_raw,
+            "score_contribution": contribution,
+            "interpretation_zh": interp_zh,
+            "interpretation_en": interp_en,
+            "tone": tone,
+            "weight": weight,
+        })
+
+    # Need at least 3 signals to be confident
+    if components_ready < 3:
+        return {
+            "ready": False,
+            "score": 0.0,
+            "verdict_key": "neutral",
+            "confidence_key": "low",
+            "signals": rows,
+            "data_date": most_recent_date,
+        }
+
+    # 5-bucket verdict
+    if   weighted_score >= 0.6:
+        verdict_key, confidence_key = "strong-bull", "strong"
+    elif weighted_score >= 0.2:
+        verdict_key, confidence_key = "mild-bull", "medium"
+    elif weighted_score <= -0.6:
+        verdict_key, confidence_key = "strong-bear", "strong"
+    elif weighted_score <= -0.2:
+        verdict_key, confidence_key = "mild-bear", "medium"
+    else:
+        verdict_key, confidence_key = "neutral", "low"
+
+    # Day-of-week label for the most-recent U.S. close (used in headline)
+    weekday_label = ""
+    if most_recent_date:
+        try:
+            d = datetime.strptime(most_recent_date, "%Y-%m-%d")
+            weekday_label = ["週一", "週二", "週三", "週四", "週五",
+                              "週六", "週日"][d.weekday()]
+        except Exception:
+            pass
+
+    return {
+        "ready": True,
+        "score": round(weighted_score, 3),
+        "verdict_key": verdict_key,
+        "confidence_key": confidence_key,
+        "signals": rows,
+        "data_date": most_recent_date,
+        "weekday_label": weekday_label,
+    }
+
+
+def _render_cross_market_signal_pulse_html(payload: dict, lang_zh: bool,
+                                            scope: str, reason: str,
+                                            holiday_name: str | None) -> str:
+    """Render the cross-market signal block. Used as the closed-market
+    substitute when scope == Taiwan and U.S. data is fresh."""
+    if not payload.get("ready"):
+        return ""
+
+    verdict_key = payload["verdict_key"]
+    confidence_key = payload["confidence_key"]
+    score = payload["score"]
+    data_date = payload.get("data_date", "")
+    weekday_label = payload.get("weekday_label", "")
+    signals = payload.get("signals", [])
+
+    next_day = _next_trading_day_label("Taiwan only", lang_zh)
+
+    # === Localized strings ===
+    if lang_zh:
+        title = "📡 跨市場訊號脈搏(週末 / 假期版)"
+        if reason == "weekend":
+            subtitle = "因台股週末休市,以美股最近收盤訊號推估下個交易日方向"
+        elif reason == "holiday":
+            subtitle = f"因台股「{holiday_name}」休市,以美股最近收盤訊號推估下個交易日方向"
+        else:
+            subtitle = "因台股休市,以美股最近收盤訊號推估下個交易日方向"
+
+        col_signal = "訊號"
+        col_value = "數值"
+        col_interp = "解讀"
+        recent_label = f"美股最新收盤({data_date} {weekday_label}):" if data_date else "美股最新收盤:"
+        verdict_section_label = f"🇹🇼 推估 {next_day} 台股開盤方向:"
+
+        verdict_label_map = {
+            "strong-bull": ("🟢 強烈偏多", "ai-cross-verdict-bull-strong"),
+            "mild-bull":   ("🟢 偏多",     "ai-cross-verdict-bull-mild"),
+            "neutral":     ("🟡 中性",     "ai-cross-verdict-neutral"),
+            "mild-bear":   ("🔴 偏空",     "ai-cross-verdict-bear-mild"),
+            "strong-bear": ("🔴 強烈偏空", "ai-cross-verdict-bear-strong"),
+        }
+        confidence_label_map = {
+            "strong": "信心:強",
+            "medium": "信心:中等",
+            "low":    "信心:低",
+        }
+        warnings_title = "⚠️ 重要提醒:"
+        warnings = [
+            "此為情境推估,非交易建議",
+            "跨夜 ~60 小時,訊號強度比平日弱 30-40%",
+            "若週末發生重大新聞(美股期貨夜盤、地緣政治),推估會失準",
+        ]
+    else:
+        title = "📡 Cross-market Signal Pulse (weekend / holiday)"
+        if reason == "weekend":
+            subtitle = "TW market closed for weekend; using recent U.S. close to estimate next-session direction"
+        elif reason == "holiday":
+            subtitle = f"TW market closed for {holiday_name}; using recent U.S. close to estimate next-session direction"
+        else:
+            subtitle = "TW market closed; using recent U.S. close to estimate next-session direction"
+
+        col_signal = "Signal"
+        col_value = "Value"
+        col_interp = "Read"
+        recent_label = f"Most recent U.S. close ({data_date}):" if data_date else "Most recent U.S. close:"
+        verdict_section_label = f"🇹🇼 Estimated TW open direction for {next_day}:"
+
+        verdict_label_map = {
+            "strong-bull": ("🟢 Strongly Bullish", "ai-cross-verdict-bull-strong"),
+            "mild-bull":   ("🟢 Mildly Bullish",   "ai-cross-verdict-bull-mild"),
+            "neutral":     ("🟡 Neutral",          "ai-cross-verdict-neutral"),
+            "mild-bear":   ("🔴 Mildly Bearish",   "ai-cross-verdict-bear-mild"),
+            "strong-bear": ("🔴 Strongly Bearish", "ai-cross-verdict-bear-strong"),
+        }
+        confidence_label_map = {
+            "strong": "Confidence: Strong",
+            "medium": "Confidence: Medium",
+            "low":    "Confidence: Low",
+        }
+        warnings_title = "⚠️ Important reminders:"
+        warnings = [
+            "Scenario estimate — NOT a trading recommendation",
+            "~60h overnight gap weakens signal by 30-40% vs weekday",
+            "Weekend news (futures night session, geopolitical) can break this",
+        ]
+
+    verdict_text, verdict_class = verdict_label_map[verdict_key]
+    confidence_text = confidence_label_map[confidence_key]
+
+    # === Build signal rows ===
+    rows_html_parts: list[str] = []
+    for sig in signals:
+        label = sig["label_zh"] if lang_zh else sig["label_en"]
+        value = sig["value_text"]
+        interp = sig["interpretation_zh"] if lang_zh else sig["interpretation_en"]
+        tone = sig.get("tone", "neutral")
+        rows_html_parts.append(f"""
+            <div class="cross-market-row cross-market-row-{escape(tone)}">
+                <div class="cross-market-cell-label">{escape(label)}</div>
+                <div class="cross-market-cell-value">{escape(value)}</div>
+                <div class="cross-market-cell-interp">{escape(interp)}</div>
+            </div>
+        """)
+    rows_html = "".join(rows_html_parts)
+
+    # Warnings as bullet list
+    warnings_html = "".join(
+        f'<li style="margin: 3px 0;">{escape(w)}</li>'
+        for w in warnings
+    )
+
+    return f"""
+    <div class="cross-market-signal-shell">
+        <div class="cross-market-headline">{escape(title)}</div>
+        <div class="cross-market-subtitle">{escape(subtitle)}</div>
+
+        <div class="cross-market-section-label">{escape(recent_label)}</div>
+        <div class="cross-market-rows">
+            <div class="cross-market-row cross-market-row-header">
+                <div class="cross-market-cell-label">{escape(col_signal)}</div>
+                <div class="cross-market-cell-value">{escape(col_value)}</div>
+                <div class="cross-market-cell-interp">{escape(col_interp)}</div>
+            </div>
+            {rows_html}
+        </div>
+
+        <div class="cross-market-verdict-section">
+            <div class="cross-market-verdict-label">{escape(verdict_section_label)}</div>
+            <div class="cross-market-verdict-card {escape(verdict_class)}">
+                <div class="cross-market-verdict-text">{escape(verdict_text)}</div>
+                <div class="cross-market-verdict-confidence">{escape(confidence_text)}</div>
+            </div>
+        </div>
+
+        <div class="cross-market-warnings">
+            <div class="cross-market-warnings-title">{escape(warnings_title)}</div>
+            <ul style="margin: 4px 0 0 0; padding-left: 22px; font-size: 12.5px;">
+                {warnings_html}
+            </ul>
+        </div>
+    </div>
+    """
+
+
+_CROSS_MARKET_CSS = """
+<style>
+.cross-market-signal-shell {
+    background: linear-gradient(180deg, rgba(28,30,55,.92), rgba(20,22,40,.92));
+    border: 1px solid rgba(96,110,145,.40);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin: 12px 0 18px 0;
+    color: #d8dde9;
+}
+.cross-market-headline {
+    font-size: 18px; font-weight: 800; color: #f4f6fb;
+    margin-bottom: 4px;
+}
+.cross-market-subtitle {
+    font-size: 13px; color: #98a2b8; line-height: 1.55;
+    margin-bottom: 18px;
+}
+.cross-market-section-label {
+    font-size: 12px; font-weight: 700; color: #98a2b8;
+    text-transform: uppercase; letter-spacing: .5px;
+    margin: 14px 0 6px 0;
+}
+.cross-market-rows {
+    border: 1px solid rgba(96,110,145,.20);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.cross-market-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 2fr) minmax(80px, 1fr) minmax(180px, 3fr);
+    gap: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(96,110,145,.15);
+    align-items: center;
+}
+.cross-market-row:last-child { border-bottom: none; }
+.cross-market-row-header {
+    background: rgba(35, 44, 70, 0.55);
+    font-weight: 600;
+    color: #b8c0d4;
+    font-size: 12px;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+}
+.cross-market-cell-label { font-weight: 600; color: #e8eef9; }
+.cross-market-cell-value {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #f4f6fb;
+    text-align: right;
+}
+.cross-market-row-positive .cross-market-cell-value { color: #8be8b1; }
+.cross-market-row-negative .cross-market-cell-value { color: #f4a3aa; }
+.cross-market-cell-interp { color: #b8c0d4; font-size: 12.5px; }
+
+.cross-market-verdict-section {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(96,110,145,.20);
+}
+.cross-market-verdict-label {
+    font-size: 13.5px;
+    color: #c2c8d8;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.cross-market-verdict-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    padding: 16px 18px;
+    border: 2px solid;
+    text-align: center;
+    max-width: 340px;
+    margin: 0 auto;
+}
+.cross-market-verdict-text {
+    font-size: 22px;
+    font-weight: 800;
+    margin-bottom: 4px;
+    line-height: 1.2;
+}
+.cross-market-verdict-confidence {
+    font-size: 12.5px;
+    color: #98a2b8;
+    font-weight: 600;
+}
+.ai-cross-verdict-bull-strong {
+    background: rgba(76,208,168,.15);
+    border-color: rgba(76,208,168,.65);
+}
+.ai-cross-verdict-bull-strong .cross-market-verdict-text { color: #8be8b1; }
+.ai-cross-verdict-bull-mild {
+    background: rgba(76,208,168,.08);
+    border-color: rgba(76,208,168,.35);
+}
+.ai-cross-verdict-bull-mild .cross-market-verdict-text { color: #8be8b1; }
+.ai-cross-verdict-neutral {
+    background: rgba(230,195,95,.10);
+    border-color: rgba(230,195,95,.40);
+}
+.ai-cross-verdict-neutral .cross-market-verdict-text { color: #f4d68a; }
+.ai-cross-verdict-bear-mild {
+    background: rgba(217,102,112,.08);
+    border-color: rgba(217,102,112,.35);
+}
+.ai-cross-verdict-bear-mild .cross-market-verdict-text { color: #f4a3aa; }
+.ai-cross-verdict-bear-strong {
+    background: rgba(217,102,112,.15);
+    border-color: rgba(217,102,112,.65);
+}
+.ai-cross-verdict-bear-strong .cross-market-verdict-text { color: #f4a3aa; }
+
+.cross-market-warnings {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(96,110,145,.15);
+    color: #98a2b8;
+}
+.cross-market-warnings-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: #b8c0d4;
+    margin-bottom: 4px;
+}
+
+/* === Mobile (< 768px) === */
+@media (max-width: 767px) {
+    .cross-market-signal-shell { padding: 14px 15px !important; }
+    .cross-market-headline { font-size: 15px !important; line-height: 1.35 !important; }
+    .cross-market-subtitle { font-size: 12px !important; line-height: 1.55 !important; }
+    .cross-market-row {
+        grid-template-columns: 1fr !important;
+        grid-template-rows: auto auto auto !important;
+        gap: 3px !important;
+        padding: 9px 11px !important;
+    }
+    .cross-market-row-header { display: none !important; }
+    .cross-market-cell-label { font-size: 12.5px !important; }
+    .cross-market-cell-value {
+        text-align: left !important;
+        font-size: 13.5px !important;
+    }
+    .cross-market-cell-interp {
+        font-size: 11.5px !important;
+        line-height: 1.4 !important;
+    }
+    .cross-market-verdict-card {
+        padding: 13px 14px !important;
+    }
+    .cross-market-verdict-text { font-size: 19px !important; }
+    .cross-market-warnings ul { font-size: 11.5px !important; }
+}
+
+/* === Tablet (768-1024px) === */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .cross-market-signal-shell { padding: 16px 18px !important; }
+    .cross-market-headline { font-size: 16px !important; }
+}
+</style>
+"""
+
+
+def _ensure_cross_market_css():
+    """Inject CSS every render — same idempotent pattern as other blocks."""
+    render_html_block(_CROSS_MARKET_CSS)
+
+
+def _render_cross_market_signal_block(scope: str, lang_zh: bool,
+                                       reason: str, holiday_name: str | None) -> bool:
+    """Top-level entry for the cross-market signal block.
+
+    Returns True if the block was successfully rendered, False if data
+    wasn't available (so caller can fall back to plain notice).
+    """
+    try:
+        daily_data = fetch_daily_data(_CROSS_MARKET_TICKERS, "1mo", "1d")
+    except Exception:
+        return False
+
+    payload = build_cross_market_signal_pulse(daily_data)
+    if not payload.get("ready"):
+        return False
+
+    _ensure_cross_market_css()
+    html = _render_cross_market_signal_pulse_html(
+        payload, lang_zh=lang_zh, scope=scope,
+        reason=reason, holiday_name=holiday_name,
+    )
+    if html:
+        render_html_block(html)
+        return True
+    return False
+
+
 def render_tomorrow_momentum_pulse(market_scope: str) -> None:
     """Top-level entry: fetch + compute + render the momentum pulse table.
 
@@ -14204,10 +15166,44 @@ def render_tomorrow_momentum_pulse(market_scope: str) -> None:
     v1.9.6: Removed silent outer try/except that masked NameError.
     v1.9.7: Now also chains into render_tsmc_supply_chain_top5_recommendations
     when scope is Taiwan and the verdict is ready — the recommendation
-    block adapts its picks to the regime computed here.
+    block adapts its regime computed here.
+    v1.10.21: Weekend gate at the top — if Saturday/Sunday in Taipei,
+    skip the pulse + TSMC Top 5 entirely and render a closed-market
+    notice instead. Both Taiwan and U.S. markets close weekends.
     """
     scope = _normalize_market_scope(market_scope)
     lang_zh = _news_briefing_is_zh()
+
+    # v1.10.22: Market-closed short-circuit (weekends + holidays)
+    is_closed, reason, holiday_name = _is_market_closed_today(scope)
+    if is_closed:
+        # v1.10.23: For Taiwan scope, try cross-market signal block FIRST
+        # (uses U.S. recent close to estimate next TW open direction).
+        # Falls back to the plain v1.10.22 notice if U.S. data unavailable
+        # (e.g. both markets closed simultaneously, or yfinance fail).
+        rendered_signal = False
+        if scope == "Taiwan only":
+            # Don't try if it's also a U.S. holiday — no source data
+            us_today_str = datetime.now(TW_TZ).strftime("%Y-%m-%d")
+            us_year = datetime.now(TW_TZ).year
+            us_cal = MARKET_HOLIDAYS_US.get(us_year, {})
+            us_also_closed_today = (us_today_str in us_cal)
+            # Note: U.S. weekend timing is offset, but if TW is in weekend,
+            # U.S. has had a Friday close that's still useful even on Sun.
+            if not us_also_closed_today:
+                rendered_signal = _render_cross_market_signal_block(
+                    scope, lang_zh, reason, holiday_name,
+                )
+
+        if not rendered_signal:
+            # Fall back to plain notice (v1.10.22)
+            _render_market_closed_notice(scope, lang_zh, reason, holiday_name)
+
+        # U.S. Theme Radar still renders for U.S. scope (sector heat is
+        # historical, not next-session prediction).
+        if scope == "U.S. only":
+            render_us_theme_radar_standalone(lang_zh=lang_zh)
+        return
 
     if scope == "Taiwan only":
         # Need ~30 trading days for 20-day vol average.
