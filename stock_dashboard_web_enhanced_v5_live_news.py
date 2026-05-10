@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.8
+Version : v1.10.10
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,58 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.10 (2026-05-10)  [Synthesis cards layout + rename to "AI 整體判斷"]
+  - User: 整體判斷 currently displays as a single multi-paragraph block.
+    Asked to (a) rebrand "我的整體判斷" → "AI 整體判斷", and (b)
+    convert each paragraph into its own card matching the AI 論點卡片
+    visual language, since user will be adding more paragraphs over time.
+  - Rename: AI_ANALYSIS_SYNTHESIS["headline"] → "AI 整體判斷" / "AI Overall Take"
+  - Layout: paragraphs now render as a grid of cards (same .ai-cards-grid
+    container used by the thesis cards). Each card has:
+      * Lead text as the card title (large + bold)
+      * Body text as the supporting prose
+      * Validation chip in the bottom-right (same position as thesis
+        validation bar — score + verdict color + 7-day arrow)
+  - The block-level header ("AI 整體判斷") still shows the aggregate
+    avg score + trend on top, plus issued date on the right.
+  - When you add more paragraphs over time, they auto-flow into the
+    grid (responsive: 1-3 columns based on viewport width). No layout
+    changes needed.
+  - Backward compat: paragraphs without validation_points still render
+    (just without a validation chip on that card).
+  - English label: "我的整體判斷" / "My Overall Take" → "AI 整體判斷" /
+    "AI Overall Take" — both languages flipped together.
+
+v1.10.9 (2026-05-10)  [Synthesis paragraphs gain their own daily validation]
+  - User asked: "在原有的 🧭 我的整體判斷 也添加每日驗證表" — the 3-paragraph
+    synthesis block (analyst's overall take) should also be data-validated.
+  - Schema change: AI_ANALYSIS_SYNTHESIS["paragraphs"][i] now accepts an
+    optional "validation_points" list, same shape as thesis-level
+    validation_points. Each paragraph gets 1-2 validation points that
+    quantify how the market is tracking that paragraph's claim.
+  - Existing 3 paragraphs seeded with appropriate validation points:
+      Paragraph 1 (520以盤代跌): index_level 41000 + support_zone 40700
+      Paragraph 2 (0056 變熱門): stock_trend 0056 rally + rally_pace
+      Paragraph 3 (0050 + AI 主幹): stock_trend 0050 + stock_trend 2330
+  - Visual:
+      * Synthesis block header gets a summary chip showing the
+        block-level avg score + 7-day trend arrow (matches the topic
+        card-section visual language).
+      * Each paragraph gets a small validation chip on the same row
+        as its lead — score (0-100) + verdict color + 7-day arrow.
+      * If a paragraph has no validation_points field, it renders
+        without a chip (graceful degradation for old data).
+  - Persistence: each paragraph's score is keyed by
+    "synthesis-{paragraph_index}" in the existing _ai_thesis_history
+    session storage, so the 7-day trend arrow accumulates the same way
+    as thesis-level scores.
+  - Aggregate: synthesis-level avg = weighted mean of paragraph
+    avg_score values. Verdict thresholds same as thesis (≥65 validating,
+    ≥40 neutral, <40 diverging).
+  - Computation reuses compute_thesis_validation_score — the function
+    is already generic over any dict with validation_points, so no new
+    calculation code is needed. Only the renderer adds new HTML.
 
 v1.10.8 (2026-05-10)  [Font size pass — uniform +1-2px on dashboard blocks]
   - User feedback: dashboard text feels small. Bumped font-size on

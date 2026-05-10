@@ -742,21 +742,90 @@ AI_ANALYSIS_THESES: list[dict] = [
 # ----------------------------------------------------------------------------
 
 AI_ANALYSIS_SYNTHESIS: dict = {
-    "headline": "我的整體判斷",
+    "headline": "AI 整體判斷",
+    "headline_en": "AI Overall Take",
     "intro": "這集標題中的核心論點,我會拆成三句看:",
+    "intro_en": "Core claims from this video, broken into three points:",
     "issued_date": "2026-05-08",
+    # v1.10.9: Each paragraph now carries its own validation_points list
+    # (same schema as thesis-level validation_points). The renderer scores
+    # each paragraph 0-100% from live market data and shows a small chip
+    # on the paragraph's lead line. The whole synthesis block also gets
+    # a header-level avg score that aggregates the three paragraphs.
+    #
+    # When you write a new synthesis after a video, fill in 1-2
+    # validation_points per paragraph — these should be the most direct
+    # quantifiable claim from that paragraph (a specific level / trend /
+    # support that the market can confirm or deny).
     "paragraphs": [
         {
             "lead": "第一,台股「520 後以盤代跌」的可信度偏中高。",
             "body": "大盤剛經歷 5 月初急漲,5/7 創高後 5/8 拉回但仍守在 41,000 點以上,這比較像多頭高檔整理,而不是趨勢立刻反轉。短線支撐可看 40,700 附近,也就是 5/4 收盤突破 40,000 後的區域;壓力則看 5/7 盤中高點 42,156 附近。",
+            "validation_points": [
+                {
+                    "type": "index_level",
+                    "label": "加權守 41,000",
+                    "threshold": 41000,
+                    "direction": "above",
+                    "consec_days": 5,
+                    "weight": 1.5,
+                },
+                {
+                    "type": "support_zone",
+                    "label": "40,700 短線支撐",
+                    "level": 40700,
+                    "ticker": "^TWII",
+                    "weight": 1.0,
+                },
+            ],
         },
         {
             "lead": "第二,0056「已經變熱門」是高機率,但「繼續像飆股一樣噴」只能算中等機率。",
             "body": "0056 有配息 1 元、快速填息、外資買超與高股息 ETF 龍頭光環,這些都是真實利多;但它畢竟是收益型 ETF,不是高 β 個股,追高時要小心把高股息 ETF 買成短線價差股。",
+            "validation_points": [
+                {
+                    "type": "stock_trend",
+                    "label": "0056 5 日漲幅(熱門股化)",
+                    "ticker": "0056.TW",
+                    "pattern": "rally",
+                    "lookback": 5,
+                    "rally_min_pct": 2,
+                    "weight": 1.0,
+                },
+                {
+                    "type": "rally_pace",
+                    "label": "0056 漲速不過熱(0-6%)",
+                    "ticker": "0056.TW",
+                    "lookback": 10,
+                    "ideal_min_pct": 0,
+                    "ideal_max_pct": 6,
+                    "weight": 1.0,
+                },
+            ],
         },
         {
             "lead": "第三,0050 與 AI 權值股仍是台股主幹,但短線不宜忽略漲多風險。",
             "body": "若台股繼續往上,0050 受惠會直接;若進入盤整,0056 這種高股息 ETF 可能會因防禦與現金流需求而相對抗震。簡單說:看成長與指數彈性偏 0050;看現金流與震盪抗性偏 0056。",
+            "validation_points": [
+                {
+                    "type": "stock_trend",
+                    "label": "0050 5 日續強",
+                    "ticker": "0050.TW",
+                    "pattern": "rally",
+                    "lookback": 5,
+                    "rally_min_pct": 1,
+                    "weight": 1.5,
+                },
+                {
+                    "type": "stock_trend",
+                    "label": "台積電 5 日領漲",
+                    "ticker": "2330.TW",
+                    "pattern": "rally",
+                    "lookback": 5,
+                    "rally_min_pct": 2,
+                    "weight": 1.0,
+                },
+            ],
         },
     ],
 }
@@ -896,20 +965,120 @@ _AI_ANALYSIS_CSS = """
     color: #f4f6fb;
     margin-bottom: 4px;
 }
+.ai-synthesis-head-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+.ai-synthesis-headline-score {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(96,110,145,.18);
+}
+.ai-synthesis-headline-score-num {
+    font-size: 22px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+.ai-synthesis-headline-score-num-validating { color: #8be8b1; }
+.ai-synthesis-headline-score-num-neutral { color: #f4d68a; }
+.ai-synthesis-headline-score-num-diverging { color: #f4a3aa; }
+.ai-synthesis-issued {
+    font-size: 12px;
+    color: #98a2b8;
+    font-style: italic;
+    margin-left: auto;
+}
 .ai-synthesis-intro {
     font-size: 14px;
     color: #98a2b8;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
 }
-.ai-synthesis-para {
+
+/* v1.10.10 — synthesis paragraphs as cards */
+.ai-synthesis-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 12px;
+}
+.ai-synthesis-card {
+    background: linear-gradient(180deg, rgba(20,26,45,.92), rgba(14,18,32,.92));
+    border: 1px solid rgba(96,110,145,.35);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    position: relative;
+}
+.ai-synthesis-card-validating { border-left: 3px solid #5ec689; }
+.ai-synthesis-card-neutral { border-left: 3px solid #e6c35f; }
+.ai-synthesis-card-diverging { border-left: 3px solid #d96670; }
+.ai-synthesis-card-no-validation { border-left: 3px solid rgba(96,110,145,.30); }
+.ai-synthesis-card-tag {
+    font-size: 11px;
+    font-weight: 700;
+    color: #98a2b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.ai-synthesis-card-lead {
     font-size: 14.5px;
-    line-height: 1.7;
-    color: #d8dde9;
-    margin-bottom: 10px;
-}
-.ai-synthesis-lead {
     font-weight: 700;
     color: #f4d68a;
+    line-height: 1.45;
+}
+.ai-synthesis-card-body {
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: #d8dde9;
+    flex: 1;
+}
+.ai-synthesis-card-validation-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(8,11,22,.5);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: auto;
+    border: 1px solid rgba(96,110,145,.18);
+}
+.ai-synthesis-card-validation-num {
+    font-size: 20px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+.ai-synthesis-card-validation-num-validating { color: #8be8b1; }
+.ai-synthesis-card-validation-num-neutral { color: #f4d68a; }
+.ai-synthesis-card-validation-num-diverging { color: #f4a3aa; }
+.ai-synthesis-card-validation-label {
+    font-size: 11px;
+    color: #98a2b8;
+    line-height: 1.3;
+    flex: 1;
+}
+.ai-synthesis-card-validation-trend {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 5px;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+.ai-synthesis-card-no-data-hint {
+    font-size: 11.5px;
+    color: #7a8499;
+    font-style: italic;
+    padding: 4px 0;
 }
 
 .ai-validation-tracker {
@@ -1194,6 +1363,7 @@ _AI_ANALYSIS_CSS = """
 
 @media (max-width: 900px) {
     .ai-cards-grid { grid-template-columns: 1fr; }
+    .ai-synthesis-cards-grid { grid-template-columns: 1fr; }
     .ai-tracker-row {
         grid-template-columns: 1fr 1fr;
         grid-template-rows: auto auto;
@@ -1567,29 +1737,167 @@ def _render_ai_card_html(thesis: dict, validation: dict, lang_zh: bool) -> str:
     """).strip()
 
 
-def _render_ai_synthesis_html(synthesis: dict, lang_zh: bool) -> str:
-    headline = synthesis.get("headline", "")
-    intro = synthesis.get("intro", "")
+def _render_ai_synthesis_html(synthesis: dict, lang_zh: bool, daily_data=None) -> str:
+    """Render the synthesis (AI 整體判斷) block as a card grid.
+
+    v1.10.10: Each paragraph now renders as its own card (matching the
+    AI 論點卡片 visual language) so the layout scales gracefully as the
+    user adds more paragraphs over time. Each card has:
+        * Lead text as the title
+        * Body text as the supporting prose
+        * Validation chip at the bottom (score + verdict color + 7-day trend)
+
+    daily_data is the same MultiIndex DataFrame used by thesis validation.
+    Pass None to skip validation rendering (graceful degradation).
+    """
+    headline = (synthesis.get("headline") if lang_zh else synthesis.get("headline_en")) \
+               or synthesis.get("headline", "")
+    intro = (synthesis.get("intro") if lang_zh else synthesis.get("intro_en")) \
+            or synthesis.get("intro", "")
     issued = synthesis.get("issued_date", "")
-    paragraphs_html = "".join(
-        f'<div class="ai-synthesis-para">'
-        f'<span class="ai-synthesis-lead">{escape(p.get("lead", ""))}</span> '
-        f'{escape(p.get("body", ""))}'
-        f'</div>'
-        for p in (synthesis.get("paragraphs") or [])
-    )
+    paragraphs = synthesis.get("paragraphs") or []
+
+    # ----- Compute per-paragraph validation scores -----
+    para_validations: list[dict] = []
+    for idx, p in enumerate(paragraphs):
+        if p.get("validation_points") and daily_data is not None:
+            v = compute_thesis_validation_score(p, daily_data)
+            if v.get("ready"):
+                _record_thesis_score_today(f"synthesis-{idx}", v["thesis_score"])
+            para_validations.append(v)
+        else:
+            para_validations.append({"thesis_score": 0, "verdict": "neutral",
+                                     "ready": False, "points": []})
+
+    # ----- Block-level aggregate -----
+    weighted_sum = 0.0
+    weight_total = 0.0
+    ready_count = 0
+    for v in para_validations:
+        if v.get("ready"):
+            ready_count += 1
+            weighted_sum += v["thesis_score"]
+            weight_total += 1
+    block_avg = weighted_sum / weight_total if weight_total > 0 else 50.0
+
+    if block_avg >= 65:
+        block_verdict = "validating"
+    elif block_avg >= 40:
+        block_verdict = "neutral"
+    else:
+        block_verdict = "diverging"
+
+    # 7-day trend for the block
+    history = st.session_state.get(_ai_thesis_history_key(), {})
+    deltas = []
+    for idx in range(len(paragraphs)):
+        h = history.get(f"synthesis-{idx}", [])
+        if len(h) >= 2:
+            earliest = h[max(0, len(h) - 7)]
+            current = h[-1]
+            deltas.append(current.get("score", 50) - earliest.get("score", 50))
+    if deltas:
+        avg_delta = sum(deltas) / len(deltas)
+        if avg_delta >= 5:
+            block_arrow = ("↑", "ai-trend-up", f"7日 +{avg_delta:.0f}")
+        elif avg_delta <= -5:
+            block_arrow = ("↓", "ai-trend-down", f"7日 {avg_delta:.0f}")
+        else:
+            block_arrow = ("→", "ai-trend-flat", f"7日 {avg_delta:+.0f}")
+    else:
+        block_arrow = ("·", "ai-trend-pending", "資料累積中" if lang_zh else "Building")
+
+    # ----- Header HTML -----
+    block_chip_html = ""
+    if ready_count > 0:
+        b_arrow, b_class, b_label = block_arrow
+        block_chip_html = (
+            f'<span class="ai-synthesis-headline-score">'
+            f'  <span class="ai-synthesis-headline-score-num ai-synthesis-headline-score-num-{escape(block_verdict)}">{block_avg:.0f}</span>'
+            f'  <span class="ai-card-validation-trend {escape(b_class)}">{b_arrow} {escape(b_label)}</span>'
+            f'</span>'
+        )
+
     issued_html = (
-        f'<span class="ai-share-section-meta">發布 {escape(issued)}</span>'
-        if issued else ""
+        f'<span class="ai-synthesis-issued">'
+        + (f'發布 {escape(issued)}' if lang_zh else f'Issued {escape(issued)}')
+        + '</span>'
+        if issued else '<span class="ai-synthesis-issued"></span>'
     )
+
+    # ----- Per-paragraph cards -----
+    label_validation = "目前驗證" if lang_zh else "Validation"
+    label_no_data = "暫無驗證點(可日後補上)" if lang_zh else "No validation points yet"
+    label_pos_tag = "判斷"  # used as the small "uppercase" tag at top
+
+    card_html_parts: list[str] = []
+    for idx, p in enumerate(paragraphs):
+        v = para_validations[idx]
+        lead = p.get("lead", "")
+        body = p.get("body", "")
+
+        # Card border color depends on verdict (or neutral if no validation)
+        if v.get("ready"):
+            verdict = v.get("verdict", "neutral")
+            border_class = f"ai-synthesis-card-{verdict}"
+        else:
+            verdict = None
+            border_class = "ai-synthesis-card-no-validation"
+
+        # Validation bar at the bottom
+        validation_bar_html = ""
+        if v.get("ready"):
+            score = v.get("thesis_score", 50)
+            arrow, trend_class, trend_label = _thesis_trend_arrow(
+                f"synthesis-{idx}", score
+            )
+            validation_bar_html = (
+                f'<div class="ai-synthesis-card-validation-bar">'
+                f'  <div class="ai-synthesis-card-validation-num ai-synthesis-card-validation-num-{escape(verdict)}">{score:.0f}</div>'
+                f'  <div class="ai-synthesis-card-validation-label">'
+                f'    {escape(label_validation)} %'
+                f'  </div>'
+                f'  <div class="ai-synthesis-card-validation-trend {escape(trend_class)}">'
+                f'    {arrow} {escape(trend_label)}'
+                f'  </div>'
+                f'</div>'
+            )
+        else:
+            # No validation: small italic hint instead of a bar
+            validation_bar_html = (
+                f'<div class="ai-synthesis-card-no-data-hint">{escape(label_no_data)}</div>'
+            )
+
+        # Tag prefix for the card (e.g. 第一 / 第二 / 第三 — auto-generated)
+        if lang_zh:
+            tag_text = ["第一", "第二", "第三", "第四", "第五", "第六", "第七", "第八"][idx] \
+                       if idx < 8 else f"第{idx+1}"
+        else:
+            tag_text = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"][idx] \
+                       if idx < 8 else f"#{idx+1}"
+
+        card_html_parts.append(
+            f'<div class="ai-synthesis-card {border_class}">'
+            f'  <div class="ai-synthesis-card-tag">{escape(tag_text)}</div>'
+            f'  <div class="ai-synthesis-card-lead">{escape(lead)}</div>'
+            f'  <div class="ai-synthesis-card-body">{escape(body)}</div>'
+            f'  {validation_bar_html}'
+            f'</div>'
+        )
+
+    cards_html = "".join(card_html_parts)
+
     return textwrap.dedent(f"""
         <div class="ai-synthesis-shell">
-            <div class="ai-share-section-head" style="margin-top:0">
+            <div class="ai-synthesis-head-row">
                 <div class="ai-synthesis-headline">🧭 {escape(headline)}</div>
+                {block_chip_html}
                 {issued_html}
             </div>
             <div class="ai-synthesis-intro">{escape(intro)}</div>
-            {paragraphs_html}
+            <div class="ai-synthesis-cards-grid">
+                {cards_html}
+            </div>
         </div>
     """).strip()
 
@@ -1716,6 +2024,12 @@ def render_ai_analysis_share_dashboard() -> None:
             t = point.get("ticker")
             if t:
                 needed_tickers.add(t)
+    # v1.10.9: Synthesis paragraphs also have validation_points
+    for para in (AI_ANALYSIS_SYNTHESIS.get("paragraphs") or []):
+        for point in para.get("validation_points", []) or []:
+            t = point.get("ticker")
+            if t:
+                needed_tickers.add(t)
 
     try:
         daily_data = _fetch_daily_data(sorted(needed_tickers), "3mo", "1d")
@@ -1776,7 +2090,7 @@ def render_ai_analysis_share_dashboard() -> None:
 
     # ----- Block 2: 整體判斷 -----
     if AI_ANALYSIS_SYNTHESIS:
-        _render_html_block(_render_ai_synthesis_html(AI_ANALYSIS_SYNTHESIS, lang_zh))
+        _render_html_block(_render_ai_synthesis_html(AI_ANALYSIS_SYNTHESIS, lang_zh, daily_data=daily_data))
 
     # ----- Block 3: 每日驗證表 -----
     _render_html_block(_render_ai_validation_tracker_html(thesis_results, lang_zh))
