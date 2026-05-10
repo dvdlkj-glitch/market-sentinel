@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.9.6
+Version : v1.9.7
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,43 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.9.7 (2026-05-09)  [TSMC Supply Chain Top 5 — momentum regime recommender]
+  - New companion block to the Tomorrow Momentum Pulse table. When
+    the Pulse verdict is computed, this block reads it and picks 5
+    TSMC supply-chain stocks suited to the current regime:
+      🟢 Strong  → 高 Beta 攻擊型 5 檔(跟著主線跑)
+      🟡 Neutral → 均衡品質 5 檔(邊看邊走)
+      🔴 Weak    → 低波動防守 5 檔 + 倒金字塔限價建議(分批承接)
+  - Underlying philosophy: Momentum Regime (per user 2026-05-09).
+    Different regimes call for different risk profiles, not different
+    rankings of the same universe.
+  - Universe: union of 4 TSMC-related supply chain catalogs you've
+    curated — mtk + abf + memory + packaging-test (~50 stocks).
+    Excludes low-orbit + robotics (those aren't TSMC plays).
+  - Per-ticker statistics computed from a single yfinance fetch:
+      r1d         : daily return
+      r5d         : 5-day cumulative return
+      r20d        : 20-day cumulative return (rally-fatigue check)
+      vol_ratio   : latest volume / 20-day mean
+      realized_vol: 20-day annualized standard deviation of r1d
+      beta_60d    : 60-day beta vs TAIEX (regression slope)
+      drawdown    : latest close vs 20-day high (negative = pullback)
+      taiex_alpha : excess return vs TAIEX over 20 days
+  - Three scoring formulas, one universe — each ticker gets all three
+    scores, the regime selector picks one. Scoring is bounded [0, 100]
+    per formula so cross-regime comparisons are meaningful.
+  - Weak-state output includes a倒金字塔 limit-price ladder:
+      L1: 50% size at -1.0% from close
+      L2: 30% size at -3.0% from close
+      L3: 20% size at -5.0% from close
+    Rationale: weak regime = wait for sellers to capitulate. The
+    ladder protects against catching a falling knife while still
+    securing exposure if the dip stops.
+  - Renders directly below the Tomorrow Momentum Pulse table on the
+    main Dashboard. Hidden in non-General-Market modes (per v1.9.4).
+  - Pure-compute helpers + render are wrapped in
+    render_tsmc_supply_chain_top5_recommendations(verdict_key, ...).
 
 v1.9.6 (2026-05-09)  [Fix v1.9.5 silent failure + remove Cockpit/Editor/TAIEX terrain]
   - BUG FIX (root cause of why Momentum Pulse never rendered in v1.9.5):
@@ -7855,7 +7892,7 @@ TRANSLATIONS["English"].update({
 })
 
 TRANSLATIONS["繁體中文"].update({
-    "global_market_indicator": "台灣股市走勢狀況",
+    "global_market_indicator": "台灣市場指標",
     "global_market_copy": "這是配合目前趨勢鏡頭的跨市場參考層。先看美國與台灣主要指數現在是同步偏多、分歧，還是整體承壓，再深入研究個股會更有脈絡。",
     "global_market_window": "目前視窗",
     "global_market_last": "最新價格",
@@ -13288,13 +13325,10 @@ def render_tomorrow_momentum_pulse(market_scope: str) -> None:
     Called from generate_dashboard right after the Hero Bar (and only when
     dashboard_mode == "General Market" — see v1.9.4).
 
-    v1.9.6: The outer `try/except Exception: return` was removed because
-    it was masking a `NameError: math` bug that prevented the block from
-    rendering at all. The inner per-fetch try/except blocks already
-    handle yfinance / TWSE failures gracefully, and the builder helpers
-    tolerate None inputs and degrade to a "資料準備中" placeholder.
-    Letting real bugs surface in Streamlit's error UI is preferable to
-    silent disappearance.
+    v1.9.6: Removed silent outer try/except that masked NameError.
+    v1.9.7: Now also chains into render_tsmc_supply_chain_top5_recommendations
+    when scope is Taiwan and the verdict is ready — the recommendation
+    block adapts its picks to the regime computed here.
     """
     scope = _normalize_market_scope(market_scope)
     lang_zh = _news_briefing_is_zh()
@@ -13325,6 +13359,779 @@ def render_tomorrow_momentum_pulse(market_scope: str) -> None:
 
     _ensure_tomorrow_momentum_css()
     html = _render_tomorrow_momentum_pulse_html(payload, lang_zh=lang_zh)
+    if html:
+        render_html_block(html)
+
+    # v1.9.7: Chain into the TSMC supply-chain Top-5 recommendations.
+    # Only for Taiwan scope — U.S. scope doesn't have a TSMC supply chain.
+    # The recommender reads the verdict_key ("strong" / "neutral" / "weak")
+    # to pick the right scoring formula.
+    if scope == "Taiwan only":
+        render_tsmc_supply_chain_top5_recommendations(
+            verdict_key=payload.get("verdict_key", "neutral"),
+            score=payload.get("score", 50.0),
+            lang_zh=lang_zh,
+        )
+
+
+# ============================================================================
+# v1.9.7  TSMC Supply Chain Top 5 — momentum-regime-aware recommendations
+# ============================================================================
+# Extends the Tomorrow Momentum Pulse with concrete picks from your curated
+# TSMC supply-chain pool. Three regimes, three scoring formulas, one universe.
+#
+#   🟢 Strong  → 高 Beta 攻擊型 5 檔
+#   🟡 Neutral → 均衡品質 5 檔
+#   🔴 Weak    → 低波動防守 5 檔 + 倒金字塔限價建議
+#
+# Universe: union of mtk + abf + memory + packaging-test catalogs (~50 tickers).
+# Excludes low-orbit + robotics — those aren't TSMC plays.
+
+TSMC_SUPPLY_CHAIN_REGIME_GROUPS = ["mtk", "abf", "memory", "packaging-test"]
+
+# Inverted-pyramid limit-price ladder for the weak regime. Three tranches
+# spread out below the latest close — buyer captures average price below
+# the close if all fill, or partially if the dip stops early.
+TSMC_REGIME_LIMIT_LADDER = [
+    {"tranche": 1, "size_pct": 50, "discount_pct": -1.0},
+    {"tranche": 2, "size_pct": 30, "discount_pct": -3.0},
+    {"tranche": 3, "size_pct": 20, "discount_pct": -5.0},
+]
+
+
+def _tsmc_regime_resolve_universe() -> list[dict]:
+    """Flatten the 4 TSMC-related catalogs into a deduplicated list of
+    {ticker, name, code, group, parent_group}. Each ticker keeps its
+    parent_group ("mtk"/"abf"/...) so we can show provenance in the UI."""
+    universe: list[dict] = []
+    seen: set[str] = set()
+    catalog_map = {
+        "mtk": MTK_SUPPLY_CHAIN_CATALOG,
+        "abf": ABF_SUPPLY_CHAIN_CATALOG,
+        "memory": MEMORY_SUPPLY_CHAIN_CATALOG,
+        "packaging-test": PACKAGING_TEST_SUPPLY_CHAIN_CATALOG,
+    }
+    for parent_key in TSMC_SUPPLY_CHAIN_REGIME_GROUPS:
+        catalog = catalog_map.get(parent_key, [])
+        for item in catalog:
+            ticker = normalize_dashboard_ticker(item.get("ticker", ""))
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            universe.append({
+                "ticker": ticker,
+                "name": item.get("name", ""),
+                "code": item.get("code", ticker_base_code(ticker)),
+                "group": item.get("group", ""),
+                "parent_group": parent_key,
+            })
+    return universe
+
+
+def _tsmc_regime_compute_stats(daily_data, ticker: str, taiex_returns: pd.Series | None) -> dict | None:
+    """Compute the 8 per-ticker stats used by all three scoring formulas.
+
+    Returns None when there isn't enough history (< 25 trading days). The
+    caller drops these tickers from the candidate pool — better to show
+    fewer, well-supported picks than rank against thin data.
+    """
+    close, volume = _momentum_extract_close_volume(daily_data, ticker)
+    if close is None or len(close) < 25:
+        return None
+
+    try:
+        latest = float(close.iloc[-1])
+    except Exception:
+        return None
+    if not math.isfinite(latest) or latest <= 0:
+        return None
+
+    # Daily return series (for vol + beta + alpha)
+    returns = close.pct_change().dropna()
+    if len(returns) < 20:
+        return None
+
+    # Simple period returns
+    r1d = _momentum_pct(close.iloc[-1], close.iloc[-2]) if len(close) >= 2 else None
+    r5d = _momentum_pct(close.iloc[-1], close.iloc[-6]) if len(close) >= 6 else None
+    r20d = _momentum_pct(close.iloc[-1], close.iloc[-21]) if len(close) >= 21 else None
+
+    # Volume ratio (vs trailing 20d mean, excluding latest day)
+    vol_ratio = None
+    if volume is not None and len(volume) >= 21:
+        latest_v = float(volume.iloc[-1])
+        avg20_v = float(volume.iloc[-21:-1].mean())
+        if avg20_v > 0:
+            vol_ratio = latest_v / avg20_v
+
+    # 20-day annualized realized vol (in %)
+    realized_vol_20d = float(returns.tail(20).std() * math.sqrt(252) * 100)
+
+    # Drawdown vs 20d high
+    high20 = float(close.tail(20).max())
+    drawdown = ((latest - high20) / high20 * 100) if high20 > 0 else 0.0
+
+    # Beta + alpha vs TAIEX (60-day)
+    beta_60d = None
+    taiex_alpha_20d = None
+    if taiex_returns is not None and len(taiex_returns) >= 60 and len(returns) >= 60:
+        # Align by index — drop any rows with NaN on either side
+        joined = pd.concat([returns.tail(60), taiex_returns.tail(60)], axis=1).dropna()
+        if len(joined) >= 30:
+            stock_r = joined.iloc[:, 0]
+            mkt_r = joined.iloc[:, 1]
+            mkt_var = float(mkt_r.var())
+            if mkt_var > 0:
+                cov = float(((stock_r - stock_r.mean()) * (mkt_r - mkt_r.mean())).mean())
+                beta_60d = cov / mkt_var
+
+        # 20-day alpha vs TAIEX (excess cumulative return)
+        joined20 = pd.concat([returns.tail(20), taiex_returns.tail(20)], axis=1).dropna()
+        if len(joined20) >= 10:
+            stock_cum = float((1 + joined20.iloc[:, 0]).prod() - 1) * 100
+            mkt_cum = float((1 + joined20.iloc[:, 1]).prod() - 1) * 100
+            taiex_alpha_20d = stock_cum - mkt_cum
+
+    return {
+        "ticker": ticker,
+        "latest": latest,
+        "r1d": r1d,
+        "r5d": r5d,
+        "r20d": r20d,
+        "vol_ratio": vol_ratio,
+        "realized_vol_20d": realized_vol_20d,
+        "beta_60d": beta_60d,
+        "drawdown": drawdown,
+        "taiex_alpha_20d": taiex_alpha_20d,
+    }
+
+
+def _tsmc_regime_score_strong(stat: dict) -> tuple[float, list[str]]:
+    """攻擊型 score: 5d momentum + beta + volume expansion + intraday bid.
+    Returns (score 0-100, list of 1-2 line interpretation strings)."""
+    score = 0.0
+    notes: list[str] = []
+
+    # 1. r5d (35 pts): mapped [-3%, +8%] → [0, 35]
+    r5d = stat.get("r5d") or 0.0
+    s_r5d = max(0.0, min(35.0, (r5d + 3) / 11 * 35))
+    score += s_r5d
+    if r5d >= 5:
+        notes.append(f"5日續強 {r5d:+.1f}%")
+    elif r5d >= 2:
+        notes.append(f"5日轉強 {r5d:+.1f}%")
+    elif r5d > 0:
+        notes.append(f"5日小漲 {r5d:+.1f}%")
+
+    # 2. Beta (25 pts): higher beta = more torque on rallies
+    beta = stat.get("beta_60d")
+    if beta is None:
+        s_beta = 0.0
+    elif beta >= 1.3:
+        s_beta = 25.0
+        notes.append(f"高Beta {beta:.2f}")
+    elif beta >= 1.0:
+        s_beta = 17.0
+        notes.append(f"Beta {beta:.2f}")
+    elif beta >= 0.7:
+        s_beta = 8.0
+        notes.append(f"Beta {beta:.2f} 偏低")
+    else:
+        s_beta = 0.0
+        notes.append(f"Beta {beta:.2f} 防禦型")
+    score += s_beta
+
+    # 3. Volume expansion (20 pts): ≥1.5x = full points
+    vr = stat.get("vol_ratio")
+    if vr is None:
+        s_vol = 0.0
+    elif vr >= 1.5:
+        s_vol = 20.0
+        notes.append(f"放量 {vr:.2f}x")
+    elif vr >= 1.2:
+        s_vol = 13.0
+    elif vr >= 0.9:
+        s_vol = 5.0
+    else:
+        s_vol = 0.0
+    score += s_vol
+
+    # 4. r1d (20 pts): mapped [-2%, +4%] → [0, 20]
+    r1d = stat.get("r1d") or 0.0
+    s_r1d = max(0.0, min(20.0, (r1d + 2) / 6 * 20))
+    score += s_r1d
+    if r1d >= 2:
+        notes.append(f"當日強漲 {r1d:+.1f}%")
+
+    # Penalty: 20d已漲超過25%(過熱風險)
+    r20d = stat.get("r20d")
+    if r20d is not None and r20d > 25:
+        score -= 20
+        notes.append(f"⚠️ 20日漲幅 {r20d:+.0f}% 偏熱")
+
+    return max(0.0, min(100.0, score)), notes[:3]
+
+
+def _tsmc_regime_score_neutral(stat: dict) -> tuple[float, list[str]]:
+    """均衡型 score: 接近 5dMA + 中等波動 + 適中動能 + 量能正常."""
+    score = 0.0
+    notes: list[str] = []
+
+    # 1. 5d return is moderate (not too hot, not too cold) — 30 pts
+    r5d = stat.get("r5d") or 0.0
+    if -3 <= r5d <= 3:
+        s_r5d = 30.0
+        notes.append(f"5日溫和 {r5d:+.1f}%")
+    elif -5 <= r5d <= 5:
+        s_r5d = 20.0
+    elif -8 <= r5d <= 8:
+        s_r5d = 10.0
+    else:
+        s_r5d = 0.0
+        notes.append(f"5日波動大 {r5d:+.1f}%")
+    score += s_r5d
+
+    # 2. Realized vol in healthy range 15-30% — 25 pts
+    rv = stat.get("realized_vol_20d") or 0.0
+    if 15 <= rv <= 30:
+        s_rv = 25.0
+        notes.append(f"波動度 {rv:.0f}% 健康")
+    elif 12 <= rv <= 35:
+        s_rv = 15.0
+    elif rv < 12:
+        s_rv = 8.0
+        notes.append(f"波動度 {rv:.0f}% 偏低")
+    else:
+        s_rv = 5.0
+        notes.append(f"波動度 {rv:.0f}% 偏高")
+    score += s_rv
+
+    # 3. Volume in normal range 0.7-1.5 — 25 pts (extreme = penalty)
+    vr = stat.get("vol_ratio")
+    if vr is None:
+        s_vol = 0.0
+    elif 0.7 <= vr <= 1.5:
+        s_vol = 25.0
+    elif 0.5 <= vr <= 2.0:
+        s_vol = 12.0
+    else:
+        s_vol = 0.0
+    score += s_vol
+    if vr is not None:
+        notes.append(f"量能 {vr:.2f}x")
+
+    # 4. Quality proxy: positive 20d alpha vs TAIEX — 20 pts
+    alpha = stat.get("taiex_alpha_20d")
+    if alpha is None:
+        s_q = 10.0  # neutral default
+    elif alpha >= 5:
+        s_q = 20.0
+        notes.append(f"超越大盤 {alpha:+.1f}%")
+    elif alpha >= 0:
+        s_q = 14.0
+    elif alpha >= -5:
+        s_q = 7.0
+    else:
+        s_q = 0.0
+    score += s_q
+
+    return max(0.0, min(100.0, score)), notes[:3]
+
+
+def _tsmc_regime_score_defensive(stat: dict) -> tuple[float, list[str]]:
+    """防守型 score: 低波動 + 低回撤 + 低 Beta + 量能穩定 + 相對 alpha."""
+    score = 0.0
+    notes: list[str] = []
+
+    # 1. Low realized vol — 30 pts
+    rv = stat.get("realized_vol_20d") or 100.0
+    if rv < 15:
+        s_rv = 30.0
+        notes.append(f"低波動 {rv:.0f}%")
+    elif rv < 22:
+        s_rv = 22.0
+        notes.append(f"波動度 {rv:.0f}%")
+    elif rv < 30:
+        s_rv = 12.0
+    elif rv < 40:
+        s_rv = 5.0
+    else:
+        s_rv = 0.0
+        notes.append(f"波動度 {rv:.0f}% 偏高")
+    score += s_rv
+
+    # 2. Small drawdown (close to 20d high) — 25 pts
+    dd = stat.get("drawdown") or -100.0
+    if dd >= -2:
+        s_dd = 25.0
+        notes.append(f"接近20日高 ({dd:+.1f}%)")
+    elif dd >= -5:
+        s_dd = 18.0
+    elif dd >= -10:
+        s_dd = 8.0
+    elif dd >= -15:
+        s_dd = 3.0
+    else:
+        s_dd = 0.0
+        notes.append(f"回測 {dd:+.1f}%")
+    score += s_dd
+
+    # 3. Low beta — 25 pts
+    beta = stat.get("beta_60d")
+    if beta is None:
+        s_b = 0.0
+    elif beta < 0.7:
+        s_b = 25.0
+        notes.append(f"低Beta {beta:.2f}")
+    elif beta < 1.0:
+        s_b = 17.0
+    elif beta < 1.3:
+        s_b = 8.0
+    else:
+        s_b = 0.0
+    score += s_b
+
+    # 4. Volume stability (20 pts): closer to 1.0 = better
+    vr = stat.get("vol_ratio")
+    if vr is None:
+        s_vol = 0.0
+    elif 0.8 <= vr <= 1.3:
+        s_vol = 20.0
+    elif 0.6 <= vr <= 1.6:
+        s_vol = 10.0
+    else:
+        s_vol = 0.0
+    score += s_vol
+
+    # Bonus: positive alpha vs TAIEX (relative strength) — up to +10
+    alpha = stat.get("taiex_alpha_20d") or 0.0
+    if alpha >= 3:
+        score += 10
+        notes.append(f"逆勢強 +{alpha:.1f}%")
+    elif alpha >= 0:
+        score += 5
+
+    return max(0.0, min(100.0, score)), notes[:3]
+
+
+def _tsmc_regime_build_limit_ladder(latest_price: float) -> list[dict]:
+    """Build the 3-tranche inverted-pyramid limit-price ladder for the
+    weak regime."""
+    ladder: list[dict] = []
+    for entry in TSMC_REGIME_LIMIT_LADDER:
+        limit_price = round(latest_price * (1 + entry["discount_pct"] / 100), 2)
+        ladder.append({
+            "tranche": entry["tranche"],
+            "size_pct": entry["size_pct"],
+            "discount_pct": entry["discount_pct"],
+            "limit_price": limit_price,
+        })
+    return ladder
+
+
+def build_tsmc_supply_chain_top5(verdict_key: str) -> dict:
+    """Compute the 5-stock recommendation list for the given regime.
+
+    Args:
+        verdict_key: "strong" | "neutral" | "weak" — from the momentum pulse
+
+    Returns dict shape:
+        {
+            "ready":      bool,
+            "regime":     str,                    # echoed verdict_key
+            "picks":      [
+                {ticker, name, code, group, parent_group, score, notes, stat,
+                 limit_ladder?: [{tranche, size_pct, discount_pct, limit_price}]}
+                ...
+            ],
+            "evaluated":  int,        # how many tickers had complete data
+            "skipped":    int,        # how many were dropped for thin history
+            "data_date":  str | None,
+        }
+
+    Resilient: missing tickers degrade silently. Empty pool returns ready=False.
+    """
+    universe = _tsmc_regime_resolve_universe()
+    if not universe:
+        return {"ready": False, "regime": verdict_key, "picks": [], "evaluated": 0, "skipped": 0}
+
+    # Single yfinance fetch for the whole universe + TAIEX (for beta/alpha)
+    fetch_tickers = [item["ticker"] for item in universe] + ["^TWII"]
+    try:
+        daily_data = fetch_daily_data(fetch_tickers, "6mo", "1d")
+    except Exception:
+        daily_data = None
+
+    if daily_data is None:
+        return {"ready": False, "regime": verdict_key, "picks": [], "evaluated": 0, "skipped": 0}
+
+    # Pre-compute TAIEX returns for beta/alpha
+    taiex_close, _ = _momentum_extract_close_volume(daily_data, "^TWII")
+    taiex_returns = taiex_close.pct_change().dropna() if taiex_close is not None else None
+
+    # Per-ticker stats
+    candidates: list[dict] = []
+    skipped = 0
+    data_date: str | None = None
+    for item in universe:
+        stat = _tsmc_regime_compute_stats(daily_data, item["ticker"], taiex_returns)
+        if stat is None:
+            skipped += 1
+            continue
+        candidates.append({**item, "stat": stat})
+        try:
+            close, _ = _momentum_extract_close_volume(daily_data, item["ticker"])
+            if close is not None and data_date is None:
+                data_date = close.index[-1].strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    if not candidates:
+        return {
+            "ready": False,
+            "regime": verdict_key,
+            "picks": [],
+            "evaluated": 0,
+            "skipped": skipped,
+            "data_date": data_date,
+        }
+
+    # Pick scorer based on regime
+    scorer = {
+        "strong":  _tsmc_regime_score_strong,
+        "neutral": _tsmc_regime_score_neutral,
+        "weak":    _tsmc_regime_score_defensive,
+    }.get(verdict_key, _tsmc_regime_score_neutral)
+
+    # Score every candidate
+    for c in candidates:
+        score, notes = scorer(c["stat"])
+        c["score"] = score
+        c["notes"] = notes
+
+    # Sort + take top 5
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    top5 = candidates[:5]
+
+    # For weak regime, attach limit ladder to each pick
+    if verdict_key == "weak":
+        for pick in top5:
+            latest = float(pick["stat"].get("latest") or 0.0)
+            if latest > 0:
+                pick["limit_ladder"] = _tsmc_regime_build_limit_ladder(latest)
+
+    return {
+        "ready": True,
+        "regime": verdict_key,
+        "picks": top5,
+        "evaluated": len(candidates),
+        "skipped": skipped,
+        "data_date": data_date,
+    }
+
+
+# Mapping from verdict_key → display strings + accent class
+_TSMC_REGIME_DISPLAY = {
+    "strong": {
+        "title_zh":    "🟢 強勢進場 · TSMC 供應鏈 5 大攻擊型",
+        "title_en":    "🟢 STRONG · TSMC Supply Chain Top 5 (Offensive)",
+        "subtitle_zh": "動能持續 — 高 Beta + 強動能 + 量能擴張 · 跟著主線跑",
+        "subtitle_en": "Momentum continues — high beta, strong 5d, volume expansion",
+        "css_class":   "tsmc-regime-strong",
+    },
+    "neutral": {
+        "title_zh":    "🟡 嘗試進場 · TSMC 供應鏈 5 大均衡型",
+        "title_en":    "🟡 NEUTRAL · TSMC Supply Chain Top 5 (Balanced)",
+        "subtitle_zh": "震盪盤整 — 中性動能 + 平穩波動 + 相對強勢 · 邊看邊走",
+        "subtitle_en": "Range-bound — moderate momentum, stable vol, relative strength",
+        "css_class":   "tsmc-regime-neutral",
+    },
+    "weak": {
+        "title_zh":    "🔴 休息觀察 · TSMC 供應鏈 5 大防守型(倒金字塔分批)",
+        "title_en":    "🔴 WEAK · TSMC Supply Chain Top 5 (Defensive · Inverted-Pyramid)",
+        "subtitle_zh": "資金進出偏弱 — 低波動 + 低回撤 + 低 Beta · 限價分批承接",
+        "subtitle_en": "Weak liquidity — low vol, small drawdown, low beta · ladder-in only",
+        "css_class":   "tsmc-regime-weak",
+    },
+}
+
+
+def _render_tsmc_top5_html(payload: dict, lang_zh: bool) -> str:
+    """Build the HTML for the TSMC supply-chain top-5 block."""
+    if not payload.get("ready") or not payload.get("picks"):
+        return ""
+
+    regime = payload.get("regime", "neutral")
+    cfg = _TSMC_REGIME_DISPLAY.get(regime, _TSMC_REGIME_DISPLAY["neutral"])
+    title = cfg["title_zh"] if lang_zh else cfg["title_en"]
+    subtitle = cfg["subtitle_zh"] if lang_zh else cfg["subtitle_en"]
+    css_class = cfg["css_class"]
+    data_date = payload.get("data_date") or ""
+
+    if lang_zh:
+        col_rank = "排名"
+        col_stock = "股票"
+        col_score = "評分"
+        col_signals = "關鍵訊號"
+        col_action = "建議"
+        col_ladder = "倒金字塔限價建議"
+        ladder_header_zh = "分批 · 部位 · 限價"
+        evaluated_msg = f"資料基準 {data_date} · 已評估 {payload.get('evaluated', 0)} 檔(略過 {payload.get('skipped', 0)} 檔資料不足)"
+    else:
+        col_rank = "#"
+        col_stock = "Stock"
+        col_score = "Score"
+        col_signals = "Signals"
+        col_action = "Action"
+        col_ladder = "Inverted-Pyramid Limit Ladder"
+        ladder_header_zh = "Tranche · Size · Limit"
+        evaluated_msg = f"As of {data_date} · evaluated {payload.get('evaluated', 0)} (skipped {payload.get('skipped', 0)})"
+
+    # Action verb varies by regime
+    if regime == "strong":
+        action_text_zh = "強勢追蹤"
+        action_text_en = "Track strength"
+        action_class = "tsmc-action-strong"
+    elif regime == "neutral":
+        action_text_zh = "輕倉嘗試"
+        action_text_en = "Light entry"
+        action_class = "tsmc-action-neutral"
+    else:
+        action_text_zh = "限價分批"
+        action_text_en = "Ladder-in"
+        action_class = "tsmc-action-weak"
+    action_text = action_text_zh if lang_zh else action_text_en
+
+    # Build rows
+    row_html_parts: list[str] = []
+    for idx, pick in enumerate(payload["picks"], start=1):
+        stat = pick.get("stat", {})
+        latest = stat.get("latest", 0.0)
+        notes = pick.get("notes") or []
+        notes_html = "".join(
+            f'<span class="tsmc-signal-chip">{escape(str(n))}</span>'
+            for n in notes
+        )
+        parent_label_map = {
+            "mtk": "MTK",
+            "abf": "ABF",
+            "memory": "Memory",
+            "packaging-test": "封測",
+        }
+        parent_label = parent_label_map.get(pick.get("parent_group", ""), pick.get("parent_group", ""))
+
+        # Limit ladder for weak regime
+        ladder_html = ""
+        if regime == "weak" and pick.get("limit_ladder"):
+            ladder_rows = "".join(
+                f'<div class="tsmc-ladder-row">'
+                f'  <span class="tsmc-ladder-tranche">L{l["tranche"]}</span>'
+                f'  <span class="tsmc-ladder-size">{l["size_pct"]}%</span>'
+                f'  <span class="tsmc-ladder-discount">{l["discount_pct"]:+.1f}%</span>'
+                f'  <span class="tsmc-ladder-price">{l["limit_price"]:.2f}</span>'
+                f'</div>'
+                for l in pick["limit_ladder"]
+            )
+            ladder_html = (
+                f'<div class="tsmc-ladder">'
+                f'  <div class="tsmc-ladder-head">{escape(ladder_header_zh)}</div>'
+                f'  {ladder_rows}'
+                f'</div>'
+            )
+
+        row_html_parts.append(
+            f'<div class="tsmc-row">'
+            f'  <div class="tsmc-cell-rank">#{idx}</div>'
+            f'  <div class="tsmc-cell-stock">'
+            f'    <div class="tsmc-stock-name">{escape(str(pick.get("name", "")))}</div>'
+            f'    <div class="tsmc-stock-meta">'
+            f'      <span class="tsmc-stock-code">{escape(str(pick.get("code", "")))} · {escape(str(pick["ticker"]))}</span>'
+            f'      <span class="tsmc-stock-parent">{escape(str(parent_label))}</span>'
+            f'    </div>'
+            f'    <div class="tsmc-stock-price">收 {latest:.2f}</div>'
+            f'  </div>'
+            f'  <div class="tsmc-cell-score">'
+            f'    <div class="tsmc-score-num">{pick.get("score", 0):.0f}</div>'
+            f'    <div class="tsmc-score-bar"><div class="tsmc-score-bar-fill" style="width:{min(100.0, pick.get("score", 0)):.0f}%"></div></div>'
+            f'  </div>'
+            f'  <div class="tsmc-cell-signals">{notes_html}</div>'
+            f'  <div class="tsmc-cell-action">'
+            f'    <span class="tsmc-action-pill {action_class}">{escape(action_text)}</span>'
+            f'    {ladder_html}'
+            f'  </div>'
+            f'</div>'
+        )
+
+    rows_block = "".join(row_html_parts)
+
+    return textwrap.dedent(
+        f"""
+        <div class="tsmc-top5-shell {escape(css_class)}">
+            <div class="tsmc-top5-head">
+                <div class="tsmc-top5-title">{escape(title)}</div>
+                <div class="tsmc-top5-subtitle">{escape(subtitle)}</div>
+            </div>
+            <div class="tsmc-top5-table">
+                <div class="tsmc-row tsmc-row-header">
+                    <div class="tsmc-cell-rank">{escape(col_rank)}</div>
+                    <div class="tsmc-cell-stock">{escape(col_stock)}</div>
+                    <div class="tsmc-cell-score">{escape(col_score)}</div>
+                    <div class="tsmc-cell-signals">{escape(col_signals)}</div>
+                    <div class="tsmc-cell-action">{escape(col_action)}</div>
+                </div>
+                {rows_block}
+            </div>
+            <div class="tsmc-top5-foot">{escape(evaluated_msg)}</div>
+        </div>
+        """
+    ).strip()
+
+
+_TSMC_TOP5_CSS = """
+<style>
+.tsmc-top5-shell {
+    background: linear-gradient(180deg, rgba(20, 26, 45, 0.92), rgba(14, 18, 32, 0.92));
+    border: 1px solid rgba(96, 110, 145, 0.35);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin: 0 0 14px 0;
+    color: #e9ecf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
+                 "Microsoft JhengHei", sans-serif;
+}
+.tsmc-regime-strong { border-color: rgba(94, 198, 137, 0.45); }
+.tsmc-regime-neutral { border-color: rgba(230, 195, 95, 0.45); }
+.tsmc-regime-weak { border-color: rgba(232, 110, 120, 0.45); }
+.tsmc-top5-head { margin-bottom: 10px; }
+.tsmc-top5-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f4f6fb;
+}
+.tsmc-top5-subtitle {
+    font-size: 12.5px;
+    color: #98a2b8;
+    margin-top: 3px;
+    line-height: 1.4;
+}
+.tsmc-top5-table {
+    background: rgba(8, 11, 22, 0.5);
+    border-radius: 10px;
+    border: 1px solid rgba(96, 110, 145, 0.18);
+    overflow: hidden;
+}
+.tsmc-row {
+    display: grid;
+    grid-template-columns: 50px minmax(170px, 1.6fr) minmax(120px, 0.9fr) minmax(220px, 1.6fr) minmax(180px, 1.4fr);
+    gap: 12px;
+    padding: 10px 14px;
+    align-items: center;
+    border-bottom: 1px solid rgba(96, 110, 145, 0.12);
+    font-size: 13px;
+}
+.tsmc-row:last-child { border-bottom: none; }
+.tsmc-row-header {
+    background: rgba(35, 44, 70, 0.55);
+    font-weight: 600;
+    color: #b8c0d4;
+    font-size: 11.5px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.tsmc-cell-rank { font-weight: 700; color: #f4d68a; font-size: 14px; }
+.tsmc-stock-name { font-weight: 700; color: #f4f6fb; font-size: 14px; }
+.tsmc-stock-meta { display: flex; gap: 8px; align-items: center; margin-top: 2px; font-size: 11.5px; color: #98a2b8; }
+.tsmc-stock-parent {
+    background: rgba(96, 110, 145, 0.25);
+    color: #c2c8d8;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+.tsmc-stock-price { font-size: 12px; color: #a9b0c4; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.tsmc-cell-score { display: flex; flex-direction: column; gap: 4px; }
+.tsmc-score-num { font-weight: 700; color: #f9fafc; font-size: 18px; line-height: 1; font-variant-numeric: tabular-nums; }
+.tsmc-score-bar { height: 5px; background: rgba(96, 110, 145, 0.25); border-radius: 3px; overflow: hidden; }
+.tsmc-score-bar-fill { height: 100%; background: linear-gradient(90deg, #5b8def, #4cd0a8); border-radius: 3px; }
+.tsmc-regime-strong .tsmc-score-bar-fill { background: linear-gradient(90deg, #4cd0a8, #6fd99a); }
+.tsmc-regime-weak .tsmc-score-bar-fill { background: linear-gradient(90deg, #d96670, #f08894); }
+.tsmc-regime-neutral .tsmc-score-bar-fill { background: linear-gradient(90deg, #e6c35f, #f4d68a); }
+.tsmc-cell-signals { display: flex; flex-wrap: wrap; gap: 5px; }
+.tsmc-signal-chip {
+    background: rgba(96, 110, 145, 0.22);
+    color: #d8dde9;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.5;
+}
+.tsmc-cell-action { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.tsmc-action-pill {
+    padding: 4px 11px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+.tsmc-action-strong { background: rgba(76, 208, 168, 0.22); color: #8be8b1; border: 1px solid rgba(94, 198, 137, 0.5); }
+.tsmc-action-neutral { background: rgba(230, 195, 95, 0.22); color: #f4d68a; border: 1px solid rgba(230, 195, 95, 0.5); }
+.tsmc-action-weak { background: rgba(217, 102, 112, 0.22); color: #f4a3aa; border: 1px solid rgba(232, 110, 120, 0.5); }
+.tsmc-ladder { width: 100%; margin-top: 4px; font-size: 11.5px; }
+.tsmc-ladder-head { color: #98a2b8; font-weight: 600; font-size: 10.5px; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 3px; }
+.tsmc-ladder-row {
+    display: grid;
+    grid-template-columns: 22px 38px 50px 1fr;
+    gap: 6px;
+    padding: 2px 0;
+    align-items: center;
+    color: #c2c8d8;
+    font-variant-numeric: tabular-nums;
+}
+.tsmc-ladder-tranche { color: #f4a3aa; font-weight: 700; font-size: 11px; }
+.tsmc-ladder-size { color: #d8dde9; }
+.tsmc-ladder-discount { color: #d96670; font-weight: 600; }
+.tsmc-ladder-price { color: #f4f6fb; font-weight: 700; text-align: right; }
+.tsmc-top5-foot { margin-top: 8px; padding: 0 4px; font-size: 11px; color: #7a8499; font-style: italic; }
+.tsmc-row-header .tsmc-cell-rank,
+.tsmc-row-header .tsmc-cell-stock,
+.tsmc-row-header .tsmc-cell-score,
+.tsmc-row-header .tsmc-cell-signals,
+.tsmc-row-header .tsmc-cell-action { color: #b8c0d4; }
+@media (max-width: 900px) {
+    .tsmc-row {
+        grid-template-columns: 36px 1fr;
+        grid-template-rows: auto auto auto;
+    }
+    .tsmc-cell-score, .tsmc-cell-signals, .tsmc-cell-action {
+        grid-column: 1 / -1;
+    }
+    .tsmc-cell-score { flex-direction: row; align-items: center; gap: 10px; }
+    .tsmc-score-bar { flex: 1; }
+}
+</style>
+"""
+
+
+def _ensure_tsmc_top5_css():
+    """Inject the TSMC top5 CSS once per session."""
+    if not st.session_state.get("_tsmc_top5_css_injected"):
+        render_html_block(_TSMC_TOP5_CSS)
+        st.session_state["_tsmc_top5_css_injected"] = True
+
+
+def render_tsmc_supply_chain_top5_recommendations(
+    verdict_key: str,
+    score: float,
+    lang_zh: bool,
+) -> None:
+    """Top-level entry. Called from render_tomorrow_momentum_pulse after
+    the pulse table has rendered. Hidden when payload not ready."""
+    payload = build_tsmc_supply_chain_top5(verdict_key)
+    if not payload.get("ready"):
+        return
+    _ensure_tsmc_top5_css()
+    html = _render_tsmc_top5_html(payload, lang_zh=lang_zh)
     if html:
         render_html_block(html)
 
