@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.1
+Version : v1.10.3
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,68 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.3 (2026-05-09)  [v1.10.2 follow-up — call _cockpit_inject_css for radar styling]
+  - User reported the v1.10.2 U.S. Theme Radar rendered as plain
+    stacked text (no grid layout, no card backgrounds, no chips —
+    just default-styled HTML with blue underlined links). Same visual
+    breakage as v1.10.1 fixed for Tomorrow Momentum Pulse, but in a
+    different place.
+  - Root cause: the cockpit-specific CSS (`.cockpit-shell`,
+    `.us-radar-grid`, `.us-radar-card`, `.us-theme-pulse-banner`,
+    `.us-radar-mini-chip`, etc. — defined in _cockpit_inject_css at
+    line 30320) was ONLY ever injected by render_decision_cockpit().
+    When v1.9.6 stopped calling render_decision_cockpit, this CSS
+    injector lost its only caller, and the radar HTML now renders
+    without its supporting styles.
+  - Fix: explicitly call _cockpit_inject_css() at the start of
+    render_us_theme_radar_standalone() — the function is already
+    correctly written without a session_state guard (its docstring
+    even references the same v1.3.8 lesson we relearned in v1.10.1),
+    so calling it every render is safe.
+  - This is the third member of the same "global vs local CSS
+    injection" pattern lesson:
+      v1.10.1 — local CSS guards (Tomorrow Momentum + TSMC Top5 + AI Analysis)
+      v1.10.2 — restored radar HTML composition (but missed the CSS dep)
+      v1.10.3 — restored radar's CSS injector
+    Whenever extracting a sub-block out of a parent renderer, audit
+    BOTH the HTML AND the CSS-injection it depended on.
+
+v1.10.2 (2026-05-09)  [Restore U.S. Theme Radar — collateral damage from v1.9.6]
+  - User reported the U.S. Theme Radar (MAG 7 / Oil Equities / 5-theme
+    grid with click-to-Workspace) was missing from the U.S. main
+    dashboard. The v1.10.1 routing fix put U.S. + Beginner back to
+    the standard layout, but the radar itself never lived in the
+    standard layout — it lived inside the Decision Cockpit's "is_us_only"
+    branch, which got removed when v1.9.6 stripped the cockpit per
+    user request "今天的市場決策主線整個可以刪掉或移除".
+  - Fix: extract the existing radar composition pattern (still alive
+    as dead code at line ~34380 inside render_decision_cockpit) into
+    a standalone function render_us_theme_radar_standalone() that
+    can be called independently of the cockpit. Then call it from
+    render_tomorrow_momentum_pulse() when scope == U.S. only.
+  - Reuses every helper that's still in the file (untouched since v1.8.7):
+      build_us_theme_radar             — 5-theme + leaders
+      build_us_theme_catalysts_safe    — per-theme catalyst chips
+      build_us_ticker_catalysts_safe   — per-ticker catalyst chips (AI 5/EPS 2)
+      build_us_theme_catalyst_aggregate — banner aggregate
+      _us_theme_pulse_banner_html      — top banner
+      _us_radar_compare_queue_html     — compare queue strip
+      _cockpit_render_us_theme_radar_html — main grid
+      _cockpit_minify_html             — strip whitespace
+    Plus the existing snapshot accelerator (load_main_dashboard_snapshot)
+    and the URL consumers (_consume_us_radar_jump_query / _clear_query)
+    that already run unchanged in generate_dashboard.
+  - The click-to-Workspace flow (user clicks ticker → query param
+    ?radar_jump=NVDA → consumer routes them to NVDA workspace) is
+    untouched. Same for the smart-routing compare queue (1 click =
+    Workspace, 2+ clicks = Compare with cap=6, persisted in URL via
+    radar_picks param).
+  - Page order on U.S. main dashboard is now:
+      Hero Bar → 📊 Tomorrow Momentum Pulse → 🌟 U.S. Theme Radar
+      → 📅 Snapshot freshness → 🌍 Taiwan Market Indicator
+      → standard mode body
+  - Taiwan main dashboard unaffected (Theme Radar is U.S.-only).
 
 v1.10.1 (2026-05-09)  [Two regression fixes — CSS persistence + U.S. Beginner routing]
   - BUG 1 — Tomorrow Momentum Pulse loses styling on rerun (e.g. when
@@ -13505,6 +13567,143 @@ def render_tomorrow_momentum_pulse(market_scope: str) -> None:
             score=payload.get("score", 50.0),
             lang_zh=lang_zh,
         )
+
+    # v1.10.2: Restore the U.S. Theme Radar (MAG 7 / Oil Equities / etc.)
+    # for U.S. scope. This block was originally inside render_decision_cockpit
+    # and got dropped together with the cockpit in v1.9.6. Reusing all the
+    # existing helpers — see render_us_theme_radar_standalone() below.
+    if scope == "U.S. only":
+        render_us_theme_radar_standalone(lang_zh=lang_zh)
+
+
+def render_us_theme_radar_standalone(*, lang_zh: bool) -> None:
+    """Render the U.S. Theme Radar (5-theme grid: MAG 7, AI Infra, Oil
+    Equities, Financials, Software) below the Tomorrow Momentum Pulse on
+    the U.S. main dashboard.
+
+    Composition is identical to the original cockpit-embedded version
+    (lines ~34380-34454 inside render_decision_cockpit), just lifted out
+    so it can render without a cockpit shell. Reuses every helper:
+
+      build_us_theme_radar              — 5 themes + leaders
+      build_us_theme_catalysts_safe     — per-theme catalyst chips
+      build_us_ticker_catalysts_safe    — per-ticker catalyst chips
+      build_us_theme_catalyst_aggregate — banner aggregate
+      _us_theme_pulse_banner_html       — top banner
+      _us_radar_compare_queue_html      — compare queue strip
+      _cockpit_render_us_theme_radar_html — main grid
+      _cockpit_minify_html              — strip whitespace
+
+    The URL consumers (_consume_us_radar_jump_query / _clear_query) run
+    earlier in generate_dashboard so the click-to-Workspace flow is
+    already wired — we don't need to call them here.
+
+    The snapshot accelerator (load_main_dashboard_snapshot) lets cold
+    page loads paint the radar in <500ms when the prefetched payload
+    has us_theme_radar / us_theme_catalysts / us_ticker_catalysts.
+
+    v1.10.3: Must call _cockpit_inject_css() because the radar's CSS
+    classes (.cockpit-shell, .us-radar-*, .us-theme-pulse-banner,
+    .us-radar-mini-chip, etc.) live in that injector, which previously
+    only ran inside render_decision_cockpit(). Without this, the HTML
+    structure renders but with no styling — divs become plain blocks,
+    chips disappear, and clickable tickers show as default blue links.
+    """
+    # v1.10.3: Inject cockpit + radar CSS. Safe to call every render —
+    # the function explicitly avoids a session_state guard (see its
+    # docstring) so multiple rerenders don't cause missing styles.
+    _cockpit_inject_css()
+
+    # 1. Try to read the prefetched snapshot for fast first-paint.
+    try:
+        snapshot_row = load_main_dashboard_snapshot("U.S. only")
+    except Exception:
+        snapshot_row = None
+    snapshot_q3 = (snapshot_row or {}).get("cockpit_q3_payload") if snapshot_row else None
+
+    # 2. Try to fetch the daily/intraday data needed by the radar.
+    # build_us_theme_radar will auto-fetch internally via its auto_fetch=True
+    # default, but pre-fetching here lets us skip the live fetch when the
+    # snapshot already covers us.
+    snapshot_us_radar = None
+    snapshot_us_theme_catalysts = None
+    snapshot_us_ticker_catalysts = None
+    if isinstance(snapshot_q3, dict):
+        snapshot_us_radar = snapshot_q3.get("us_theme_radar")
+        snapshot_us_theme_catalysts = snapshot_q3.get("us_theme_catalysts")
+        snapshot_us_ticker_catalysts = snapshot_q3.get("us_ticker_catalysts")
+
+    if snapshot_us_radar:
+        us_radar = snapshot_us_radar
+    else:
+        # Live build — pulls daily/intraday for US theme universe.
+        try:
+            us_radar = build_us_theme_radar(None, None, lang_zh=lang_zh)
+        except Exception:
+            us_radar = []
+
+    if isinstance(snapshot_us_theme_catalysts, dict) and snapshot_us_theme_catalysts:
+        theme_catalysts = snapshot_us_theme_catalysts
+    else:
+        try:
+            theme_catalysts = build_us_theme_catalysts_safe(timeout_sec=4.5)
+        except Exception:
+            theme_catalysts = {}
+
+    if isinstance(snapshot_us_ticker_catalysts, dict) and snapshot_us_ticker_catalysts:
+        ticker_catalysts = snapshot_us_ticker_catalysts
+    else:
+        try:
+            ticker_catalysts = build_us_ticker_catalysts_safe(timeout_sec=4.5)
+        except Exception:
+            ticker_catalysts = {}
+
+    pulse_aggregate = build_us_theme_catalyst_aggregate(theme_catalysts)
+
+    # 3. If the radar came back empty, render nothing — better than a
+    # confusing skeleton.
+    if not us_radar:
+        return
+
+    # 4. Compose the same shell the cockpit used (reusing existing
+    # cockpit-shell CSS, which is loaded globally via inject_css()).
+    title_text = "美股主題雷達" if lang_zh else "U.S. Theme Radar"
+    sub_text = (
+        "5 個主題的所有個股 — 依今日漲跌幅排序，強弱一覽。徽章顯示該主題上漲 / 總檔數。"
+        "點第 1 檔即進入該股工作台；點第 2 檔起自動切換為比較模式。"
+        if lang_zh else
+        "All tickers in 5 themes, sorted by today's % move. Badge shows rising / total count. "
+        "Click 1 ticker to open its workspace; click a 2nd ticker to auto-switch to compare mode."
+    )
+    disclaimer_text = (
+        "資料來源：yfinance 公開行情；漲幅為今日相對前日收盤。催化劑訊號來自個股新聞分類聚合，僅供研究參考，非投資建議。"
+        if lang_zh else
+        "Source: yfinance public quotes. % move = today vs prior close. Catalyst signals aggregate per-ticker news classification. For research only; not investment advice."
+    )
+    pulse_banner_html = _us_theme_pulse_banner_html(pulse_aggregate, lang_zh)
+    compare_queue_html = _us_radar_compare_queue_html(
+        list(st.session_state.get("_us_radar_picks", []) or []),
+        lang_zh=lang_zh,
+    )
+    radar_html = _cockpit_render_us_theme_radar_html(
+        us_radar,
+        lang_zh,
+        theme_catalysts=theme_catalysts,
+        ticker_catalysts=ticker_catalysts,
+    )
+    shell_html = (
+        f'<div class="cockpit-shell">'
+        f'  <div class="cockpit-kicker"><span class="cockpit-kicker-dot"></span>'
+        f'      {escape("US THEME RADAR" if not lang_zh else "美股主題雷達")}</div>'
+        f'  <div class="cockpit-title">{escape(title_text)}</div>'
+        f'  <div class="cockpit-sub">{escape(sub_text)}</div>'
+        f'  {pulse_banner_html}'
+        f'  {compare_queue_html}'
+        f'  {radar_html}'
+        f'  <div class="cockpit-disclaimer">{escape(disclaimer_text)}</div>'
+        f'</div>'
+    )
+    st.markdown(_cockpit_minify_html(shell_html), unsafe_allow_html=True)
 
 
 # ============================================================================
