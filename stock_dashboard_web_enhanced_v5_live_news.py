@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.9.7
+Version : v1.10.1
 Updated : 2026-05-09
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,129 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.1 (2026-05-09)  [Two regression fixes — CSS persistence + U.S. Beginner routing]
+  - BUG 1 — Tomorrow Momentum Pulse loses styling on rerun (e.g. when
+    user clicks Compare on U.S. dashboard). Root cause: my CSS injection
+    helpers used a `st.session_state["..._css_injected"]` guard to avoid
+    "redundant" injection. But Streamlit reruns the whole script on every
+    interaction and discards the previous DOM — so the guard meant the
+    second rerun emitted no <style> tag, and the page rendered as raw
+    stacked divs.
+    Fix: removed the guard from all three CSS injectors. CSS in <style>
+    tags is idempotent, so injecting every render is safe and correct.
+    Affects:
+      * _ensure_tomorrow_momentum_css (main file)
+      * _ensure_tsmc_top5_css        (main file)
+      * _ensure_ai_analysis_css      (ai_analysis_dashboard.py)
+
+  - BUG 2 — U.S. + Beginner level showed only Tomorrow Momentum Pulse
+    and nothing else, because v1.9.9 routed Beginner → AI Analysis
+    Dashboard regardless of scope. But the AI Analysis theses are all
+    Taiwan-specific (台股論點), so on U.S. scope the dashboard was
+    rendering pseudo-empty (cards with no relevant data) and the
+    user's Mag 7 + Categories layout was hidden behind the routing.
+    Fix: route Beginner → AI Analysis only on Taiwan scope; on U.S.
+    scope fall through to render_general_market_dashboard_layout
+    (which has the Mag 7 grid + Categories with click-to-Workspace).
+
+  - Routing matrix is now:
+      Taiwan + Beginner       → AI Analysis Share Dashboard (台股論點)
+      Taiwan + Other levels   → Standard layout
+      U.S. + Beginner         → Standard layout (Mag 7 + Categories) ✓ fixed
+      U.S. + Other levels     → Standard layout
+
+v1.10.0 (2026-05-09)  [Modular split — AI Analysis Dashboard moved to its own file]
+  - Per user request 2026-05-09: "請把這Dashboard 對立一個.py檔案,
+    這樣不會讓主檔案一直增加太長日後Debug會很難". Solid call — main
+    file was at 45,400+ lines and growing.
+  - The entire v1.9.9 AI Analysis block (~1,080 lines) extracted into
+    a sibling module `ai_analysis_dashboard.py`:
+      * Validation calculators (4): index_level, stock_trend,
+        support_zone, rally_pace
+      * compute_thesis_validation_score (aggregator)
+      * Trend persistence helpers (_record_thesis_score_today,
+        _thesis_trend_arrow)
+      * AI_ANALYSIS_THESES (manually-edited dataset)
+      * AI_ANALYSIS_SYNTHESIS (analyst's three-point summary)
+      * CSS module + injection guard
+      * Card / synthesis / tracker renderers
+      * Top-level entry render_ai_analysis_share_dashboard()
+  - Main file now imports the public surface:
+      from ai_analysis_dashboard import (
+          render_ai_analysis_share_dashboard,
+          AI_ANALYSIS_THESES,
+          AI_ANALYSIS_SYNTHESIS,
+          compute_thesis_validation_score,
+      )
+  - The dispatch in generate_dashboard() is unchanged — it still calls
+    render_ai_analysis_share_dashboard() when the user picks the
+    "🤖 AI 分析分享" experience level on General Market mode.
+  - The new module imports back from the main file the few helpers it
+    needs (fetch_daily_data, render_html_block, _momentum_extract_close_volume,
+    _momentum_pct, _news_briefing_is_zh) using a deferred import inside
+    each function to avoid circular-import issues at module load time.
+  - User edits to AI_ANALYSIS_THESES now happen in the small sibling
+    file (~1,080 lines, easy to scroll) instead of the giant main file.
+  - Net result on main file: ~1,080 lines DOWN, single import line UP.
+
+v1.9.9 (2026-05-09)  [AI Analysis Share Dashboard — replaces 新手 level]
+  - REPLACED user level "🌱 新手 / 先看大方向" with
+    "🤖 AI 分析分享 / 論點驗證". The internal session_state key
+    "beginner" is preserved (no breaking session migration), but the
+    button label, emoji, and tooltip are all rebranded.
+  - Selecting this level on General Market mode now routes to a brand
+    new Dashboard layout: render_ai_analysis_share_dashboard()
+    instead of the Standard / Advanced / Expert layouts. Other levels
+    (intermediate / advanced / expert) keep their existing behavior.
+  - The new Dashboard has THREE blocks:
+      1. 📋 AI 論點卡片 (cards grid)
+         Each card: title / 解說重點 / 風險 / claimed_probability /
+         current_validation % (live, computed daily)
+      2. 🧭 整體判斷 (synthesis paragraphs)
+         Free-form text panel with the analyst's three-point summary.
+      3. 📊 每日驗證表 (validation tracker — the core innovation)
+         Each thesis has 2-3 validation points. For each point we
+         compute a 0-100% "符合論點程度" score from live market data.
+         An aggregated thesis-level score + 7-day trend arrow tells
+         the user whether the market is converging toward (↑ green)
+         or diverging from (↓ red) the analyst's call.
+  - Validation point types supported:
+      "index_level"  — TAIEX守不守某個點位 (e.g. 41,000)
+      "stock_trend"  — 個股走勢符不符合描述 (e.g. 0056 漲幅是否仍像飆股)
+      "support_zone" — 支撐 / 壓力區是否仍有效 (e.g. 40,700 支撐)
+      "rally_pace"   — 漲速是否在合理區間 (avoids overheating)
+  - Theses are stored as a structured list `AI_ANALYSIS_THESES` near
+    the top of the file. User edits this list manually after watching
+    each video. Each entry: id / title / summary / cross_validation /
+    risk / claimed_probability / validation_points / issued_date /
+    horizon_date.
+  - First seeded set of theses transcribed from user's uploaded image
+    2026-05-09: 杜金龍520以盤代跌 / 0056變飆股 / 0056上車還下車 /
+    0050大型權值ETF / 台股主軸AI半導體 / 520後是否容易全面大跌.
+  - Validation history persisted in Streamlit cache (per-day snapshot)
+    so the 7-day trend arrow has data to draw from. Cold-start day 1
+    just shows current value with "資料累積中".
+
+v1.9.8 (2026-05-09)  [Branding + label updates]
+  - User-applied (already in uploaded base file, preserved here):
+      * Page title:   "David Lau Stock Market Vision"
+                    → "David Lau Designed AI Stock Market Vision"
+      * App name (zh): "David Lau 股票市場視野"
+                    → "David Lau Designed AI 股票市場視野"
+      * App name (en): "David Lau Stock Market Vision"
+                    → "David Lau Designed AI Stock Market Vision"
+      * Indicator label (zh):
+                      "全球市場指標" → "台灣市場指標"
+  - Added in v1.9.8 (this delivery):
+      * Indicator label (en):
+                      "Global Market Indicator" → "Taiwan Market Indicator"
+        For symmetry with the Chinese rename (per user 2026-05-09).
+        Both languages now consistently identify this card as the
+        Taiwan macro context block. The card itself was already
+        Taiwan-centric (TAIEX, TWSE turnover, 三大法人) so the new
+        labels match the actual content.
+  - No logic / scoring / wiring changes.
 
 v1.9.7 (2026-05-09)  [TSMC Supply Chain Top 5 — momentum regime recommender]
   - New companion block to the Tomorrow Momentum Pulse table. When
@@ -7863,7 +7986,7 @@ TRANSLATIONS["繁體中文"].update(LEO_TRANSLATIONS_ZH)
 TRANSLATIONS["English"].update(ABF_TRANSLATIONS_EN)
 TRANSLATIONS["繁體中文"].update(ABF_TRANSLATIONS_ZH)
 TRANSLATIONS["English"].update({
-    "global_market_indicator": "Global Market Indicator",
+    "global_market_indicator": "Taiwan Market Indicator",
     "global_market_copy": "A cross-market reference layer for the active lens. Use this to see whether U.S. and Taiwan benchmark trends are broadly supportive, mixed, or under pressure before drilling further into individual names.",
     "global_market_window": "Active window",
     "global_market_last": "Last price",
@@ -10252,19 +10375,26 @@ EXPERIENCE_LEVEL_TO_LAYOUT = {
 
 
 def _experience_level_options(lang_zh: bool) -> list[dict]:
-    """Return list of (key, emoji, label, hint) tuples for the 4 user levels."""
+    """Return list of (key, emoji, label, hint) tuples for the 4 user levels.
+
+    v1.9.9: The "beginner" key is preserved internally (no session-state
+    migration needed) but its visual identity changed from "🌱 新手 /
+    先看大方向" to "🤖 AI 分析分享 / 論點驗證". When this level is selected
+    on General Market mode, the dispatch routes to
+    render_ai_analysis_share_dashboard() instead of the standard layout.
+    """
     if lang_zh:
         return [
-            {"key": "beginner",     "emoji": "🌱", "label": "新手",   "hint": "先看大方向"},
-            {"key": "intermediate", "emoji": "📊", "label": "初級",   "hint": "看題材與焦點"},
-            {"key": "advanced",     "emoji": "🎯", "label": "進階",   "hint": "工具與比較"},
-            {"key": "expert",       "emoji": "🔬", "label": "資深",   "hint": "高密度研究"},
+            {"key": "beginner",     "emoji": "🤖", "label": "AI 分析分享", "hint": "論點驗證"},
+            {"key": "intermediate", "emoji": "📊", "label": "初級",        "hint": "看題材與焦點"},
+            {"key": "advanced",     "emoji": "🎯", "label": "進階",        "hint": "工具與比較"},
+            {"key": "expert",       "emoji": "🔬", "label": "資深",        "hint": "高密度研究"},
         ]
     return [
-        {"key": "beginner",     "emoji": "🌱", "label": "Beginner",     "hint": "Big picture only"},
-        {"key": "intermediate", "emoji": "📊", "label": "Intermediate", "hint": "Themes & focus"},
-        {"key": "advanced",     "emoji": "🎯", "label": "Advanced",     "hint": "Tools & compare"},
-        {"key": "expert",       "emoji": "🔬", "label": "Expert",       "hint": "Dense research"},
+        {"key": "beginner",     "emoji": "🤖", "label": "AI Analysis",   "hint": "Thesis tracking"},
+        {"key": "intermediate", "emoji": "📊", "label": "Intermediate",  "hint": "Themes & focus"},
+        {"key": "advanced",     "emoji": "🎯", "label": "Advanced",      "hint": "Tools & compare"},
+        {"key": "expert",       "emoji": "🔬", "label": "Expert",        "hint": "Dense research"},
     ]
 
 
@@ -13313,10 +13443,13 @@ _TOMORROW_MOMENTUM_CSS = """
 
 
 def _ensure_tomorrow_momentum_css():
-    """Inject the CSS once per session."""
-    if not st.session_state.get("_tomorrow_momentum_css_injected"):
-        render_html_block(_TOMORROW_MOMENTUM_CSS)
-        st.session_state["_tomorrow_momentum_css_injected"] = True
+    """Inject the CSS every render. v1.10.1: Removed the session_state
+    guard — Streamlit reruns the whole script on every interaction and
+    rebuilds the DOM, so a once-per-session guard caused styles to vanish
+    on the second rerun. CSS in <style> tags is idempotent (multiple
+    identical style blocks don't conflict), so unconditional injection
+    is the correct approach."""
+    render_html_block(_TOMORROW_MOMENTUM_CSS)
 
 
 def render_tomorrow_momentum_pulse(market_scope: str) -> None:
@@ -14114,10 +14247,9 @@ _TSMC_TOP5_CSS = """
 
 
 def _ensure_tsmc_top5_css():
-    """Inject the TSMC top5 CSS once per session."""
-    if not st.session_state.get("_tsmc_top5_css_injected"):
-        render_html_block(_TSMC_TOP5_CSS)
-        st.session_state["_tsmc_top5_css_injected"] = True
+    """Inject the TSMC top5 CSS every render. v1.10.1: see
+    _ensure_tomorrow_momentum_css for rationale."""
+    render_html_block(_TSMC_TOP5_CSS)
 
 
 def render_tsmc_supply_chain_top5_recommendations(
@@ -14134,6 +14266,22 @@ def render_tsmc_supply_chain_top5_recommendations(
     html = _render_tsmc_top5_html(payload, lang_zh=lang_zh)
     if html:
         render_html_block(html)
+
+
+# ============================================================================
+# v1.10.0  AI Analysis Share Dashboard — extracted to ai_analysis_dashboard.py
+# ============================================================================
+# The entire ~1,080-line block that lived here was moved to a sibling module
+# in v1.10.0 to keep this file from growing past 45K lines. To edit theses
+# (after watching a new video), open ai_analysis_dashboard.py and edit
+# AI_ANALYSIS_THESES + AI_ANALYSIS_SYNTHESIS at the top of that file. The
+# dispatch in generate_dashboard() still calls the renderer below.
+from ai_analysis_dashboard import (
+    render_ai_analysis_share_dashboard,
+    AI_ANALYSIS_THESES,
+    AI_ANALYSIS_SYNTHESIS,
+    compute_thesis_validation_score,
+)
 
 
 def build_taiwan_benchmark_context(ticker: str, price_series: pd.Series, lens_meta: dict | None = None) -> dict:
@@ -41245,13 +41393,31 @@ def generate_dashboard():
             supply_chain_keys=selected_supply_chain_groups,
         )
     else:
-        render_general_market_dashboard_layout(
-            daily_data,
-            intraday_data,
-            dashboard_tickers,
-            lens_meta=lens_meta,
-            layout_mode=layout_mode,
+        # v1.9.9: When user picked the "🤖 AI 分析分享" experience level
+        # (internal key "beginner") on General Market mode, route to the
+        # AI Analysis Share Dashboard. Other levels (intermediate /
+        # advanced / expert) continue to the standard layout.
+        # v1.10.1: ALSO require Taiwan scope. The AI Analysis theses are
+        # all Taiwan-specific (台股論點 — 杜金龍520以盤代跌、0056變飆股、
+        # 0050、AI半導體主軸等), so on U.S. scope they would render with
+        # no relevant data and the user would lose access to their
+        # Mag 7 + Categories grid layout. U.S. + Beginner now correctly
+        # falls through to render_general_market_dashboard_layout, which
+        # has the Mag 7 grid with click-to-Workspace navigation.
+        _exp_level = st.session_state.get("dashboard_experience_level", "advanced")
+        _exp_scope = _normalize_market_scope(
+            st.session_state.get("dashboard_market_scope", "Taiwan only")
         )
+        if _exp_level == "beginner" and _exp_scope == "Taiwan only":
+            render_ai_analysis_share_dashboard()
+        else:
+            render_general_market_dashboard_layout(
+                daily_data,
+                intraday_data,
+                dashboard_tickers,
+                lens_meta=lens_meta,
+                layout_mode=layout_mode,
+            )
 
 
 # ---------------------------------------------------------------------------
