@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.4
+Version : v1.10.8
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,125 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.8 (2026-05-10)  [Font size pass — uniform +1-2px on dashboard blocks]
+  - User feedback: dashboard text feels small. Bumped font-size on
+    all custom blocks (the ones I author and inject CSS for).
+    Streamlit-native widgets (selectboxes, error banners, etc.) are
+    intentionally LEFT ALONE because they have their own design
+    system and meddling cascades unpredictably.
+  - Scale (consistent across all blocks):
+      body / cell text:          12.5–13 → 14
+      sub-text / chips:          11–11.5 → 12 / 12.5
+      headers (section titles):  16–17 → 18 / 19
+      large numbers (scores,
+        avg, big counts):        18 → 20, 22 → 24
+      small caps / labels:       10.5 → 11
+  - Affected blocks:
+      Tomorrow Momentum Pulse    (main file _TOMORROW_MOMENTUM_CSS)
+      TSMC Top 5 Recommender     (main file _TSMC_TOP5_CSS)
+      U.S. Theme Radar           (main file _cockpit_inject_css)
+      AI Analysis Dashboard      (ai_analysis_dashboard.py _AI_ANALYSIS_CSS)
+      ─ AI cards                  ─
+      ─ AI synthesis paragraphs   ─
+      ─ AI validation tracker     ─
+      ─ AI topic accordions (v1.10.5+) ─
+  - Visual hierarchy preserved: every relative gap (body → sub-text,
+    body → header, body → number) kept the same proportion as before,
+    so cards / tracker / radar still read as one cohesive design.
+  - No layout / wiring changes. No behaviour changes.
+
+v1.10.7 (2026-05-10)  [Validation tracker — same collapsible topic structure as cards]
+  - User insight: the daily validation tracker should mirror the
+    cards layout — same topic grouping, same collapsible accordion,
+    and (most importantly) the same scannable summary header so
+    "readers immediately know which thesis card to look at first".
+  - Two changes that work together:
+      1. Validation tracker is now collapsible per topic (was inline
+         dividers in v1.10.5/v1.10.6). Each topic group is a
+         <details> element with the same auto-expand rule (low avg
+         score → open, high avg score → collapsed) — and the same
+         master toggle from v1.10.5 controls both blocks together.
+      2. The collapsed-state summary now shows ENOUGH info to
+         prioritize attention without expanding:
+            line 1: emoji · topic name · avg score (big) · trend arrow · count
+            line 2: ✅ 2 驗證 · 🟡 0 中性 · ❌ 0 脫離  ·  💪 強:X (85)
+                                                       ·  ⚠️ 弱:Y (40)
+         The cards-block header gets the "💪 最強" highlight,
+         and the tracker-block header gets the "⚠️ 最弱" highlight,
+         so each block surfaces the most relevant thesis for that
+         block's purpose:
+            cards   → "browse the strongest validating thesis"
+            tracker → "drill into the most diverging thesis"
+  - Rationale: v1.10.6 stripped these details to keep the page
+    scannable, but lost the "first-glance prioritization" that the
+    user wanted. v1.10.7 restores them in a single inline meta-row
+    rather than the v1.10.5 4-column grid — same info density,
+    cleaner visual.
+  - Tracker no longer uses the old in-table topic divider. When you
+    expand a tracker topic, you get just the table rows for that
+    topic's theses + validation points, no header repeat.
+  - Auto-expand state is computed once per group and shared between
+    cards and tracker (same group on screen = same open/closed
+    state in both places).
+
+v1.10.6 (2026-05-10)  [AI Analysis topic taxonomy + slim header per user spec]
+  - User picked the 5-bucket taxonomy "by 標的" with simplified header
+    (only name + avg score + trend arrow on collapsed view).
+  - Topic registry now has 5 categories (was 3 + uncategorized in v1.10.5):
+      market-direction   📈 大盤判別     大盤指數整體走勢、支撐壓力、漲速
+      stock-trend        📊 個股走勢     單一個股的多空判別、技術面驗證
+      etf-flow           💰 ETF        ETF 類別、資金流向、追價熱度
+      macro-narrative    🌐 宏觀主軸     產業主軸、AI / 半導體 / 政策題材
+      volume-positioning 📦 量能籌碼     成交量結構、外資籌碼、融資餘額
+      uncategorized      🗂 其他       fallback
+  - Existing 6 theses re-bucketed:
+      → market-direction:    520 以盤代跌 + 520 全面大跌
+      → etf-flow:            0056 變飆股 + 0056 上車下車 + 0050 大型權值
+      → macro-narrative:     台股 AI/半導體主軸
+      stock-trend & volume-positioning bukcets stay empty
+      until user adds theses.
+  - Topic header simplified to a single horizontal row:
+      [emoji] [topic name]  [avg score + trend arrow]    [tagline · count]   [▶/▼]
+    The verbose 4-column meta-row (distribution, strongest, weakest)
+    from v1.10.5 is removed per user spec — keeps the header readable
+    when there are 5+ topics on screen at once.
+  - Detail metrics (distribution, strongest, weakest) still computable —
+    the renderer just doesn't show them in the header now. They could
+    return as a "long-press" / hover tooltip later if useful.
+  - Auto-expand rule (low-score expands, high-score collapses) and
+    master toggle behaviour unchanged from v1.10.5.
+
+v1.10.5 (2026-05-10)  [AI Analysis — topic grouping with collapsible sections]
+  - User asked to group thesis cards by topic so the page scales to
+    20+ theses without info-overload, with rich summary headers that
+    are visible BEFORE expanding the section's cards.
+  - Three default topics:
+      market-direction  📈 大盤方向判別      (520以盤代跌 / 全面大跌)
+      etf-flow          💰 ETF 與資金流向    (0056變飆股 / 0056上車下車 / 0050)
+      sector-leadership 🚀 產業主軸領漲      (AI / 半導體主軸)
+  - Each thesis now carries a "topic" field (slug). Existing 6 theses
+    retrofitted to one of the three topics above; user can add new
+    topics by editing AI_TOPIC_REGISTRY at the top of the file.
+  - Topic header (visible when collapsed) shows:
+      * 📈 emoji + topic name
+      * Average validation score + 7-day trend arrow
+      * Verdict distribution (e.g. ✅ 1 / 🟡 1 / ❌ 0)
+      * "Strongest: <thesis> (85)" / "Weakest: <thesis> (40)" preview
+      * Click anywhere on the header to expand / collapse
+  - Smart default-expand rules:
+      avg_score < 50  → AUTO-EXPAND (diverging — needs your attention)
+      avg_score ≥ 50  → AUTO-COLLAPSE (healthy — trust it)
+    User can override with master toggle "全部展開 / 全部收起" at top-right.
+  - Default state is computed every render (no session_state guard) so
+    the dashboard always surfaces what needs attention. Once user
+    manually clicks expand/collapse, that override persists in
+    session_state.
+  - Validation tracker (📊 每日驗證表 — Block 3) also gains topic
+    grouping so the per-point detail view matches the cards layout.
+  - Implementation note: collapse uses a pure-HTML <details>/<summary>
+    element so there's no Streamlit reactive cost. The default open
+    state is set on the server side via the "open" attribute.
 
 v1.10.4 (2026-05-10)  [AI Analysis Dashboard — promote to early-return full-page takeover]
   - User reported two bugs that turned out to share one root cause:
@@ -13381,13 +13500,13 @@ _TOMORROW_MOMENTUM_CSS = """
     margin-bottom: 12px;
 }
 .momentum-pulse-title {
-    font-size: 17px;
+    font-size: 19px;
     font-weight: 700;
     color: #f4f6fb;
     letter-spacing: 0.2px;
 }
 .momentum-pulse-subtitle {
-    font-size: 12.5px;
+    font-size: 13.5px;
     color: #98a2b8;
     margin-top: 2px;
     line-height: 1.4;
@@ -13406,24 +13525,24 @@ _TOMORROW_MOMENTUM_CSS = """
     min-width: 220px;
 }
 .momentum-verdict-emoji {
-    font-size: 28px;
+    font-size: 30px;
     line-height: 1;
 }
 .momentum-verdict-label {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     color: #d8dde9;
     letter-spacing: 0.3px;
 }
 .momentum-verdict-score {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
     color: #f9fafc;
     margin-top: 2px;
     line-height: 1.1;
 }
 .momentum-verdict-suffix {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     color: #98a2b8;
     margin-left: 4px;
@@ -13454,7 +13573,7 @@ _TOMORROW_MOMENTUM_CSS = """
     grid-template-columns: minmax(160px, 1.4fr) minmax(80px, 0.7fr) minmax(150px, 1.1fr) minmax(180px, 1.5fr);
     gap: 14px;
     padding: 9px 14px;
-    font-size: 13px;
+    font-size: 14px;
     align-items: center;
     border-bottom: 1px solid rgba(96, 110, 145, 0.12);
 }
@@ -13463,7 +13582,7 @@ _TOMORROW_MOMENTUM_CSS = """
     background: rgba(35, 44, 70, 0.55);
     font-weight: 600;
     color: #b8c0d4;
-    font-size: 11.5px;
+    font-size: 12.5px;
     letter-spacing: 0.5px;
     text-transform: uppercase;
 }
@@ -13478,7 +13597,7 @@ _TOMORROW_MOMENTUM_CSS = """
 }
 .momentum-cell-interpretation {
     color: #c2c8d8;
-    font-size: 12.5px;
+    font-size: 13.5px;
 }
 .momentum-cell-contribution {
     display: flex;
@@ -13499,7 +13618,7 @@ _TOMORROW_MOMENTUM_CSS = """
     transition: width 0.3s ease;
 }
 .momentum-bar-text {
-    font-size: 11.5px;
+    font-size: 12.5px;
     color: #a9b0c4;
     font-variant-numeric: tabular-nums;
     min-width: 64px;
@@ -13513,7 +13632,7 @@ _TOMORROW_MOMENTUM_CSS = """
 .momentum-pulse-foot {
     margin-top: 9px;
     padding: 0 4px;
-    font-size: 11px;
+    font-size: 12px;
     color: #7a8499;
     font-style: italic;
     line-height: 1.4;
@@ -13536,7 +13655,7 @@ _TOMORROW_MOMENTUM_CSS = """
         grid-template-rows: auto auto;
     }
     .momentum-cell-contribution { grid-column: 1 / -1; }
-    .momentum-cell-interpretation { grid-column: 1 / -1; font-size: 12px; }
+    .momentum-cell-interpretation { grid-column: 1 / -1; font-size: 13px; }
 }
 </style>
 """
@@ -14374,12 +14493,12 @@ _TSMC_TOP5_CSS = """
 .tsmc-regime-weak { border-color: rgba(232, 110, 120, 0.45); }
 .tsmc-top5-head { margin-bottom: 10px; }
 .tsmc-top5-title {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 700;
     color: #f4f6fb;
 }
 .tsmc-top5-subtitle {
-    font-size: 12.5px;
+    font-size: 13.5px;
     color: #98a2b8;
     margin-top: 3px;
     line-height: 1.4;
@@ -14397,20 +14516,20 @@ _TSMC_TOP5_CSS = """
     padding: 10px 14px;
     align-items: center;
     border-bottom: 1px solid rgba(96, 110, 145, 0.12);
-    font-size: 13px;
+    font-size: 14px;
 }
 .tsmc-row:last-child { border-bottom: none; }
 .tsmc-row-header {
     background: rgba(35, 44, 70, 0.55);
     font-weight: 600;
     color: #b8c0d4;
-    font-size: 11.5px;
+    font-size: 12.5px;
     letter-spacing: 0.5px;
     text-transform: uppercase;
 }
-.tsmc-cell-rank { font-weight: 700; color: #f4d68a; font-size: 14px; }
-.tsmc-stock-name { font-weight: 700; color: #f4f6fb; font-size: 14px; }
-.tsmc-stock-meta { display: flex; gap: 8px; align-items: center; margin-top: 2px; font-size: 11.5px; color: #98a2b8; }
+.tsmc-cell-rank { font-weight: 700; color: #f4d68a; font-size: 15px; }
+.tsmc-stock-name { font-weight: 700; color: #f4f6fb; font-size: 15px; }
+.tsmc-stock-meta { display: flex; gap: 8px; align-items: center; margin-top: 2px; font-size: 12.5px; color: #98a2b8; }
 .tsmc-stock-parent {
     background: rgba(96, 110, 145, 0.25);
     color: #c2c8d8;
@@ -14418,9 +14537,9 @@ _TSMC_TOP5_CSS = """
     border-radius: 4px;
     font-weight: 600;
 }
-.tsmc-stock-price { font-size: 12px; color: #a9b0c4; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.tsmc-stock-price { font-size: 13px; color: #a9b0c4; margin-top: 3px; font-variant-numeric: tabular-nums; }
 .tsmc-cell-score { display: flex; flex-direction: column; gap: 4px; }
-.tsmc-score-num { font-weight: 700; color: #f9fafc; font-size: 18px; line-height: 1; font-variant-numeric: tabular-nums; }
+.tsmc-score-num { font-weight: 700; color: #f9fafc; font-size: 20px; line-height: 1; font-variant-numeric: tabular-nums; }
 .tsmc-score-bar { height: 5px; background: rgba(96, 110, 145, 0.25); border-radius: 3px; overflow: hidden; }
 .tsmc-score-bar-fill { height: 100%; background: linear-gradient(90deg, #5b8def, #4cd0a8); border-radius: 3px; }
 .tsmc-regime-strong .tsmc-score-bar-fill { background: linear-gradient(90deg, #4cd0a8, #6fd99a); }
@@ -14432,7 +14551,7 @@ _TSMC_TOP5_CSS = """
     color: #d8dde9;
     padding: 2px 8px;
     border-radius: 6px;
-    font-size: 11.5px;
+    font-size: 12.5px;
     font-weight: 500;
     line-height: 1.5;
 }
@@ -14440,15 +14559,15 @@ _TSMC_TOP5_CSS = """
 .tsmc-action-pill {
     padding: 4px 11px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.3px;
 }
 .tsmc-action-strong { background: rgba(76, 208, 168, 0.22); color: #8be8b1; border: 1px solid rgba(94, 198, 137, 0.5); }
 .tsmc-action-neutral { background: rgba(230, 195, 95, 0.22); color: #f4d68a; border: 1px solid rgba(230, 195, 95, 0.5); }
 .tsmc-action-weak { background: rgba(217, 102, 112, 0.22); color: #f4a3aa; border: 1px solid rgba(232, 110, 120, 0.5); }
-.tsmc-ladder { width: 100%; margin-top: 4px; font-size: 11.5px; }
-.tsmc-ladder-head { color: #98a2b8; font-weight: 600; font-size: 10.5px; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 3px; }
+.tsmc-ladder { width: 100%; margin-top: 4px; font-size: 12.5px; }
+.tsmc-ladder-head { color: #98a2b8; font-weight: 600; font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 3px; }
 .tsmc-ladder-row {
     display: grid;
     grid-template-columns: 22px 38px 50px 1fr;
@@ -14458,11 +14577,11 @@ _TSMC_TOP5_CSS = """
     color: #c2c8d8;
     font-variant-numeric: tabular-nums;
 }
-.tsmc-ladder-tranche { color: #f4a3aa; font-weight: 700; font-size: 11px; }
+.tsmc-ladder-tranche { color: #f4a3aa; font-weight: 700; font-size: 12px; }
 .tsmc-ladder-size { color: #d8dde9; }
 .tsmc-ladder-discount { color: #d96670; font-weight: 600; }
 .tsmc-ladder-price { color: #f4f6fb; font-weight: 700; text-align: right; }
-.tsmc-top5-foot { margin-top: 8px; padding: 0 4px; font-size: 11px; color: #7a8499; font-style: italic; }
+.tsmc-top5-foot { margin-top: 8px; padding: 0 4px; font-size: 12px; color: #7a8499; font-style: italic; }
 .tsmc-row-header .tsmc-cell-rank,
 .tsmc-row-header .tsmc-cell-stock,
 .tsmc-row-header .tsmc-cell-score,
@@ -30437,7 +30556,7 @@ def _cockpit_inject_css() -> None:
             box-shadow: 0 0 10px #5eead4;
         }
         .cockpit-title {
-            font-size: 1.75rem;
+            font-size: 1.95rem;
             font-weight: 700;
             color: #fff;
             margin-bottom: 0.3rem;
@@ -31169,7 +31288,7 @@ def _cockpit_inject_css() -> None:
             gap: 0.6rem;
         }
         .us-radar-card-name {
-            font-size: 0.95rem; font-weight: 600; color: #f5ead8;
+            font-size: 1.05rem; font-weight: 600; color: #f5ead8;
         }
         .us-radar-card-badge {
             font-size: 0.72rem; padding: 0.2rem 0.55rem; border-radius: 6px;
@@ -31201,7 +31320,7 @@ def _cockpit_inject_css() -> None:
             font-size: 0.92rem; font-weight: 700; color: #fff;
         }
         .us-radar-px {
-            font-size: 0.85rem; color: rgba(255,255,255,0.65);
+            font-size: 0.95rem; color: rgba(255,255,255,0.65);
         }
         .us-radar-move {
             font-size: 0.86rem; font-weight: 700; min-width: 70px; text-align: right;
@@ -31589,7 +31708,7 @@ def _cockpit_inject_css() -> None:
             line-height: 1.3;
         }
         .us-radar-native-header .cockpit-sub {
-            font-size: 0.85rem;
+            font-size: 0.95rem;
             color: rgba(245,234,216,0.72);
             line-height: 1.5;
         }
@@ -31704,7 +31823,7 @@ def _cockpit_inject_css() -> None:
                 font-size: 1.05rem;
             }
             .us-radar-native-header .cockpit-sub {
-                font-size: 0.78rem;
+                font-size: 0.88rem;
             }
             [data-testid="stVerticalBlock"]:has(> div .us-radar-native-shell) [data-testid="stButton"] > button {
                 font-size: 0.76rem;
@@ -31832,8 +31951,8 @@ def _cockpit_inject_css() -> None:
             }
             .cockpit-pick-detail-btn { justify-self: start; }
             /* v1.8.0: cockpit titles + sub copy shrink on mobile */
-            .cockpit-title { font-size: 1.3rem; }
-            .cockpit-sub { font-size: 0.85rem; }
+            .cockpit-title { font-size: 1.45rem; }
+            .cockpit-sub { font-size: 0.95rem; }
             .cockpit-kicker { font-size: 0.75rem; }
             /* US Theme Radar — 2-col grid on tablet/large mobile */
             .us-radar-grid {
@@ -31851,8 +31970,8 @@ def _cockpit_inject_css() -> None:
                 gap: 0.4rem;
                 padding: 0.35rem 0.5rem;
             }
-            .us-radar-tk { font-size: 0.85rem; }
-            .us-radar-px { font-size: 0.78rem; }
+            .us-radar-tk { font-size: 0.95rem; }
+            .us-radar-px { font-size: 0.88rem; }
             .us-radar-move { font-size: 0.78rem; min-width: 56px; }
             /* v1.8.3: pulse banner stacks score below body on tablet */
             .us-radar-pulse-banner {
@@ -31866,7 +31985,7 @@ def _cockpit_inject_css() -> None:
                 font-size: 0.95rem;
                 padding: 0.18rem 0.5rem;
             }
-            .us-radar-pulse-headline { font-size: 0.88rem; }
+            .us-radar-pulse-headline { font-size: 0.98rem; }
             .us-radar-pulse-meta { font-size: 0.74rem; }
             .us-radar-catalyst-strip {
                 padding: 0.32rem 0.45rem;
@@ -31887,7 +32006,7 @@ def _cockpit_inject_css() -> None:
                 font-size: 0.62rem;
                 padding: 0.08rem 0.30rem;
             }
-            .us-radar-mini-chip .mini-chip-icon { font-size: 0.58rem; }
+            .us-radar-mini-chip .mini-chip-icon { font-size: 0.68rem; }
             .us-radar-mini-chip .mini-chip-count { font-size: 0.60rem; }
             /* v1.8.5: compare queue tightens at tablet breakpoint */
             .us-radar-compare-queue {
@@ -31898,14 +32017,14 @@ def _cockpit_inject_css() -> None:
                 font-size: 0.74rem;
                 padding: 0.24rem 0.55rem;
             }
-            .us-radar-queue-helper { font-size: 0.70rem; }
+            .us-radar-queue-helper { font-size: 0.80rem; }
             .us-radar-queue-clear { font-size: 0.70rem; padding: 0.22rem 0.55rem; }
         }
         /* v1.8.0: Phone (~390px) and Fold (~280px) — single-column stack */
         @media (max-width: 480px) {
             .cockpit-shell { padding: 0.9rem 0.7rem 1rem 0.7rem; }
-            .cockpit-title { font-size: 1.1rem; }
-            .cockpit-sub { font-size: 0.78rem; line-height: 1.45; }
+            .cockpit-title { font-size: 1.22rem; }
+            .cockpit-sub { font-size: 0.88rem; line-height: 1.45; }
             .cockpit-onboarding { font-size: 0.8rem; }
             .cockpit-q1-breakdown { grid-template-columns: 1fr; }
             .cockpit-q4-triggers { grid-template-columns: 1fr; }
@@ -31922,8 +32041,8 @@ def _cockpit_inject_css() -> None:
                 gap: 0.45rem;
                 padding: 0.55rem 0.7rem;
             }
-            .us-radar-pulse-headline { font-size: 0.84rem; }
-            .us-radar-pulse-meta { font-size: 0.72rem; }
+            .us-radar-pulse-headline { font-size: 0.94rem; }
+            .us-radar-pulse-meta { font-size: 0.82rem; }
             .us-radar-pulse-score { font-size: 0.9rem; padding: 0.15rem 0.45rem; }
             .us-radar-catalyst-strip {
                 padding: 0.3rem 0.4rem;
@@ -31942,8 +32061,8 @@ def _cockpit_inject_css() -> None:
                 font-size: 0.60rem;
                 padding: 0.08rem 0.28rem;
             }
-            .us-radar-mini-chip .mini-chip-icon { font-size: 0.56rem; }
-            .us-radar-mini-chip .mini-chip-count { font-size: 0.58rem; }
+            .us-radar-mini-chip .mini-chip-icon { font-size: 0.66rem; }
+            .us-radar-mini-chip .mini-chip-count { font-size: 0.68rem; }
             /* v1.8.5: compare queue actions stack vertically on phone */
             .us-radar-compare-queue {
                 padding: 0.55rem 0.7rem;
@@ -31958,7 +32077,7 @@ def _cockpit_inject_css() -> None:
                 align-items: flex-start;
                 gap: 0.4rem;
             }
-            .us-radar-queue-helper { font-size: 0.68rem; }
+            .us-radar-queue-helper { font-size: 0.78rem; }
             .us-radar-queue-clear {
                 font-size: 0.68rem;
                 padding: 0.20rem 0.50rem;

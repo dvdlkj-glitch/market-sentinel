@@ -454,10 +454,76 @@ def _thesis_trend_arrow(thesis_id: str, current_score: float) -> tuple[str, str,
 
 
 # ----------------------------------------------------------------------------
+# AI_TOPIC_REGISTRY — main organizing dimension for the cards / tracker
+# ----------------------------------------------------------------------------
+# v1.10.5: Theses are grouped by "topic" so the page scales to 20+ entries.
+# To add a new topic, append an entry here AND set thesis["topic"] = <key>
+# in the relevant theses below. Theses with an unknown topic key fall into
+# the "uncategorized" bucket (rendered last).
+#
+# display_order controls the section sequence (lower = appears earlier).
+# ----------------------------------------------------------------------------
+
+AI_TOPIC_REGISTRY: dict[str, dict] = {
+    "market-direction": {
+        "emoji": "📈",
+        "label_zh": "大盤判別",
+        "label_en": "Index Direction",
+        "tagline_zh": "加權指數整體走勢、支撐壓力、漲速判別",
+        "tagline_en": "TAIEX trajectory, supports / resistance, rally pace",
+        "display_order": 10,
+    },
+    "stock-trend": {
+        "emoji": "📊",
+        "label_zh": "個股走勢",
+        "label_en": "Stock Moves",
+        "tagline_zh": "單一個股的多空判別、技術面驗證",
+        "tagline_en": "Per-stock direction calls, technical validation",
+        "display_order": 20,
+    },
+    "etf-flow": {
+        "emoji": "💰",
+        "label_zh": "ETF",
+        "label_en": "ETFs",
+        "tagline_zh": "ETF 類別、資金流向、追價熱度",
+        "tagline_en": "ETF categories, fund flow, retail momentum",
+        "display_order": 30,
+    },
+    "macro-narrative": {
+        "emoji": "🌐",
+        "label_zh": "宏觀主軸",
+        "label_en": "Macro Narrative",
+        "tagline_zh": "產業主軸、AI / 半導體 / 政策題材",
+        "tagline_en": "Sector themes, AI / semis / policy narratives",
+        "display_order": 40,
+    },
+    "volume-positioning": {
+        "emoji": "📦",
+        "label_zh": "量能籌碼",
+        "label_en": "Volume & Positioning",
+        "tagline_zh": "成交量結構、外資籌碼、融資餘額",
+        "tagline_en": "Volume structure, foreign positioning, margin balance",
+        "display_order": 50,
+    },
+    "uncategorized": {
+        "emoji": "🗂",
+        "label_zh": "其他論點",
+        "label_en": "Other Theses",
+        "tagline_zh": "未指定主題的論點",
+        "tagline_en": "Theses without an assigned topic",
+        "display_order": 999,
+    },
+}
+
+
+# ----------------------------------------------------------------------------
 # AI_ANALYSIS_THESES — manually edited dataset
 # ----------------------------------------------------------------------------
 # Edit this list after each video. Schema:
 #   id:                  unique slug (used for trend history persistence)
+#   topic:               slug pointing into AI_TOPIC_REGISTRY (e.g.
+#                        "market-direction"). v1.10.5 — required for grouping.
+#                        Unknown / missing topic → "uncategorized".
 #   title:               short headline (matches video segment title)
 #   summary:             "解說重點" — what the analyst is saying
 #   cross_validation:    "目前局勢交叉驗證" — supporting market evidence
@@ -471,6 +537,7 @@ def _thesis_trend_arrow(thesis_id: str, current_score: float) -> tuple[str, str,
 AI_ANALYSIS_THESES: list[dict] = [
     {
         "id": "thesis-520-pull-back",
+        "topic": "market-direction",
         "title": "杜金龍:520 後以盤代跌",
         "summary": "意思應是:到 2026/05/20 後,台股即使漲多,也比較可能用高檔震盪、類股輪動、時間整理來消化漲幅,而不是立刻大崩。",
         "cross_validation": "台股在 5 月初動能非常強:加權指數5/4收40,705.14、5/7盤中到42,156.06、收41,933.78、5/8仍收41,603.94;這代表多頭主架構還在,但5/8已出現高檔震盪。本週指數漲幅約6.88%、上市總市值達135.70兆元,屬於強勢但偏熱的盤。",
@@ -507,6 +574,7 @@ AI_ANALYSIS_THESES: list[dict] = [
     },
     {
         "id": "thesis-0056-rally",
+        "topic": "etf-flow",
         "title": "0056 變飆股",
         "summary": "0056本質是高股息ETF,不是小型飆股;但近期因配息、填息、外資買超與高股息資金回流,短線價格表現確實有「熱門股化」現象。",
         "cross_validation": "0056於5/8收44.85元,當日小漲0.29%;Yahoo資料同時顯示其資產規模約5,210億元,為台股ETF規模第2大、高股息ETF龍頭。0056在2026/04/23除息1元,現金股利發放日為2026/05/14。外資5/8買超0056達46,498張,列外資買超第2名,也支持「短線資金追捧」。",
@@ -537,6 +605,7 @@ AI_ANALYSIS_THESES: list[dict] = [
     },
     {
         "id": "thesis-0056-hold-or-sell",
+        "topic": "etf-flow",
         "title": "0056:上車還是下車",
         "summary": "若是原本為了現金流、長期領息而持有,沒有明顯需要因短線漲幅就急著下車;若是短線想追高,風險報酬已變差,較適合分批而非一次重壓。",
         "cross_validation": "0056本季配息1元、4/23除息、5/14發放,且資金仍在流入;這對存股族與收益型資金有吸引力。",
@@ -565,6 +634,7 @@ AI_ANALYSIS_THESES: list[dict] = [
     },
     {
         "id": "thesis-0050-leadership",
+        "topic": "etf-flow",
         "title": "0050 / 大型權值 ETF",
         "summary": "影片標籤有0050與ETF,重點應是:大盤若續強,0050仍是最直接參與台股權值股行情的工具。",
         "cross_validation": "0050追蹤台灣50指數,涵蓋台灣證交所市值前50大公司。0050在5/8收97.00元、上漲0.72%,顯示權值ETF仍跟著大盤高檔運行。台股5月初創高主要由AI與大型半導體股帶動,5/4台股大漲逾1,700點並收上40,000點,主因包括AI熱潮與台積電、聯發科等大型半導體股。",
@@ -595,6 +665,7 @@ AI_ANALYSIS_THESES: list[dict] = [
     },
     {
         "id": "thesis-tw-ai-semi-leadership",
+        "topic": "macro-narrative",
         "title": "台股主軸仍在 AI / 半導體",
         "summary": "目前台股不是全面平均上漲,而是 AI、半導體、權值股帶動指數創高,再擴散到 ETF 與部分落後補漲股。",
         "cross_validation": "5月初台股創高被明確歸因於AI樂觀情緒與大型半導體股領漲。外資5/8買超名單中也可見鴻海、光寶科、聯鈞、華通、景碩等電子與AI供應鏈相關標的。",
@@ -634,6 +705,7 @@ AI_ANALYSIS_THESES: list[dict] = [
     },
     {
         "id": "thesis-no-broad-crash",
+        "topic": "market-direction",
         "title": "520 後是否容易「全面大跌」",
         "summary": "以目前資料看,除非外資突然大幅反手或國際利空擴大,單純因 520 時間點而全面大跌的證據不足。比較合理的情境是高檔震盪、強弱股分化。",
         "cross_validation": "指數已創高但仍維持在41,000點以上,成交量也大,顯示資金仍在市場內輪動。",
@@ -709,13 +781,13 @@ _AI_ANALYSIS_CSS = """
     margin: 18px 0 10px 0;
 }
 .ai-share-section-title {
-    font-size: 17px;
+    font-size: 19px;
     font-weight: 700;
     color: #f4f6fb;
     letter-spacing: 0.3px;
 }
 .ai-share-section-meta {
-    font-size: 12px;
+    font-size: 13px;
     color: #98a2b8;
     font-style: italic;
 }
@@ -740,14 +812,14 @@ _AI_ANALYSIS_CSS = """
     gap: 10px;
 }
 .ai-card-title {
-    font-size: 14.5px;
+    font-size: 16px;
     font-weight: 700;
     color: #f4f6fb;
     line-height: 1.35;
     flex: 1;
 }
 .ai-card-prob-pill {
-    font-size: 11.5px;
+    font-size: 12.5px;
     font-weight: 700;
     padding: 4px 10px;
     border-radius: 999px;
@@ -760,12 +832,12 @@ _AI_ANALYSIS_CSS = """
 .ai-card-prob-neutral { background: rgba(230,195,95,.22); color: #f4d68a; }
 .ai-card-prob-diverging { background: rgba(217,102,112,.22); color: #f4a3aa; }
 .ai-card-section {
-    font-size: 12.5px;
+    font-size: 13.5px;
     line-height: 1.55;
     color: #c2c8d8;
 }
 .ai-card-section-label {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #98a2b8;
     text-transform: uppercase;
@@ -785,7 +857,7 @@ _AI_ANALYSIS_CSS = """
     border: 1px solid rgba(96,110,145,.18);
 }
 .ai-card-validation-num {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
     line-height: 1;
@@ -794,7 +866,7 @@ _AI_ANALYSIS_CSS = """
 .ai-card-validation-num-neutral { color: #f4d68a; }
 .ai-card-validation-num-diverging { color: #f4a3aa; }
 .ai-card-validation-trend {
-    font-size: 11.5px;
+    font-size: 12.5px;
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 5px;
@@ -806,7 +878,7 @@ _AI_ANALYSIS_CSS = """
 .ai-trend-flat { background: rgba(96,110,145,.25); color: #c2c8d8; }
 .ai-trend-pending { background: rgba(96,110,145,.18); color: #98a2b8; }
 .ai-card-validation-label {
-    font-size: 11px;
+    font-size: 12px;
     color: #98a2b8;
     line-height: 1.3;
 }
@@ -819,18 +891,18 @@ _AI_ANALYSIS_CSS = """
     margin: 12px 0;
 }
 .ai-synthesis-headline {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 700;
     color: #f4f6fb;
     margin-bottom: 4px;
 }
 .ai-synthesis-intro {
-    font-size: 13px;
+    font-size: 14px;
     color: #98a2b8;
     margin-bottom: 12px;
 }
 .ai-synthesis-para {
-    font-size: 13.5px;
+    font-size: 14.5px;
     line-height: 1.7;
     color: #d8dde9;
     margin-bottom: 10px;
@@ -860,14 +932,14 @@ _AI_ANALYSIS_CSS = """
     padding: 10px 12px;
     align-items: center;
     border-bottom: 1px solid rgba(96,110,145,.12);
-    font-size: 12.5px;
+    font-size: 13.5px;
 }
 .ai-tracker-row:last-child { border-bottom: none; }
 .ai-tracker-row-header {
     background: rgba(35,44,70,.55);
     font-weight: 600;
     color: #b8c0d4;
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: .4px;
     text-transform: uppercase;
 }
@@ -887,14 +959,14 @@ _AI_ANALYSIS_CSS = """
     flex-wrap: wrap;
 }
 .ai-tracker-thesis-title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     color: #f4f6fb;
     flex: 1;
     min-width: 200px;
 }
 .ai-tracker-thesis-score {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
 }
@@ -924,13 +996,200 @@ _AI_ANALYSIS_CSS = """
 .ai-tracker-score-fill-validating { background: linear-gradient(90deg, #4cd0a8, #6fd99a); }
 .ai-tracker-score-fill-neutral { background: linear-gradient(90deg, #e6c35f, #f4d68a); }
 .ai-tracker-score-fill-diverging { background: linear-gradient(90deg, #d96670, #f08894); }
-.ai-tracker-cell-interp { color: #c2c8d8; font-size: 11.5px; }
+.ai-tracker-cell-interp { color: #c2c8d8; font-size: 12.5px; }
 
 .ai-share-foot {
     margin-top: 8px;
-    font-size: 11px;
+    font-size: 12px;
     color: #7a8499;
     font-style: italic;
+}
+
+/* v1.10.5 — topic accordions */
+.ai-topic-section {
+    background: linear-gradient(180deg, rgba(20,26,45,.85), rgba(14,18,32,.85));
+    border: 1px solid rgba(96,110,145,.30);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+.ai-topic-section[open] {
+    border-color: rgba(96,110,145,.45);
+}
+.ai-topic-summary {
+    padding: 14px 18px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 0.15s;
+}
+.ai-topic-summary::-webkit-details-marker { display: none; }
+.ai-topic-summary:hover {
+    background: rgba(96,110,145,.10);
+}
+.ai-topic-section[open] > .ai-topic-summary {
+    border-bottom: 1px solid rgba(96,110,145,.25);
+    background: rgba(96,110,145,.08);
+}
+.ai-topic-head-line {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.ai-topic-emoji {
+    font-size: 24px;
+    line-height: 1;
+}
+.ai-topic-label {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f4f6fb;
+    letter-spacing: 0.3px;
+}
+.ai-topic-tagline {
+    font-size: 13px;
+    color: #98a2b8;
+    margin-left: auto;
+    margin-right: 4px;
+    font-style: italic;
+}
+.ai-topic-toggle {
+    font-size: 12.5px;
+    color: #98a2b8;
+    padding: 3px 9px;
+    border-radius: 5px;
+    background: rgba(96,110,145,.18);
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.ai-topic-section[open] > .ai-topic-summary .ai-topic-toggle::before {
+    content: "▼ 收起";
+}
+.ai-topic-section:not([open]) > .ai-topic-summary .ai-topic-toggle::before {
+    content: "▶ 展開";
+}
+.ai-topic-avg-score {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.ai-topic-avg-num {
+    font-size: 24px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+.ai-topic-avg-validating { color: #8be8b1; }
+.ai-topic-avg-neutral { color: #f4d68a; }
+.ai-topic-avg-diverging { color: #f4a3aa; }
+.ai-topic-trend-pill {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* v1.10.7 — second line of the header: distribution + extreme-thesis hint */
+.ai-topic-meta-line {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(96,110,145,.18);
+    font-size: 13px;
+}
+.ai-topic-distribution {
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.ai-topic-dist-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: #c2c8d8;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+.ai-topic-dist-item-validating { color: #8be8b1; }
+.ai-topic-dist-item-neutral { color: #f4d68a; }
+.ai-topic-dist-item-diverging { color: #f4a3aa; }
+.ai-topic-meta-divider {
+    color: #565d72;
+    user-select: none;
+}
+.ai-topic-extreme-hint {
+    color: #c2c8d8;
+    font-size: 12.5px;
+    line-height: 1.4;
+}
+.ai-topic-extreme-hint-strong {
+    color: #8be8b1;
+}
+.ai-topic-extreme-hint-weak {
+    color: #f4a3aa;
+}
+.ai-topic-extreme-hint strong {
+    font-variant-numeric: tabular-nums;
+}
+
+/* v1.10.7 — tracker accordion: same topic structure as cards */
+.ai-tracker-shell-grouped {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.ai-tracker-table-segment {
+    background: rgba(8,11,22,.5);
+    border-radius: 8px;
+    border: 1px solid rgba(96,110,145,.18);
+    overflow: hidden;
+    margin-top: 10px;
+}
+.ai-topic-body {
+    padding: 14px 16px;
+}
+.ai-master-toggle-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.ai-master-hint {
+    font-size: 12px;
+    color: #98a2b8;
+    font-style: italic;
+}
+.ai-master-toggle-btn {
+    font-size: 12.5px;
+    color: #c2c8d8;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: rgba(96,110,145,.18);
+    border: 1px solid rgba(96,110,145,.30);
+    font-weight: 600;
+    text-decoration: none;
+}
+.ai-master-toggle-btn:hover {
+    background: rgba(96,110,145,.28);
+    color: #f4f6fb;
+}
+.ai-tracker-topic-divider {
+    background: rgba(96,110,145,.10);
+    grid-template-columns: 1fr;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    color: #98a2b8;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    border-top: 2px solid rgba(96,110,145,.20);
 }
 
 @media (max-width: 900px) {
@@ -942,6 +1201,7 @@ _AI_ANALYSIS_CSS = """
     .ai-tracker-cell-score, .ai-tracker-cell-interp {
         grid-column: 1 / -1;
     }
+    .ai-topic-tagline { display: none; }
 }
 </style>
 """
@@ -958,6 +1218,296 @@ def _verdict_to_score_class(verdict: str, prefix: str) -> str:
     """e.g. _verdict_to_score_class("validating", "ai-card-validation-num")
     → "ai-card-validation-num-validating"."""
     return f"{prefix}-{verdict}"
+
+
+# ----------------------------------------------------------------------------
+# v1.10.5 — topic grouping helpers
+# ----------------------------------------------------------------------------
+
+def _resolve_topic_key(thesis: dict) -> str:
+    """Return the topic slug for a thesis, defaulting to 'uncategorized'
+    if missing or unknown."""
+    key = thesis.get("topic") or "uncategorized"
+    if key not in AI_TOPIC_REGISTRY:
+        return "uncategorized"
+    return key
+
+
+def _group_thesis_results_by_topic(thesis_results: list[dict]) -> list[dict]:
+    """Group the [{thesis, validation}] list into topic buckets, sorted
+    by AI_TOPIC_REGISTRY[topic]['display_order'].
+
+    Returns:
+        [
+            {
+                "key":      "market-direction",
+                "config":   <registry entry>,
+                "items":    [{thesis, validation}, ...],
+                "stats":    <output of _compute_topic_stats>,
+            },
+            ...
+        ]
+
+    Empty topics are skipped (only topics with at least one thesis appear).
+    """
+    buckets: dict[str, list[dict]] = {}
+    for tr in thesis_results:
+        key = _resolve_topic_key(tr["thesis"])
+        buckets.setdefault(key, []).append(tr)
+
+    groups: list[dict] = []
+    for key, items in buckets.items():
+        cfg = AI_TOPIC_REGISTRY.get(key, AI_TOPIC_REGISTRY["uncategorized"])
+        stats = _compute_topic_stats(key, items)
+        groups.append({"key": key, "config": cfg, "items": items, "stats": stats})
+
+    groups.sort(key=lambda g: g["config"].get("display_order", 999))
+    return groups
+
+
+def _compute_topic_stats(topic_key: str, items: list[dict]) -> dict:
+    """Compute aggregate metrics for a topic group:
+        avg_score, avg_verdict, distribution, strongest, weakest,
+        avg_trend_arrow, ready_count.
+    """
+    scores: list[float] = []
+    distribution = {"validating": 0, "neutral": 0, "diverging": 0}
+    strongest_pair: tuple[float, dict] | None = None
+    weakest_pair: tuple[float, dict] | None = None
+    ready_count = 0
+
+    for tr in items:
+        v = tr["validation"]
+        if not v.get("ready"):
+            continue
+        ready_count += 1
+        s = float(v.get("thesis_score", 50))
+        scores.append(s)
+        verdict = v.get("verdict", "neutral")
+        distribution[verdict] = distribution.get(verdict, 0) + 1
+        if strongest_pair is None or s > strongest_pair[0]:
+            strongest_pair = (s, tr["thesis"])
+        if weakest_pair is None or s < weakest_pair[0]:
+            weakest_pair = (s, tr["thesis"])
+
+    avg_score = sum(scores) / len(scores) if scores else 50.0
+
+    if avg_score >= 65:
+        avg_verdict = "validating"
+    elif avg_score >= 40:
+        avg_verdict = "neutral"
+    else:
+        avg_verdict = "diverging"
+
+    # Aggregate 7-day trend = avg of per-thesis trend deltas
+    history = st.session_state.get(_ai_thesis_history_key(), {})
+    deltas: list[float] = []
+    for tr in items:
+        thesis_id = tr["thesis"].get("id", "")
+        h = history.get(thesis_id, [])
+        if len(h) >= 2:
+            earliest = h[max(0, len(h) - 7)]
+            current = h[-1]
+            deltas.append(current.get("score", 50) - earliest.get("score", 50))
+    if deltas:
+        avg_delta = sum(deltas) / len(deltas)
+        if avg_delta >= 5:
+            avg_trend_arrow = ("↑", "ai-trend-up", f"7日 +{avg_delta:.0f}")
+        elif avg_delta <= -5:
+            avg_trend_arrow = ("↓", "ai-trend-down", f"7日 {avg_delta:.0f}")
+        else:
+            avg_trend_arrow = ("→", "ai-trend-flat", f"7日 {avg_delta:+.0f}")
+    else:
+        avg_trend_arrow = ("·", "ai-trend-pending", "資料累積中")
+
+    return {
+        "avg_score": round(avg_score, 1),
+        "avg_verdict": avg_verdict,
+        "distribution": distribution,
+        "strongest": strongest_pair[1] if strongest_pair else None,
+        "strongest_score": strongest_pair[0] if strongest_pair else None,
+        "weakest": weakest_pair[1] if weakest_pair else None,
+        "weakest_score": weakest_pair[0] if weakest_pair else None,
+        "avg_trend_arrow": avg_trend_arrow,
+        "ready_count": ready_count,
+    }
+
+
+def _resolve_master_toggle() -> str | None:
+    """Read the optional ?ai_topics=expand-all|collapse-all URL param."""
+    try:
+        params = st.query_params
+        val = params.get("ai_topics")
+    except Exception:
+        return None
+    if not val:
+        return None
+    if isinstance(val, list):
+        val = val[0] if val else None
+    if val in ("expand-all", "collapse-all"):
+        st.session_state["_ai_topics_master"] = val
+        try:
+            params.pop("ai_topics", None)
+        except Exception:
+            pass
+        return val
+    return None
+
+
+def _topic_should_default_open(stats: dict) -> bool:
+    """Auto-expand: low avg_score (diverging) opens, high collapses.
+    The whole point is to surface what needs attention."""
+    return stats["avg_score"] < 50
+
+
+def _topic_open_state(topic_key: str, stats: dict) -> bool:
+    """Order of precedence:
+        1. Master toggle (URL param or session override)
+        2. Auto rule (low score = open)
+    """
+    master = _resolve_master_toggle() or st.session_state.get("_ai_topics_master")
+    if master == "expand-all":
+        return True
+    if master == "collapse-all":
+        return False
+    return _topic_should_default_open(stats)
+
+
+def _render_topic_summary_html(group: dict, lang_zh: bool, block_kind: str = "cards") -> str:
+    """Render the always-visible topic header (the <summary>).
+
+    v1.10.7: Two-line layout that gives readers enough info to prioritize
+    attention without expanding:
+        line 1: emoji · topic name · big avg score · trend arrow · tagline · toggle
+        line 2: ✅ X 驗證 · 🟡 X 中性 · ❌ X 脫離  ·  💪 / ⚠️ extreme thesis hint
+
+    block_kind controls which extreme thesis is highlighted:
+        "cards"   → 💪 strongest (browse the most-validating one first)
+        "tracker" → ⚠️ weakest   (drill into the most-diverging one first)
+    """
+    cfg = group["config"]
+    stats = group["stats"]
+    emoji = cfg.get("emoji", "🗂")
+    label = cfg.get("label_zh") if lang_zh else cfg.get("label_en")
+    tagline = cfg.get("tagline_zh") if lang_zh else cfg.get("tagline_en")
+
+    avg_num = stats["avg_score"]
+    avg_verdict = stats["avg_verdict"]
+    arrow, trend_class, trend_label = stats["avg_trend_arrow"]
+    dist = stats["distribution"]
+    n_theses = len(group["items"])
+
+    if lang_zh:
+        n_label = f"{n_theses} 篇"
+        v_label = "驗證"
+        n_label_neutral = "中性"
+        d_label = "脫離"
+        strong_label = "💪 強"
+        weak_label = "⚠️ 弱"
+    else:
+        n_label = f"{n_theses}"
+        v_label = "validating"
+        n_label_neutral = "neutral"
+        d_label = "diverging"
+        strong_label = "💪 Strongest"
+        weak_label = "⚠️ Weakest"
+
+    # Distribution chips
+    dist_html = (
+        f'<span class="ai-topic-distribution">'
+        f'  <span class="ai-topic-dist-item ai-topic-dist-item-validating">✅ {dist["validating"]} {escape(v_label)}</span>'
+        f'  <span class="ai-topic-meta-divider">·</span>'
+        f'  <span class="ai-topic-dist-item ai-topic-dist-item-neutral">🟡 {dist["neutral"]} {escape(n_label_neutral)}</span>'
+        f'  <span class="ai-topic-meta-divider">·</span>'
+        f'  <span class="ai-topic-dist-item ai-topic-dist-item-diverging">❌ {dist["diverging"]} {escape(d_label)}</span>'
+        f'</span>'
+    )
+
+    # Pick the right extreme thesis to highlight based on block_kind
+    extreme_html = ""
+    strongest = stats.get("strongest")
+    weakest = stats.get("weakest")
+
+    if block_kind == "cards":
+        # Show strongest first (the "best news" of the topic)
+        if strongest:
+            s_score = stats.get("strongest_score") or 0
+            extreme_html = (
+                f'<span class="ai-topic-extreme-hint ai-topic-extreme-hint-strong">'
+                f'{escape(strong_label)}:{escape(str(strongest.get("title", "")))} '
+                f'<strong>({s_score:.0f})</strong>'
+                f'</span>'
+            )
+    else:
+        # tracker — show weakest (where to drill in for problems)
+        if weakest:
+            w_score = stats.get("weakest_score") or 0
+            extreme_html = (
+                f'<span class="ai-topic-extreme-hint ai-topic-extreme-hint-weak">'
+                f'{escape(weak_label)}:{escape(str(weakest.get("title", "")))} '
+                f'<strong>({w_score:.0f})</strong>'
+                f'</span>'
+            )
+
+    # Edge case: only 1 thesis means strongest == weakest, just show it once
+    if n_theses == 1 and extreme_html:
+        the_one = strongest if block_kind == "cards" else weakest
+        the_score = stats.get("strongest_score" if block_kind == "cards" else "weakest_score") or 0
+        extreme_html = (
+            f'<span class="ai-topic-extreme-hint">'
+            f'{escape(str(the_one.get("title", "")))} '
+            f'<strong>({the_score:.0f})</strong>'
+            f'</span>'
+        )
+
+    # Compose the meta-line: distribution + middle dot + extreme hint
+    if extreme_html:
+        meta_line_html = (
+            f'<div class="ai-topic-meta-line">'
+            f'  {dist_html}'
+            f'  <span class="ai-topic-meta-divider">·</span>'
+            f'  {extreme_html}'
+            f'</div>'
+        )
+    else:
+        meta_line_html = (
+            f'<div class="ai-topic-meta-line">{dist_html}</div>'
+        )
+
+    return textwrap.dedent(f"""
+        <summary class="ai-topic-summary">
+            <div class="ai-topic-head-line">
+                <span class="ai-topic-emoji">{emoji}</span>
+                <span class="ai-topic-label">{escape(label or "")}</span>
+                <span class="ai-topic-avg-score">
+                    <span class="ai-topic-avg-num ai-topic-avg-{escape(avg_verdict)}">{avg_num:.0f}</span>
+                    <span class="ai-topic-trend-pill {escape(trend_class)}">{arrow} {escape(trend_label)}</span>
+                </span>
+                <span class="ai-topic-tagline">{escape(tagline or "")} · {n_label}</span>
+                <span class="ai-topic-toggle"></span>
+            </div>
+            {meta_line_html}
+        </summary>
+    """).strip()
+
+
+def _render_master_toggle_row_html(lang_zh: bool) -> str:
+    """The "expand all / collapse all" row above the topic stack."""
+    if lang_zh:
+        hint = "💡 低驗證分(<50)的主題預設展開,高驗證分預設收起"
+        expand_all = "全部展開"
+        collapse_all = "全部收起"
+    else:
+        hint = "💡 Topics with avg score <50 auto-expand; ≥50 auto-collapse"
+        expand_all = "Expand all"
+        collapse_all = "Collapse all"
+    return textwrap.dedent(f"""
+        <div class="ai-master-toggle-row">
+            <span class="ai-master-hint">{escape(hint)}</span>
+            <a class="ai-master-toggle-btn" href="?ai_topics=expand-all" target="_self">▼ {escape(expand_all)}</a>
+            <a class="ai-master-toggle-btn" href="?ai_topics=collapse-all" target="_self">▶ {escape(collapse_all)}</a>
+        </div>
+    """).strip()
 
 
 def _render_ai_card_html(thesis: dict, validation: dict, lang_zh: bool) -> str:
@@ -1045,19 +1595,27 @@ def _render_ai_synthesis_html(synthesis: dict, lang_zh: bool) -> str:
 
 
 def _render_ai_validation_tracker_html(thesis_results: list[dict], lang_zh: bool) -> str:
-    """Render the multi-thesis validation tracker. Each thesis = one summary
-    row + N detail rows (one per validation point)."""
+    """Render the multi-thesis validation tracker.
+
+    v1.10.7: Now uses the SAME collapsible-by-topic structure as the
+    cards block. Each topic is its own <details> element with a
+    rich summary header (matching the cards block, but highlighting
+    ⚠️ weakest instead of 💪 strongest, since the tracker is where
+    you drill in to fix problems).
+
+    Auto-expand state is shared with the cards block: a topic open
+    in the cards is also open in the tracker, and vice versa.
+    """
     if lang_zh:
         col_label, col_value, col_score, col_interp = "驗證點", "目前數值", "符合 %", "解讀"
         title = "📊 每日驗證表"
-        subtitle = "每個論點分數 = 各驗證點加權平均 · 7 日趨勢箭頭顯示市場是逐漸驗證(↑)還是脫離(↓)分析師的論點"
+        subtitle = "依主題分組;同樣依驗證分自動展開。每個論點分數 = 各驗證點加權平均"
     else:
         col_label, col_value, col_score, col_interp = "Point", "Latest", "Score %", "Read"
         title = "📊 Daily Validation Tracker"
-        subtitle = "Score = weighted avg of validation points · arrow = 7-day drift toward / away from thesis"
+        subtitle = "Grouped by topic; auto-expands by score. Score = weighted avg of validation points"
 
-    rows_html: list[str] = []
-    rows_html.append(
+    header_row = (
         f'<div class="ai-tracker-row ai-tracker-row-header">'
         f'  <div>{escape(col_label)}</div>'
         f'  <div>{escape(col_value)}</div>'
@@ -1066,57 +1624,77 @@ def _render_ai_validation_tracker_html(thesis_results: list[dict], lang_zh: bool
         f'</div>'
     )
 
-    for tr in thesis_results:
-        thesis = tr["thesis"]
-        v = tr["validation"]
-        verdict = v.get("verdict", "neutral")
-        score = v.get("thesis_score", 50)
-        arrow, trend_class, trend_label = _thesis_trend_arrow(thesis.get("id", ""), score)
+    # Build one <details> accordion per topic
+    groups = _group_thesis_results_by_topic(thesis_results)
+    accordions_html: list[str] = []
+    for group in groups:
+        is_open = _topic_open_state(group["key"], group["stats"])
+        open_attr = " open" if is_open else ""
+        summary_html = _render_topic_summary_html(group, lang_zh, block_kind="tracker")
 
-        # Thesis-level summary row
-        rows_html.append(
-            f'<div class="ai-tracker-row ai-tracker-row-thesis ai-thesis-{escape(verdict)}">'
-            f'  <div class="ai-tracker-thesis-line">'
-            f'    <span class="ai-tracker-thesis-title">{escape(thesis.get("title", ""))}</span>'
-            f'    <span class="ai-tracker-thesis-score ai-card-validation-num-{escape(verdict)}">{score:.0f}</span>'
-            f'    <span class="ai-card-validation-trend {escape(trend_class)}">{arrow} {escape(trend_label)}</span>'
-            f'  </div>'
-            f'</div>'
-        )
+        # Build the rows for this topic only
+        topic_rows: list[str] = [header_row]
+        for tr in group["items"]:
+            thesis = tr["thesis"]
+            v = tr["validation"]
+            verdict = v.get("verdict", "neutral")
+            score = v.get("thesis_score", 50)
+            arrow, trend_class, trend_label = _thesis_trend_arrow(thesis.get("id", ""), score)
 
-        # Per-point detail rows
-        for p in v.get("points") or []:
-            p_score = p.get("score", 50)
-            if p_score >= 65:
-                pv = "validating"
-            elif p_score >= 40:
-                pv = "neutral"
-            else:
-                pv = "diverging"
-            fill_pct = max(0.0, min(100.0, p_score))
-            rows_html.append(
-                f'<div class="ai-tracker-row">'
-                f'  <div class="ai-tracker-cell-label">{escape(p.get("label", ""))}</div>'
-                f'  <div class="ai-tracker-cell-value">{escape(p.get("value_text", "—"))}</div>'
-                f'  <div class="ai-tracker-cell-score">'
-                f'    <span class="ai-tracker-score-num">{p_score:.0f}</span>'
-                f'    <div class="ai-tracker-score-bar">'
-                f'      <div class="ai-tracker-score-fill ai-tracker-score-fill-{escape(pv)}" style="width:{fill_pct:.0f}%"></div>'
-                f'    </div>'
+            # Thesis-level summary row
+            topic_rows.append(
+                f'<div class="ai-tracker-row ai-tracker-row-thesis ai-thesis-{escape(verdict)}">'
+                f'  <div class="ai-tracker-thesis-line">'
+                f'    <span class="ai-tracker-thesis-title">{escape(thesis.get("title", ""))}</span>'
+                f'    <span class="ai-tracker-thesis-score ai-card-validation-num-{escape(verdict)}">{score:.0f}</span>'
+                f'    <span class="ai-card-validation-trend {escape(trend_class)}">{arrow} {escape(trend_label)}</span>'
                 f'  </div>'
-                f'  <div class="ai-tracker-cell-interp">{escape(p.get("interpretation", ""))}</div>'
                 f'</div>'
             )
 
-    rows_block = "".join(rows_html)
+            # Per-point detail rows
+            for p in v.get("points") or []:
+                p_score = p.get("score", 50)
+                if p_score >= 65:
+                    pv = "validating"
+                elif p_score >= 40:
+                    pv = "neutral"
+                else:
+                    pv = "diverging"
+                fill_pct = max(0.0, min(100.0, p_score))
+                topic_rows.append(
+                    f'<div class="ai-tracker-row">'
+                    f'  <div class="ai-tracker-cell-label">{escape(p.get("label", ""))}</div>'
+                    f'  <div class="ai-tracker-cell-value">{escape(p.get("value_text", "—"))}</div>'
+                    f'  <div class="ai-tracker-cell-score">'
+                    f'    <span class="ai-tracker-score-num">{p_score:.0f}</span>'
+                    f'    <div class="ai-tracker-score-bar">'
+                    f'      <div class="ai-tracker-score-fill ai-tracker-score-fill-{escape(pv)}" style="width:{fill_pct:.0f}%"></div>'
+                    f'    </div>'
+                    f'  </div>'
+                    f'  <div class="ai-tracker-cell-interp">{escape(p.get("interpretation", ""))}</div>'
+                    f'</div>'
+                )
+
+        accordions_html.append(textwrap.dedent(f"""
+            <details class="ai-topic-section"{open_attr}>
+                {summary_html}
+                <div class="ai-topic-body">
+                    <div class="ai-tracker-table-segment">
+                        {''.join(topic_rows)}
+                    </div>
+                </div>
+            </details>
+        """).strip())
+
     return textwrap.dedent(f"""
         <div class="ai-validation-tracker">
             <div class="ai-share-section-head" style="margin-top:0">
                 <div class="ai-share-section-title">{escape(title)}</div>
             </div>
             <div class="ai-share-section-meta" style="margin-bottom:8px">{escape(subtitle)}</div>
-            <div class="ai-tracker-table">
-                {rows_block}
+            <div class="ai-tracker-shell-grouped">
+                {''.join(accordions_html)}
             </div>
         </div>
     """).strip()
@@ -1153,12 +1731,12 @@ def render_ai_analysis_share_dashboard() -> None:
             _record_thesis_score_today(thesis.get("id", ""), validation["thesis_score"])
         thesis_results.append({"thesis": thesis, "validation": validation})
 
-    # ----- Block 1: AI 論點卡片 -----
+    # ----- Block 1: AI 論點卡片 (v1.10.5: now grouped by topic) -----
     section_title = "📋 AI 論點卡片" if lang_zh else "📋 AI Theses"
     section_meta = (
-        "手動編輯;每張卡片代表一個分析論點"
+        "依主題分組;低驗證分主題自動展開,點主題標頭可折疊 / 展開"
         if lang_zh else
-        "Manually curated; each card is one analyst claim"
+        "Grouped by topic; low-score topics auto-expand. Click any header to fold/unfold."
     )
     head_html = textwrap.dedent(f"""
         <div class="ai-share-shell">
@@ -1166,14 +1744,35 @@ def render_ai_analysis_share_dashboard() -> None:
                 <div class="ai-share-section-title">{escape(section_title)}</div>
                 <div class="ai-share-section-meta">{escape(section_meta)}</div>
             </div>
-            <div class="ai-cards-grid">
     """).strip()
-    cards_html = "".join(
-        _render_ai_card_html(tr["thesis"], tr["validation"], lang_zh)
-        for tr in thesis_results
-    )
-    tail_html = "</div></div>"
-    _render_html_block(head_html + cards_html + tail_html)
+    _render_html_block(head_html)
+
+    # Master expand-all / collapse-all toggle row
+    _render_html_block(_render_master_toggle_row_html(lang_zh))
+
+    # Group + render each topic as a <details> accordion
+    groups = _group_thesis_results_by_topic(thesis_results)
+    for group in groups:
+        is_open = _topic_open_state(group["key"], group["stats"])
+        open_attr = " open" if is_open else ""
+        summary_html = _render_topic_summary_html(group, lang_zh, block_kind="cards")
+        cards_html = "".join(
+            _render_ai_card_html(tr["thesis"], tr["validation"], lang_zh)
+            for tr in group["items"]
+        )
+        section_html = textwrap.dedent(f"""
+            <details class="ai-topic-section"{open_attr}>
+                {summary_html}
+                <div class="ai-topic-body">
+                    <div class="ai-cards-grid">
+                        {cards_html}
+                    </div>
+                </div>
+            </details>
+        """).strip()
+        _render_html_block(section_html)
+
+    _render_html_block("</div>")  # close ai-share-shell
 
     # ----- Block 2: 整體判斷 -----
     if AI_ANALYSIS_SYNTHESIS:
