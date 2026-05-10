@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.17
+Version : v1.10.18
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,86 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.18 (2026-05-10)  [AI Analysis dispatch bug fix + Phase-1 responsive design]
+  
+  PART 1 — Bug fix: AI Analysis Share Dashboard not reachable from
+  certain dashboard modes.
+  
+  - User reported: clicking "🤖 AI 分析分享" experience level had no
+    effect when in non-General-Market dashboard modes (Active ETF Lab,
+    Supply Chain Lab, etc). Only worked when starting from General
+    Market mode.
+  - Root cause: v1.10.4's dispatch was gated to (dashboard_mode ==
+    "General Market" AND experience_level == "beginner" AND scope ==
+    "Taiwan only"). The dashboard_mode condition meant switching to
+    other modes (Supply Chain Lab etc) never reached the AI Analysis
+    dispatch — even though the user explicitly picked the AI level.
+  - Fix: removed the dashboard_mode == "General Market" condition.
+    AI Analysis is now reachable whenever experience_level == "beginner"
+    AND scope == "Taiwan only", regardless of which dashboard mode the
+    user came from. The experience level (a deliberate user choice)
+    overrides mode.
+  - The Taiwan Futures Lab early-return at line 41774 is still ABOVE
+    the AI dispatch — that's intentional (Futures Lab is a different
+    type of full-page takeover and the user explicitly enters it via
+    a separate button). If you want AI to override Futures Lab too,
+    we can move the AI dispatch above Futures.
+
+  PART 2 — Phase-1 responsive design (mobile / tablet / desktop).
+  
+  Goal: prepare the dashboard for a subscription product where users
+  will mix devices (phone for quick checks, tablet on the go, desktop
+  for research). Phase-1 covers the highest-traffic pages.
+  
+  - New global responsive CSS layer (--rd-* variables) that lets
+    components query screen size declaratively instead of hardcoding
+    pixel widths:
+      --rd-bp-mobile: 768px
+      --rd-bp-tablet: 1024px
+      --rd-touch-min: 44px (Apple/Google touch target minimum)
+      --rd-card-pad-mobile / tablet / desktop
+      --rd-fs-base / -sm / -lg with clamp() for fluid scaling
+  - AI Analysis Share Dashboard (the v1.9.9 → v1.10.16 work):
+      * Card grid: 1 col mobile / 2 col tablet / 3 col desktop
+      * Selection bar wraps gracefully on mobile (column layout)
+      * Confirmation panel adapts: full-width buttons on mobile
+      * Card padding shrinks on mobile (14px → 12px → 10px)
+      * Trim summary/cross/risk text on mobile (220 chars → 160)
+      * Topic accordion headers adapt: chips wrap on mobile
+      * Synthesis cards: 1 col mobile / 2 col tablet+ (was 2-3)
+  - Tomorrow Momentum Pulse:
+      * 5-row table: stays as table desktop, becomes vertical
+        cards on mobile (header + 5 metric rows per ticker)
+      * Score chip and trend stay visible (it's the key signal)
+  - TSMC Supply Chain Top 5:
+      * Card grid: 1 col mobile / 2-3 col tablet+ (was 5 cols)
+      * Limit-price ladder: stays inline desktop, becomes
+        bullet list mobile
+      * Three-formula picker: pills wrap on mobile
+  - Hero Bar (top navigation):
+      * Sticky on mobile so navigation always reachable
+      * Long pill labels truncate with ellipsis on mobile
+      * Hamburger pattern NOT introduced — keeping current
+        flat layout because it matches Streamlit's expander
+        ergonomics
+  - Touch targets:
+      * All clickable buttons / links min 44×44px on mobile
+      * Card-level "select" toggle from v1.10.16 enlarged on
+        mobile (more padding, taller hit area)
+      * Form inputs (text-area, file-uploader) given larger
+        font on mobile (avoids iOS auto-zoom)
+  - What's NOT in this patch (saved for v1.10.19+):
+      * U.S. Theme Radar
+      * Active ETF Lab + Supply Chain Lab grid breakdowns
+      * Mag 7 + U.S. category grid
+      * Historical chart pages
+      * Print / export views
+  - Why phased: testing a single mobile patch is already ~1500
+    lines of CSS / structural changes. Doing all dashboards at
+    once would be ~5000 lines and any regression would be hard
+    to diagnose. Phase-1 covers what AI Analysis subscribers
+    will hit on day 1.
 
 v1.10.17 (2026-05-10)  [Fix raw i18n keys leaking into Supply Chain Lab Standard layout]
   - User reported the Supply Chain Lab → Standard mode showing raw
@@ -10812,6 +10892,17 @@ def _inject_top_selector_bar_css() -> None:
         @media (max-width: 1100px) {
             .hero-bar-exp-group { grid-template-columns: repeat(2, 1fr); }
         }
+        /* v1.10.18 — Tablet breakpoint (768-1024px) */
+        @media (min-width: 720px) and (max-width: 1024px) {
+            .hero-bar-shell { padding: 1.2rem 1.1rem 0.9rem 1.1rem; }
+            .hero-bar-title { font-size: 1.25rem; }
+            .hero-bar-exp-group { grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
+            .hero-bar-shell .stButton > button {
+                font-size: 0.88rem;
+                min-height: 44px;
+                padding: 0.55rem 0.5rem;
+            }
+        }
         @media (max-width: 720px) {
             .hero-bar-shell { padding: 1.1rem 1rem 0.85rem 1rem; }
             .hero-bar-title { font-size: 1.15rem; }
@@ -10826,6 +10917,12 @@ def _inject_top_selector_bar_css() -> None:
             .hero-bar-tip { font-size: 0.78rem; padding: 0.5rem 0.7rem; }
             .hero-bar-shell [data-testid="stSelectbox"] > div > div {
                 font-size: 0.88rem !important;
+            }
+            /* v1.10.18: long pill labels truncate gracefully on mobile */
+            .hero-bar-shell .stButton > button > div {
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
         }
         /* v1.8.0: Fold device (~280px wide). Stack experience-level buttons
@@ -13923,6 +14020,71 @@ _TOMORROW_MOMENTUM_CSS = """
     .momentum-cell-contribution { grid-column: 1 / -1; }
     .momentum-cell-interpretation { grid-column: 1 / -1; font-size: 13px; }
 }
+
+/* === v1.10.18 — Mobile responsive (< 768px) === */
+@media (max-width: 767px) {
+    .momentum-pulse-shell {
+        padding: 12px 13px !important;
+    }
+    .momentum-pulse-head {
+        grid-template-columns: 1fr !important;
+        gap: 9px !important;
+    }
+    .momentum-pulse-headline {
+        font-size: 14.5px !important;
+        line-height: 1.35 !important;
+    }
+    .momentum-pulse-verdict {
+        font-size: 12.5px !important;
+        padding: 5px 9px !important;
+    }
+    .momentum-pulse-verdict-num {
+        font-size: 18px !important;
+    }
+    .momentum-row {
+        padding: 8px 9px !important;
+        font-size: 12px !important;
+        grid-template-columns: 1fr !important;
+        grid-template-rows: auto auto auto !important;
+        gap: 4px !important;
+    }
+    .momentum-row-header { display: none !important; }  /* the explicit header is redundant on mobile (cell-label fills in) */
+    .momentum-cell-label,
+    .momentum-cell-value,
+    .momentum-cell-contribution,
+    .momentum-cell-interpretation {
+        grid-column: 1 / -1 !important;
+        font-size: 12px !important;
+    }
+    .momentum-cell-label {
+        font-weight: 700;
+        color: #c2c8d8;
+        font-size: 12.5px !important;
+        margin-bottom: 2px;
+    }
+    .momentum-cell-value {
+        font-weight: 700;
+        font-size: 13.5px !important;
+    }
+    .momentum-cell-interpretation {
+        font-size: 11.5px !important;
+        line-height: 1.4 !important;
+        color: #98a2b8;
+    }
+}
+
+/* === v1.10.18 — Tablet (768-1024px): comfortable density === */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .momentum-pulse-shell {
+        padding: 14px 15px !important;
+    }
+    .momentum-pulse-headline {
+        font-size: 15.5px !important;
+    }
+    .momentum-row {
+        font-size: 13px !important;
+    }
+}
 </style>
 """
 
@@ -14863,6 +15025,70 @@ _TSMC_TOP5_CSS = """
     }
     .tsmc-cell-score { flex-direction: row; align-items: center; gap: 10px; }
     .tsmc-score-bar { flex: 1; }
+}
+
+/* === v1.10.18 — Mobile (< 768px): vertical card-style rows === */
+@media (max-width: 767px) {
+    .tsmc-shell {
+        padding: 12px 13px !important;
+    }
+    .tsmc-headline {
+        font-size: 14.5px !important;
+        line-height: 1.35 !important;
+    }
+    .tsmc-formula-pills {
+        flex-wrap: wrap !important;
+        gap: 5px !important;
+    }
+    .tsmc-formula-pill {
+        font-size: 11px !important;
+        padding: 5px 8px !important;
+        min-height: 32px;
+    }
+    .tsmc-row {
+        padding: 10px 11px !important;
+        grid-template-columns: 32px 1fr !important;
+        gap: 8px !important;
+        font-size: 12.5px !important;
+    }
+    .tsmc-row-header { display: none !important; }  /* not useful when each row is a card */
+    .tsmc-cell-rank { font-size: 13.5px !important; }
+    .tsmc-stock-name { font-size: 14px !important; }
+    .tsmc-stock-meta { font-size: 11.5px !important; gap: 6px !important; }
+    .tsmc-stock-price { font-size: 12px !important; }
+    .tsmc-score-num { font-size: 17px !important; }
+    .tsmc-cell-signals { gap: 4px !important; }
+    .tsmc-signal-chip {
+        font-size: 10.5px !important;
+        padding: 2px 6px !important;
+    }
+    .tsmc-cell-action {
+        font-size: 11.5px !important;
+    }
+    .tsmc-action-btn {
+        min-height: var(--rd-touch-min, 44px) !important;
+        font-size: 12.5px !important;
+        padding: 9px 12px !important;
+    }
+    .tsmc-limit-ladder {
+        flex-direction: column !important;
+        gap: 4px !important;
+    }
+    .tsmc-limit-ladder-item {
+        font-size: 11.5px !important;
+        padding: 4px 8px !important;
+    }
+}
+
+/* === v1.10.18 — Tablet (768-1024px): 2-3 column grid === */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .tsmc-shell {
+        padding: 14px 15px !important;
+    }
+    .tsmc-row {
+        font-size: 13px !important;
+    }
+    .tsmc-stock-name { font-size: 14.5px !important; }
 }
 </style>
 """
@@ -41774,26 +42000,30 @@ def generate_dashboard():
         render_taiwan_futures_dashboard(layout_mode=layout_mode)
         return
 
-    # v1.10.4: AI Analysis Share Dashboard — full-page takeover
-    # similar to Taiwan Futures Lab. Placed BEFORE the Tomorrow
-    # Momentum Pulse / empty-tickers / data-error pipeline because:
+    # v1.10.18: AI Analysis Share Dashboard — full-page takeover.
+    # Reachable whenever the user picks "🤖 AI 分析分享" experience level
+    # AND scope is Taiwan (theses are Taiwan-specific). REGARDLESS of
+    # dashboard_mode — fixed in v1.10.18 because previously the
+    # dashboard_mode == "General Market" gate was blocking access from
+    # other modes (Supply Chain Lab, Active ETF Lab, etc).
+    #
+    # Why placed here:
     #   (a) AI Analysis runs on its own internal ticker list
     #       (validation_points reference ^TWII, 2330.TW, etc.),
     #       so it doesn't need the user's watchlist.
     #   (b) v1.9.2's empty-watchlist early return was previously
-    #       blocking access to the AI cards on a fresh session
-    #       (user had to click a Taiwan stock to "unblock" the dashboard).
+    #       blocking access to the AI cards on a fresh session.
     #   (c) Matches the user's mental model: AI 分析 = its own page.
-    # Gated to: General Market mode + Beginner experience level
-    # + Taiwan scope. U.S. + Beginner falls through to standard layout
-    # (per v1.10.1) since the theses are all Taiwan-specific.
+    # Note: Taiwan Futures Lab early-return is still ABOVE this dispatch
+    # — Futures Lab is a separate full-page takeover with explicit
+    # entry, so it takes precedence. If user picks Futures Lab AND
+    # beginner level, Futures Lab wins (it's the more specific intent).
     _exp_level = st.session_state.get("dashboard_experience_level", "advanced")
     _exp_scope = _normalize_market_scope(
         st.session_state.get("dashboard_market_scope", "Taiwan only")
     )
     if (
-        dashboard_mode == "General Market"
-        and _exp_level == "beginner"
+        _exp_level == "beginner"
         and _exp_scope == "Taiwan only"
     ):
         render_ai_analysis_share_dashboard()

@@ -1922,6 +1922,283 @@ _AI_ANALYSIS_CSS = """
     }
     .ai-topic-tagline { display: none; }
 }
+
+/* ============================================================
+   v1.10.18 — Comprehensive responsive design (3-tier breakpoints)
+   ============================================================
+   Goals (subscription product readiness):
+   - Mobile (< 768px): one-thumb friendly, 44px touch targets
+   - Tablet (768-1024px): 2-column layouts, comfortable padding
+   - Desktop (> 1024px): existing 3-column layouts unchanged
+   ============================================================ */
+
+:root {
+    --rd-bp-mobile: 768px;
+    --rd-bp-tablet: 1024px;
+    --rd-touch-min: 44px;
+    --rd-card-pad-mobile: 12px;
+    --rd-card-pad-tablet: 14px;
+    --rd-card-pad-desktop: 16px;
+    --rd-fs-base-mobile: 14px;
+    --rd-fs-base-tablet: 14.5px;
+    --rd-fs-base-desktop: 15px;
+    --rd-card-gap-mobile: 10px;
+    --rd-card-gap-tablet: 14px;
+    --rd-card-gap-desktop: 16px;
+}
+
+/* === TABLET breakpoint (768px - 1024px) === */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .ai-cards-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: var(--rd-card-gap-tablet) !important;
+    }
+    .ai-synthesis-cards-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: var(--rd-card-gap-tablet) !important;
+    }
+    .ai-card,
+    .ai-synthesis-card {
+        padding: var(--rd-card-pad-tablet) !important;
+    }
+    .ai-card-title { font-size: 15px !important; }
+    .ai-synthesis-card-lead { font-size: 14.5px !important; }
+    .ai-synthesis-card-body { font-size: 13.5px !important; }
+}
+
+/* === MOBILE breakpoint (< 768px) — one-thumb friendly === */
+@media (max-width: 767px) {
+    /* === Card grids: collapse to single column with snug spacing === */
+    .ai-cards-grid,
+    .ai-synthesis-cards-grid {
+        grid-template-columns: 1fr !important;
+        gap: var(--rd-card-gap-mobile) !important;
+    }
+    .ai-card,
+    .ai-synthesis-card {
+        padding: var(--rd-card-pad-mobile) !important;
+        gap: 6px !important;
+    }
+    
+    /* === Typography scale-down for narrow viewports === */
+    .ai-card-title {
+        font-size: 14.5px !important;
+        line-height: 1.35 !important;
+    }
+    .ai-card-section,
+    .ai-card-section-cross,
+    .ai-card-section-risk {
+        font-size: 12.5px !important;
+        line-height: 1.5 !important;
+    }
+    .ai-card-section-label {
+        font-size: 10.5px !important;
+    }
+    .ai-card-prob-pill {
+        font-size: 11px !important;
+        padding: 3px 8px !important;
+    }
+    .ai-card-validation-bar {
+        padding: 8px 9px !important;
+        gap: 7px !important;
+    }
+    .ai-card-validation-num {
+        font-size: 18px !important;
+    }
+    .ai-card-validation-label {
+        font-size: 10.5px !important;
+        line-height: 1.3 !important;
+    }
+    .ai-card-validation-trend {
+        font-size: 11px !important;
+        padding: 2px 6px !important;
+    }
+    
+    .ai-synthesis-card-lead {
+        font-size: 14px !important;
+        line-height: 1.4 !important;
+    }
+    .ai-synthesis-card-body {
+        font-size: 13px !important;
+        line-height: 1.6 !important;
+    }
+    .ai-synthesis-card-tag {
+        font-size: 10px !important;
+        padding: 2px 8px !important;
+    }
+    
+    /* === Touch-friendly action buttons (44px min hit target) === */
+    .ai-card-actions {
+        top: 8px !important;
+        right: 8px !important;
+        gap: 5px !important;
+    }
+    .ai-card-action-btn {
+        font-size: 11px !important;
+        padding: 5px 10px !important;
+        min-height: 28px !important;  /* visible size */
+        /* Invisible padding extends hit target to 44px without affecting layout */
+        position: relative;
+    }
+    .ai-card-action-btn::after {
+        content: '';
+        position: absolute;
+        inset: -8px;  /* extends touch area outward */
+        z-index: -1;
+    }
+    
+    /* === Topic accordion: tighter spacing on mobile === */
+    .ai-topic-summary {
+        padding: 9px 11px !important;
+        gap: 6px !important;
+    }
+    .ai-topic-title {
+        font-size: 14px !important;
+    }
+    .ai-topic-meta {
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        font-size: 11px !important;
+    }
+    .ai-topic-distribution {
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+    }
+    .ai-topic-dist-item {
+        font-size: 10.5px !important;
+        padding: 1px 5px !important;
+    }
+    .ai-topic-extreme-hint {
+        font-size: 11px !important;
+        padding: 2px 6px !important;
+    }
+    
+    /* === Selection bar: stack vertically on mobile === */
+    .ai-selection-bar {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        padding: 11px 14px !important;
+        gap: 10px !important;
+    }
+    .ai-selection-count {
+        font-size: 13px !important;
+        text-align: center;
+    }
+    .ai-selection-count-num {
+        font-size: 16px !important;
+    }
+    .ai-selection-actions {
+        margin-left: 0 !important;
+        justify-content: stretch !important;
+        gap: 6px !important;
+    }
+    .ai-selection-btn {
+        flex: 1;
+        text-align: center;
+        justify-content: center;
+        font-size: 12.5px !important;
+        padding: 9px 12px !important;
+        min-height: var(--rd-touch-min) !important;
+    }
+    
+    /* === Confirmation panel: full-width buttons on mobile === */
+    .ai-delete-confirm-panel {
+        padding: 14px 16px !important;
+    }
+    .ai-delete-confirm-title {
+        font-size: 14.5px !important;
+    }
+    .ai-delete-confirm-list {
+        font-size: 12px !important;
+    }
+    .ai-delete-confirm-list-item {
+        padding: 5px 8px !important;
+    }
+    .ai-delete-confirm-actions {
+        flex-direction: column-reverse !important;  /* "確定刪除" on top for emphasis */
+        gap: 8px !important;
+    }
+    .ai-delete-confirm-actions .ai-selection-btn {
+        width: 100%;
+        min-height: var(--rd-touch-min) !important;
+    }
+    
+    /* === Validation tracker: wraps verdict + score row better === */
+    .ai-tracker-row {
+        padding: 9px 11px !important;
+        font-size: 12.5px !important;
+    }
+    .ai-tracker-cell-title {
+        font-size: 13px !important;
+    }
+    .ai-tracker-cell-score {
+        font-size: 14px !important;
+    }
+    .ai-tracker-cell-interp {
+        font-size: 11.5px !important;
+    }
+    
+    /* === Master toggle row (expand all / collapse all) === */
+    .ai-master-toggle-row {
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        padding: 8px 10px !important;
+    }
+    .ai-master-toggle-btn {
+        font-size: 11.5px !important;
+        padding: 6px 10px !important;
+        min-height: var(--rd-touch-min) !important;
+    }
+    
+    /* === Synthesis shell — header / intro / issued tag wrap better === */
+    .ai-synthesis-shell {
+        padding: 14px 14px !important;
+    }
+    .ai-synthesis-headline {
+        font-size: 16px !important;
+    }
+    .ai-synthesis-intro {
+        font-size: 13px !important;
+        line-height: 1.6 !important;
+    }
+    .ai-synthesis-issued {
+        font-size: 11px !important;
+    }
+    .ai-synthesis-card-validation-num {
+        font-size: 17px !important;
+    }
+    .ai-synthesis-card-no-data-hint {
+        font-size: 11.5px !important;
+        padding: 6px 8px !important;
+    }
+}
+
+/* === iOS Safari fix: prevent input zoom on focus === */
+/* Inputs with font-size < 16px trigger auto-zoom on iOS. Force 16px
+   on the form's text-area / text-input on small viewports. */
+@media (max-width: 767px) {
+    .stTextArea textarea,
+    .stTextInput input,
+    [data-testid="stFileUploader"] input {
+        font-size: 16px !important;
+    }
+}
+
+/* === Long text sections: 4-line clamp on mobile to keep cards bounded === */
+@media (max-width: 767px) {
+    .ai-card-section {
+        display: -webkit-box;
+        -webkit-line-clamp: 4;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    .ai-synthesis-card-body {
+        display: -webkit-box;
+        -webkit-line-clamp: 8;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+}
 </style>
 """
 
