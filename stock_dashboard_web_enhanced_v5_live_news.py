@@ -3,8 +3,8 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.3
-Updated : 2026-05-09
+Version : v1.10.4
+Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
 
@@ -244,6 +244,44 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.4 (2026-05-10)  [AI Analysis Dashboard — promote to early-return full-page takeover]
+  - User reported two bugs that turned out to share one root cause:
+      1. Clicking 🤖 AI 分析分享 doesn't auto-show the thesis cards
+         (selecting any Taiwan stock makes them appear)
+      2. Switching scope/language/mode while in AI 分析 shows the
+         same broken state until you click a Taiwan stock again
+  - Root cause: the dispatch in generate_dashboard() reaches the
+    AI Analysis branch only AFTER the v1.9.2 empty-watchlist /
+    data-error early returns:
+        ...
+        if _empty_tickers_state:
+            st.warning("please_select_ticker"); return  ← dies here
+        ...
+        AI Analysis dispatch                            ← unreachable
+    But AI Analysis Dashboard runs on its own internal ticker list
+    (^TWII, 2330.TW, 0050.TW, 0056.TW, 2454.TW, 2317.TW from the
+    validation_points), so the empty-watchlist check is irrelevant
+    for it. With an empty watchlist, the user got the warning
+    instead of the cards.
+  - Fix: promote AI Analysis to a top-level full-page takeover
+    (similar to Taiwan Futures Lab), placed right after the
+    Futures Lab early return and BEFORE the Tomorrow Momentum
+    Pulse / empty-tickers / data-error pipeline:
+        if dashboard_mode == "Taiwan Futures Lab": ... return
+        if (mode=GM AND level=beginner AND scope=TW): render AI; return  ← NEW
+        Tomorrow Momentum Pulse renders below
+        ... etc ...
+  - The dispatch matches Taiwan Futures pattern exactly: AI Analysis
+    is "its own page" with no Pulse / Snapshot / Indicator above
+    it — clean, focused, and bypasses the empty-watchlist check.
+  - Bottom dispatch simplified: the now-unreachable AI Analysis
+    branch (line 41606-41611) is removed; main dispatch reverts to
+    a simple if/elif/else without the experience_level check.
+  - Trade-off accepted: AI Analysis users no longer see Tomorrow
+    Momentum Pulse above the cards. This matches the user's
+    original mental model from v1.9.9 ("進來以後就有一些全新的
+    Dashboard 分享" = a totally separate page).
 
 v1.10.3 (2026-05-09)  [v1.10.2 follow-up — call _cockpit_inject_css for radar styling]
   - User reported the v1.10.2 U.S. Theme Radar rendered as plain
@@ -41351,6 +41389,31 @@ def generate_dashboard():
         render_taiwan_futures_dashboard(layout_mode=layout_mode)
         return
 
+    # v1.10.4: AI Analysis Share Dashboard — full-page takeover
+    # similar to Taiwan Futures Lab. Placed BEFORE the Tomorrow
+    # Momentum Pulse / empty-tickers / data-error pipeline because:
+    #   (a) AI Analysis runs on its own internal ticker list
+    #       (validation_points reference ^TWII, 2330.TW, etc.),
+    #       so it doesn't need the user's watchlist.
+    #   (b) v1.9.2's empty-watchlist early return was previously
+    #       blocking access to the AI cards on a fresh session
+    #       (user had to click a Taiwan stock to "unblock" the dashboard).
+    #   (c) Matches the user's mental model: AI 分析 = its own page.
+    # Gated to: General Market mode + Beginner experience level
+    # + Taiwan scope. U.S. + Beginner falls through to standard layout
+    # (per v1.10.1) since the theses are all Taiwan-specific.
+    _exp_level = st.session_state.get("dashboard_experience_level", "advanced")
+    _exp_scope = _normalize_market_scope(
+        st.session_state.get("dashboard_market_scope", "Taiwan only")
+    )
+    if (
+        dashboard_mode == "General Market"
+        and _exp_level == "beginner"
+        and _exp_scope == "Taiwan only"
+    ):
+        render_ai_analysis_share_dashboard()
+        return
+
     # v1.9.5: Tomorrow Momentum Pulse — compact 5-row table that estimates
     # next-session strength from the previous close. Lives ABOVE the
     # snapshot freshness bar so it's the first analytical block users
@@ -41592,31 +41655,18 @@ def generate_dashboard():
             supply_chain_keys=selected_supply_chain_groups,
         )
     else:
-        # v1.9.9: When user picked the "🤖 AI 分析分享" experience level
-        # (internal key "beginner") on General Market mode, route to the
-        # AI Analysis Share Dashboard. Other levels (intermediate /
-        # advanced / expert) continue to the standard layout.
-        # v1.10.1: ALSO require Taiwan scope. The AI Analysis theses are
-        # all Taiwan-specific (台股論點 — 杜金龍520以盤代跌、0056變飆股、
-        # 0050、AI半導體主軸等), so on U.S. scope they would render with
-        # no relevant data and the user would lose access to their
-        # Mag 7 + Categories grid layout. U.S. + Beginner now correctly
-        # falls through to render_general_market_dashboard_layout, which
-        # has the Mag 7 grid with click-to-Workspace navigation.
-        _exp_level = st.session_state.get("dashboard_experience_level", "advanced")
-        _exp_scope = _normalize_market_scope(
-            st.session_state.get("dashboard_market_scope", "Taiwan only")
+        # v1.10.4: AI Analysis dispatch was promoted to early-return
+        # at the top of generate_dashboard() (right after Taiwan Futures
+        # Lab). General Market mode reaching this point means the user
+        # is on Intermediate / Advanced / Expert level OR on U.S. scope
+        # (Beginner + U.S. falls through to standard layout per v1.10.1).
+        render_general_market_dashboard_layout(
+            daily_data,
+            intraday_data,
+            dashboard_tickers,
+            lens_meta=lens_meta,
+            layout_mode=layout_mode,
         )
-        if _exp_level == "beginner" and _exp_scope == "Taiwan only":
-            render_ai_analysis_share_dashboard()
-        else:
-            render_general_market_dashboard_layout(
-                daily_data,
-                intraday_data,
-                dashboard_tickers,
-                lens_meta=lens_meta,
-                layout_mode=layout_mode,
-            )
 
 
 # ---------------------------------------------------------------------------
