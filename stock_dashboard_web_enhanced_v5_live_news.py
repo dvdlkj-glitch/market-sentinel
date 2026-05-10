@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.10
+Version : v1.10.17
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,207 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.17 (2026-05-10)  [Fix raw i18n keys leaking into Supply Chain Lab Standard layout]
+  - User reported the Supply Chain Lab → Standard mode showing raw
+    keys like "layout_standard_supply_chain_brief_tab" instead of
+    "1. 供應鏈摘要" / "1. Chain Brief". Same for the navigator's
+    next / back buttons.
+  - Root cause: render_standard_step_navigator() hardcodes
+    format_func=standard_layout_section_label, which calls t(key).
+    Supply chain keys (layout_standard_supply_chain_*_tab) only had
+    translations defined inside supply_chain_layout_section_label —
+    NOT in the global TRANSLATIONS dict that t() reads from. So the
+    fallback at the end of t() returned the raw key.
+  - Fix: register the missing supply chain keys + the existing
+    overview/chains/compare/workspace tab keys in BOTH
+    TRANSLATIONS["English"] and TRANSLATIONS["繁體中文"] so they're
+    available everywhere t() is called from.
+  - Behaviour preserved: supply_chain_layout_section_label() still
+    works as before for the Advanced layout's option selector (which
+    explicitly passes format_func=supply_chain_layout_section_label).
+    The Standard layout's navigator now sees the keys via t() and
+    renders correctly.
+  - Why this happened: when supply chain layout was added later,
+    its translations were scoped to a helper function instead of the
+    global dict — works for the explicit caller, breaks for any
+    code path that calls t(key) directly. The lesson: i18n keys
+    used by tags / labels should live in the global dict.
+
+v1.10.16 (2026-05-10)  [Multi-select delete + explicit confirmation panel]
+  - User chose multi-select + confirmation flow over the v1.10.15
+    two-click pattern. Three structural changes:
+      1. Each user card gets a "☐ 選取" button (toggle to ☑ 已選)
+         next to the existing 🗑 (now repurposed as "select" action)
+      2. A persistent bottom bar shows current selection: 
+         [☑ 已選 N 篇] [🗑 刪除選取] [✕ 全部取消]
+      3. Clicking "🗑 刪除選取" opens an inline confirmation panel
+         listing each thesis title — click [✓ 確定刪除] to commit
+         or [✕ 取消] to back out.
+  - Selection state stored in session_state["_delete_selection_thesis"]
+    and "_delete_selection_synth" (sets of IDs / indices). URL params
+    used for toggling (same pattern as expand-all / delete-pending):
+      ?toggle_select_thesis=<id>     → toggle thesis in/out of set
+      ?toggle_select_synth=<idx>     → toggle synth para in/out of set
+      ?clear_selection=1             → empty the selection sets
+      ?show_delete_confirm=1         → open confirmation panel
+      ?execute_delete=1              → commit the bulk delete
+  - Built-in items still show 🔒 內建 — the new "select" button only
+    appears on user-added cards.
+  - Backward compat: the v1.10.15 single-click delete URL params
+    (?delete_thesis_pending / ?delete_thesis_confirm) are KEPT but
+    deprecated — left in place so any bookmarked URLs still work,
+    and we can fall back if multi-select feels clunky.
+  - Constraint encountered: Streamlit native widgets (checkbox, button)
+    can't live inside a render_html_block, so we use URL-anchor links
+    styled as buttons. Same pattern as the rest of the dashboard.
+
+v1.10.15 (2026-05-10)  [Delete user-added theses + synthesis paragraphs]
+  - User caught us — we added INPUT (4 patches v1.10.11-14) but never
+    DELETE. Card cleanup was missing.
+  - Each user-added card now has a 🗑 delete button on the top-right.
+    Built-in cards (the seed 6 theses + 3 synthesis paragraphs) show
+    a 🔒 lock icon instead — they're code-defined and would re-appear
+    on next deploy anyway, so safer to keep them read-only in UI.
+  - Two-click confirmation pattern (no modal — Streamlit's modal lib is
+    awkward; native two-click is cleaner):
+      1st click: button label changes to "⚠️ 確定刪除?" with red
+                 background, session_state flag set
+      2nd click: actually deletes from JSON, clears flag, st.rerun()
+      Click any other card's delete button: clears prior flag, sets
+                 new one (only one card can be in pending-delete state)
+  - Single source of truth: thesis cards block + validation tracker
+    block both render from the SAME merged list (built-in + user_theses),
+    so deleting one entry makes it disappear from BOTH blocks
+    automatically — no extra wiring needed.
+  - When deleting a user-added thesis, we also clear its trend history
+    from session_state["_ai_thesis_history"] to avoid stale arrows.
+  - Synthesis paragraphs: same pattern. Only user-added paragraphs
+    (those in user_synthesis JSON list) get the delete button.
+  - Detection of "user-added vs built-in" uses ID prefix:
+      user_theses items have id like "user-thesis-1715339042"
+      user_synthesis items have id like "user-synth-1715339042"
+      Built-in items have IDs without "user-" prefix.
+
+v1.10.14 (2026-05-10)  [Replace expander arrow with explicit toggle button]
+  - User feedback: the ">" arrow on st.expander looks like a list item,
+    not an interactive control. Wanted a proper button-style toggle.
+  - Replaced both input forms' st.expander with a manual toggle pattern:
+      Closed state: [➕ 批次匯入論點] (primary-colored button)
+      Open state:   [✕ 關閉批次匯入]
+    Click → toggles session_state flag → form content renders below
+    when flag is True.
+  - Same change applied to "➕ 新增 AI 整體判斷" form.
+  - Visual benefits:
+      * Looks unambiguously clickable (button shape with primary color)
+      * Larger tap target than the arrow icon
+      * Open state has different label so user knows how to close
+  - Behaviour preserved: form content, validation, save flow all
+    unchanged from v1.10.13. Only the wrapper changed.
+  - Implementation note: we deliberately avoid st.expander here because
+    its visual styling (subtle gray arrow) doesn't match the button-
+    forward UX the user wants. A custom button gives full control over
+    primary color, hover state, and label transitions.
+
+v1.10.13 (2026-05-10)  [AI 整體判斷 — auto-detect validation points from body text]
+  - User reported: after adding a new "AI 整體判斷" paragraph, the new
+    card showed "暫無驗證點(可日後補上)" instead of a "目前驗證 %"
+    score. Cause: the v1.10.11 form defaulted n_points=0, so users
+    saving without manually setting it skipped validation entirely.
+  - Fixed by reusing v1.10.12's _auto_generate_validation_points() for
+    the synthesis form too:
+      * Form now has a "🔍 從內文自動偵測驗證點" button BEFORE the
+        manual fields. Click after typing the body — system parses
+        body for index thresholds (e.g. "42,000-45,000"), stock
+        names (e.g. 台積電 / 景碩), and percent values, and pre-fills
+        N validation-point sub-forms.
+      * Default n_points stays at 0 (no surprises on initial render),
+        but auto-detect button bumps it to whatever the parser finds.
+      * Smart-detection chip hint already existed (showing detected
+        thresholds/tickers from body text) — now those chips become
+        actionable: clicking the auto-detect button materializes them
+        into structured validation_point dicts.
+  - The same auto-detect button is also added to the thesis (single-
+    add) form for consistency, even though most users will use the
+    batch import (v1.10.12) path now.
+  - Backward compat: existing saved synthesis paragraphs without
+    validation_points still render with the "暫無驗證點" hint — they
+    can be edited later if user wants to add validation.
+
+v1.10.12 (2026-05-10)  [Batch import — paste-table or CSV-upload to add many theses at once]
+  - User shared a structured table format (image) showing how they
+    actually take notes after watching a video: one row per thesis
+    with columns for 影片可確認主題 / 解說重點 / 目前局勢交叉驗證 /
+    風險反證 / 推估成立機率. Asked to make this the input mechanism
+    instead of v1.10.11's per-field form.
+  - Replaced single-thesis form with TWO entry modes:
+      Mode A: paste a TSV (tab-separated, what Google Docs / Excel
+              produces when you copy a table)
+      Mode B: upload a CSV file
+    Both modes parse into the same internal representation, run
+    smart-detection to seed validation_points, and present a preview
+    BEFORE writing — so you review what will be saved.
+  - Probability parsing handles user's natural language patterns:
+      "高,約65%以上"        → 75
+      "中高,約60-65%"       → 62
+      "中,約55-60%"         → 57
+      "中偏低,約35-45%"     → 40
+      "ASIC題材成立:中高,約65-70%;5,000元短中期達標:中,約45-55%"
+                                → takes the FIRST percentage found (67)
+    Falls back to 50 if no percent found, with a warning.
+  - Topic auto-detection from title:
+      "0050"/"0056"/"ETF" in title → etf-flow
+      "AI"/"半導體"/"晶片"/"ABF"/"光寶" → macro-narrative
+      "台股"/"加權"/"指數"/"4萬"/"5萬" → market-direction
+      "外資"/"成交量"/"量縮" → volume-positioning
+      Default → market-direction (most common case)
+    User can override per row via optional 6th column.
+  - Validation points auto-generated from "目前局勢交叉驗證" column:
+      Detected price levels (e.g. 41,000 / 42,156) → index_level points
+      Detected stock prices (e.g. 2,310元 with stock context) → stock_trend
+      Detected percent moves (e.g. 上漲6.14%) → rally_pace
+      Maximum 2 auto-points per thesis (avoids over-fitting).
+      User can edit / delete each point in preview before saving.
+  - Preview UI lists each parsed thesis with its detected topic,
+    probability, and auto-generated validation points. User clicks
+    "💾 全部加入" to commit all to ai_analysis_data.json, or removes
+    individual rows before committing.
+  - Sample TSV bundled in the form's expander text so user can copy
+    a template and start filling.
+
+v1.10.11 (2026-05-10)  [Input tools — add new theses + synthesis paragraphs from UI]
+  - Per user choice: tools should accept BOTH new theses + new synthesis
+    paragraphs, persisted to a local JSON file.
+  - New file: `ai_analysis_data.json` in the same directory as the
+    dashboard. Schema:
+        {
+          "user_theses":    [<thesis_dict>, ...],
+          "user_synthesis": [<paragraph_dict>, ...]
+        }
+    Created automatically the first time you save something. If the
+    file is missing or unreadable, the dashboard still works — falls
+    back to the built-in datasets.
+  - At render time, dashboards combine:
+        AI_ANALYSIS_THESES (built-in)        + user_theses
+        AI_ANALYSIS_SYNTHESIS["paragraphs"]  + user_synthesis
+    Internal IDs for user-added items are prefixed "user-" with a
+    timestamp (e.g. "user-1715339042") so they don't clash with built-in.
+  - Two new entry points exposed in the dashboard:
+        ➕ 新增論點             button — Streamlit form
+        ➕ 新增 AI 整體判斷    button — Streamlit form
+    Forms collapsed by default to avoid clutter; click button to expand.
+  - Each form auto-detects useful patterns from the typed text
+    (4-digit ticker codes, percent values, index thresholds) and
+    suggests them as one-click validation-point seeds. User remains in
+    full control — chips only fill the form, not auto-submit.
+  - Each card / paragraph that came from user input gets a
+    [✏️ Edit] button on the top-right corner. Built-in items don't
+    show this button (they're read-only — must edit code to change).
+  - Each user-added card / paragraph also has [🗑 Delete] in its edit
+    form, with a confirmation step.
+  - JSON file is read every render (no caching) so multiple devices
+    pointing to the same shared filesystem stay in sync. Writes use
+    atomic rename to avoid corruption on concurrent saves.
 
 v1.10.10 (2026-05-10)  [Synthesis cards layout + rename to "AI 整體判斷"]
   - User: 整體判斷 currently displays as a single multi-paragraph block.
@@ -9422,6 +9623,14 @@ TRANSLATIONS["English"].update({
     "layout_comparison_desk_tab": "Comparison Desk",
     "layout_ticker_desks_tab": "Ticker Desks",
     "layout_etf_workspaces_tab": "ETF Workspaces",
+    # v1.10.17: Supply chain Standard layout keys — were previously
+    # only defined inside supply_chain_layout_section_label() which
+    # meant t() couldn't find them, leaving the navigator showing
+    # raw keys like "layout_standard_supply_chain_brief_tab".
+    "layout_standard_supply_chain_brief_tab": "1. Chain Brief",
+    "layout_standard_supply_chain_compare_tab": "2. Chain Compare",
+    "layout_standard_supply_chain_workspace_tab": "3. Supply Chain Workspace",
+    "layout_supply_chain_tab": "Chains",
 })
 
 TRANSLATIONS["繁體中文"].update({
@@ -9449,6 +9658,11 @@ TRANSLATIONS["繁體中文"].update({
     "layout_comparison_desk_tab": "比較工作檯",
     "layout_ticker_desks_tab": "個股工作檯",
     "layout_etf_workspaces_tab": "ETF 工作台",
+    # v1.10.17: Supply chain Standard layout keys (zh-TW)
+    "layout_standard_supply_chain_brief_tab": "1. 供應鏈摘要",
+    "layout_standard_supply_chain_compare_tab": "2. 供應鏈比較",
+    "layout_standard_supply_chain_workspace_tab": "3. 供應鏈工作台",
+    "layout_supply_chain_tab": "供應鏈",
 })
 
 def tr_term(value):

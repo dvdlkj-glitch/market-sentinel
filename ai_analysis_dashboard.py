@@ -135,6 +135,381 @@ def _news_briefing_is_zh() -> bool:
 
 
 # ----------------------------------------------------------------------------
+# v1.10.11 — Local JSON persistence for user-added theses + synthesis
+# ----------------------------------------------------------------------------
+# We store user-added items in `ai_analysis_data.json` in the same directory
+# as this module. This file is created on first save and read every render.
+# We deliberately skip caching so multiple Streamlit instances pointing at
+# the same shared filesystem (e.g. Docker volume) stay in sync.
+#
+# Schema:
+#   {
+#     "user_theses":    [thesis_dict, ...],
+#     "user_synthesis": [paragraph_dict, ...]
+#   }
+#
+# Each user-added item gets an id prefixed "user-<unix-timestamp>" so it
+# never clashes with built-in IDs.
+# ----------------------------------------------------------------------------
+
+import json
+import os
+import re
+import time as _time
+
+_USER_DATA_FILENAME = "ai_analysis_data.json"
+
+
+def _user_data_path() -> str:
+    """Absolute path to the JSON data file (alongside this module)."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), _USER_DATA_FILENAME)
+
+
+def _load_user_data() -> dict:
+    """Read user-added data from disk. Returns empty structure if file
+    doesn't exist or is unreadable."""
+    path = _user_data_path()
+    if not os.path.exists(path):
+        return {"user_theses": [], "user_synthesis": []}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Defensive: ensure both keys exist
+        if not isinstance(data, dict):
+            return {"user_theses": [], "user_synthesis": []}
+        data.setdefault("user_theses", [])
+        data.setdefault("user_synthesis", [])
+        if not isinstance(data["user_theses"], list):
+            data["user_theses"] = []
+        if not isinstance(data["user_synthesis"], list):
+            data["user_synthesis"] = []
+        return data
+    except (json.JSONDecodeError, OSError):
+        return {"user_theses": [], "user_synthesis": []}
+
+
+def _save_user_data(data: dict) -> bool:
+    """Write user-added data to disk using atomic rename. Returns True on
+    success, False on failure."""
+    path = _user_data_path()
+    tmp_path = path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)  # atomic on POSIX
+        return True
+    except OSError:
+        # Best-effort cleanup
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        return False
+
+
+def _make_user_id(prefix: str = "user") -> str:
+    """Generate a unique-ish ID for a new user-added item."""
+    return f"{prefix}-{int(_time.time())}"
+
+
+# Smart detection — light heuristic, just to give the user clickable
+# starting-point chips. Not authoritative.
+# v1.10.12: Removed \b (word boundary) for CJK compat — Chinese chars
+# don't form word boundaries with ASCII digits properly. Use lookaround
+# instead: not preceded by another digit (so we don't break 1,234,567).
+_RE_INDEX_THRESHOLD = re.compile(r"(?<!\d)(\d{2},\d{3}|\d{4,5})(?!\d)")
+_RE_TICKER_TW_LONG = re.compile(r"(?<!\d)(\d{4})\.TW(?!\d)")
+_RE_TICKER_TW_BARE = re.compile(r"(?<!\d)(\d{4})(?!\d|\.\d|\.TW)")
+_RE_PERCENT = re.compile(r"([+\-]?\d+(?:\.\d+)?)\s*%")
+_RE_HORIZON_KEYWORD = re.compile(r"(本週|本月|下週|下個月|月底|520|6/30|7月底|半年|年底)")
+
+
+def _smart_detect(text: str) -> dict:
+    """Light regex-based hints for filling in form fields.
+
+    Returns {
+        "thresholds": [int, ...],     # candidate index levels
+        "tickers":    [str, ...],     # candidate stock tickers (with .TW suffix)
+        "percents":   [float, ...],   # candidate rally_min_pct values
+        "horizons":   [str, ...],     # raw horizon keywords found
+    }
+    """
+    if not text:
+        return {"thresholds": [], "tickers": [], "percents": [], "horizons": []}
+
+    thresholds: list[int] = []
+    for m in _RE_INDEX_THRESHOLD.finditer(text):
+        raw = m.group(1).replace(",", "")
+        try:
+            n = int(raw)
+            # filter sensible index thresholds (10,000 - 60,000 cover TWII range)
+            if 10000 <= n <= 60000:
+                thresholds.append(n)
+        except ValueError:
+            pass
+
+    tickers: set[str] = set()
+    for m in _RE_TICKER_TW_LONG.finditer(text):
+        tickers.add(f"{m.group(1)}.TW")
+    # Bare 4-digits — only catch ones not already prefixed with .TW
+    for m in _RE_TICKER_TW_BARE.finditer(text):
+        n = m.group(1)
+        # Avoid pulling out things that were really thresholds (already in thresholds)
+        if int(n) in thresholds:
+            continue
+        # Sensible TW stock code range: 1000-9999, exclude obvious year-like
+        if 1000 <= int(n) <= 9999 and n not in {"2024", "2025", "2026", "2027"}:
+            tickers.add(f"{n}.TW")
+
+    percents: list[float] = []
+    for m in _RE_PERCENT.finditer(text):
+        try:
+            p = float(m.group(1))
+            if -50 <= p <= 50:
+                percents.append(p)
+        except ValueError:
+            pass
+
+    horizons: list[str] = []
+    for m in _RE_HORIZON_KEYWORD.finditer(text):
+        h = m.group(1)
+        if h not in horizons:
+            horizons.append(h)
+
+    # Dedupe preserving order
+    return {
+        "thresholds": list(dict.fromkeys(thresholds)),
+        "tickers":    sorted(tickers),
+        "percents":   list(dict.fromkeys(percents)),
+        "horizons":   horizons,
+    }
+
+
+# ----------------------------------------------------------------------------
+# v1.10.12 — Batch import parsers (TSV / CSV → thesis dicts)
+# ----------------------------------------------------------------------------
+# User's natural workflow: after a video, they fill out a structured table
+# (one row per thesis) in Google Docs / Excel. We accept that table directly
+# via paste (TSV) or upload (CSV), parse rows into thesis dicts, and
+# auto-seed validation_points.
+# ----------------------------------------------------------------------------
+
+# Probability parsing — handles user's natural language patterns:
+#   "高,約65%以上"      → 75
+#   "中高,約60-65%"     → 62
+#   "中,約55-60%"       → 57
+#   "中偏低,約35-45%"   → 40
+#   "低,約30%"          → 30
+# Strategy: extract first percent value or range, average a range.
+_RE_PROB_NUM = re.compile(r"(\d+)\s*[\-–~到]\s*(\d+)\s*%|(\d+)\s*%")
+
+
+def _parse_probability(text: str) -> int:
+    """Convert a user's probability description to an int 0-100.
+    Examples:
+        "高,約65%以上"     → 75
+        "中高,約60-65%"    → 62
+        "中,約55-60%"      → 57
+        "中偏低,約35-45%"  → 40
+        "低,約30%"         → 30
+        "ASIC題材成立:中高,約65-70%;5,000元短中期達標:中,約45-55%"
+                              → 67 (first % match)
+    Falls back to 50 if no parseable percent found.
+    """
+    if not text:
+        return 50
+    m = _RE_PROB_NUM.search(text)
+    if not m:
+        # Try keyword fallback
+        s = text.strip()
+        if s.startswith("高"):    return 75
+        if s.startswith("中高"):  return 62
+        if "中偏低" in s:         return 40
+        if s.startswith("中"):    return 55
+        if s.startswith("低"):    return 30
+        return 50
+    if m.group(1) and m.group(2):
+        # Range like "65-70%" — take midpoint
+        lo, hi = int(m.group(1)), int(m.group(2))
+        return (lo + hi) // 2
+    if m.group(3):
+        # Single value like "65%". If it's stated as "以上", lift slightly.
+        n = int(m.group(3))
+        if "以上" in text or "更高" in text:
+            return min(100, n + 10)
+        return n
+    return 50
+
+
+# Topic auto-detection from title — used when user leaves the topic
+# column blank. Order matters: more-specific keywords first.
+def _auto_detect_topic(title: str, summary: str = "") -> str:
+    """Guess a topic key from the title (and optionally summary).
+    Returns an entry in AI_TOPIC_REGISTRY (excluding 'uncategorized')."""
+    haystack = f"{title} {summary}".lower()
+    # ETF-specific tickers / phrases
+    if any(k in haystack for k in ["0050", "0056", "00878", "00919", "00929", "etf"]):
+        return "etf-flow"
+    # Chinese characters
+    haystack_zh = f"{title} {summary}"
+    if any(k in haystack_zh for k in ["0050", "0056", "ETF"]):
+        return "etf-flow"
+    # Macro narrative
+    if any(k in haystack_zh for k in ["AI", "半導體", "晶片", "ABF", "光寶", "聯發科",
+                                       "ASIC", "台積", "景碩", "權值股"]):
+        return "macro-narrative"
+    # Volume / positioning
+    if any(k in haystack_zh for k in ["外資", "成交量", "量縮", "量增", "籌碼",
+                                       "融資", "三大法人"]):
+        return "volume-positioning"
+    # Market direction (most defaults end here)
+    if any(k in haystack_zh for k in ["大盤", "加權", "指數", "4萬", "5萬", "點", "突破",
+                                       "拉回", "回測", "支撐", "壓力", "崩"]):
+        return "market-direction"
+    # Stock-trend (single-stock keywords)
+    if any(k in haystack_zh for k in ["個股", "目標價"]):
+        return "stock-trend"
+    # Default
+    return "market-direction"
+
+
+def _auto_generate_validation_points(title: str, cross_validation: str) -> list[dict]:
+    """Auto-generate up to 3 validation_points from the cross_validation text.
+
+    v1.10.13: Smarter generation:
+        - Multiple index thresholds (e.g. body mentions 41,000 / 42,000 / 45,000)
+          → one index_level point per threshold (up to 3, sorted by relevance)
+        - Stock ticker(s) detected → one stock_trend point per ticker (up to 2)
+        - Percent value mentioned → optional rally_pace point
+        - Fallback only when truly nothing detected
+
+    Cap at 3 points total (avoids over-fitting). User edits in preview.
+    """
+    detected = _smart_detect(cross_validation or "")
+    points: list[dict] = []
+
+    # Index-level points: one per threshold, but cap at 2 (avoid clutter)
+    # Sort thresholds by appearance order (most relevant first usually)
+    thresholds_in_range = [t for t in detected["thresholds"] if t >= 30000]
+    for thresh in thresholds_in_range[:2]:
+        points.append({
+            "type": "index_level",
+            "label": f"加權守 {thresh:,}",
+            "threshold": thresh,
+            "direction": "above",
+            "ticker": "^TWII",
+            "consec_days": 5,
+            "weight": 1.0,
+        })
+
+    # Stock-trend points: one per detected ticker (up to 2)
+    for ticker in detected["tickers"][:2]:
+        if len(points) >= 3:
+            break
+        ticker_short = ticker.replace(".TW", "")
+        points.append({
+            "type": "stock_trend",
+            "label": f"{ticker_short} 5 日續強",
+            "ticker": ticker,
+            "pattern": "rally",
+            "lookback": 5,
+            "rally_min_pct": 2.0,
+            "weight": 1.0,
+        })
+
+    # Fallback: if nothing detected, use TAIEX rally_pace
+    if not points:
+        points.append({
+            "type": "rally_pace",
+            "label": "加權近 10 日漲速合理",
+            "ticker": "^TWII",
+            "lookback": 10,
+            "ideal_min_pct": -2.0,
+            "ideal_max_pct": 8.0,
+            "weight": 1.0,
+        })
+
+    return points
+
+
+def _parse_table_text(text: str, separator: str = "\t") -> list[dict]:
+    """Parse a TSV/CSV blob (with optional header row) into thesis dicts.
+
+    Expected columns (in this order):
+        1. 影片可確認主題 / title          [REQUIRED]
+        2. 解說重點 / summary              [REQUIRED]
+        3. 目前局勢交叉驗證 / cross_validation
+        4. 風險 / 反證 / risk
+        5. 推估成立機率 / probability
+        6. 主題分類 / topic [OPTIONAL]
+
+    Header row (with 影片可確認主題 / title) is auto-detected and skipped.
+
+    Returns a list of dicts with keys: title, summary, cross_validation,
+    risk, claimed_probability, topic, validation_points (auto-seeded).
+    """
+    if not text or not text.strip():
+        return []
+
+    rows: list[dict] = []
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+
+    for line_idx, line in enumerate(lines):
+        cols = [c.strip() for c in line.split(separator)]
+
+        # Skip a header row if the first cell looks like a header
+        first = cols[0] if cols else ""
+        if line_idx == 0 and any(h in first for h in
+                                 ["影片可確認主題", "Title", "title", "主題"]):
+            continue
+
+        # Need at least title + summary
+        if len(cols) < 2 or not cols[0] or not cols[1]:
+            continue
+
+        title = cols[0]
+        summary = cols[1]
+        cv = cols[2] if len(cols) > 2 else ""
+        risk = cols[3] if len(cols) > 3 else ""
+        prob_text = cols[4] if len(cols) > 4 else ""
+        topic_override = cols[5] if len(cols) > 5 else ""
+
+        prob = _parse_probability(prob_text)
+
+        # Resolve topic
+        if topic_override and topic_override in AI_TOPIC_REGISTRY:
+            topic = topic_override
+        elif topic_override:
+            # Try to match by display label
+            topic = None
+            for k, v in AI_TOPIC_REGISTRY.items():
+                if v.get("label_zh") == topic_override or v.get("label_en") == topic_override:
+                    topic = k
+                    break
+            if not topic:
+                topic = _auto_detect_topic(title, summary)
+        else:
+            topic = _auto_detect_topic(title, summary)
+
+        # Auto-generate validation_points from cross_validation text
+        vps = _auto_generate_validation_points(title, cv)
+
+        rows.append({
+            "title": title,
+            "summary": summary,
+            "cross_validation": cv,
+            "risk": risk,
+            "claimed_probability": prob,
+            "probability_text_raw": prob_text,
+            "topic": topic,
+            "validation_points": vps,
+        })
+
+    return rows
+
+
+# ----------------------------------------------------------------------------
 # Validation point types — the calculator dispatches on these
 # ----------------------------------------------------------------------------
 # Each validation_point dict has these fields:
@@ -873,6 +1248,7 @@ _AI_ANALYSIS_CSS = """
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
 }
 .ai-card-header {
     display: flex;
@@ -915,6 +1291,179 @@ _AI_ANALYSIS_CSS = """
 }
 .ai-card-section-risk { color: #f4a3aa; }
 .ai-card-section-cross { color: #c2c8d8; }
+
+/* v1.10.15 — card-corner action buttons (delete / lock indicator) */
+.ai-card-actions {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+}
+.ai-card-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid rgba(96,110,145,.30);
+    background: rgba(96,110,145,.12);
+    color: #c2c8d8;
+    line-height: 1.4;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ai-card-action-btn:hover {
+    background: rgba(96,110,145,.28);
+    color: #f4f6fb;
+    border-color: rgba(96,110,145,.55);
+}
+.ai-card-action-delete {
+    color: #f4a3aa;
+    border-color: rgba(217,102,112,.40);
+    background: rgba(217,102,112,.10);
+}
+.ai-card-action-delete:hover {
+    background: rgba(217,102,112,.25);
+    color: #ffd7da;
+}
+.ai-card-action-confirm {
+    color: #ffd7da;
+    background: rgba(217,102,112,.45);
+    border-color: rgba(217,102,112,.85);
+    animation: ai-confirm-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ai-confirm-pulse {
+    0%, 100% { background: rgba(217,102,112,.45); }
+    50%      { background: rgba(217,102,112,.65); }
+}
+.ai-card-action-locked {
+    color: #98a2b8;
+    background: rgba(96,110,145,.12);
+    border-color: rgba(96,110,145,.18);
+    cursor: default;
+    font-style: italic;
+}
+.ai-card-action-locked:hover {
+    background: rgba(96,110,145,.12);
+    color: #98a2b8;
+    border-color: rgba(96,110,145,.18);
+}
+
+/* v1.10.16 — multi-select states */
+.ai-card-action-select {
+    color: #c2c8d8;
+    border-color: rgba(96,110,145,.30);
+    background: rgba(96,110,145,.10);
+}
+.ai-card-action-select:hover {
+    background: rgba(96,110,145,.25);
+    color: #f4f6fb;
+}
+.ai-card-action-selected {
+    color: #ffd7da;
+    background: rgba(217,102,112,.40);
+    border-color: rgba(217,102,112,.75);
+    font-weight: 700;
+}
+.ai-card-action-selected:hover {
+    background: rgba(217,102,112,.55);
+    color: #fff;
+}
+
+/* Sticky selection bar (visible when at least one item selected) */
+.ai-selection-bar {
+    background: linear-gradient(180deg, rgba(35,18,28,.95), rgba(28,12,22,.95));
+    border: 1px solid rgba(217,102,112,.55);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin: 14px 0 18px 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    box-shadow: 0 4px 20px rgba(217,102,112,.15);
+}
+.ai-selection-count {
+    font-size: 14px;
+    color: #ffd7da;
+    font-weight: 700;
+}
+.ai-selection-count-num {
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+}
+.ai-selection-actions {
+    display: inline-flex;
+    gap: 8px;
+    margin-left: auto;
+}
+.ai-selection-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    border: 1px solid rgba(96,110,145,.40);
+    background: rgba(96,110,145,.20);
+    color: #c2c8d8;
+    transition: background 0.12s;
+}
+.ai-selection-btn:hover {
+    background: rgba(96,110,145,.40);
+    color: #f4f6fb;
+}
+.ai-selection-btn-danger {
+    color: #ffd7da;
+    background: rgba(217,102,112,.45);
+    border-color: rgba(217,102,112,.85);
+}
+.ai-selection-btn-danger:hover {
+    background: rgba(217,102,112,.65);
+    color: #fff;
+}
+
+/* Confirmation panel (inline modal substitute) */
+.ai-delete-confirm-panel {
+    background: linear-gradient(180deg, rgba(45,20,30,.98), rgba(35,15,25,.98));
+    border: 2px solid rgba(217,102,112,.85);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 18px 0;
+    box-shadow: 0 8px 32px rgba(217,102,112,.25);
+}
+.ai-delete-confirm-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #ffd7da;
+    margin-bottom: 10px;
+}
+.ai-delete-confirm-list {
+    margin: 10px 0 14px 0;
+    padding-left: 8px;
+    font-size: 13px;
+    color: #d8dde9;
+    line-height: 1.7;
+}
+.ai-delete-confirm-list-item {
+    padding: 4px 8px;
+    background: rgba(8,11,22,.4);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    border-left: 3px solid rgba(217,102,112,.55);
+}
+.ai-delete-confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
 .ai-card-validation-bar {
     display: flex;
     align-items: center;
@@ -1524,6 +2073,201 @@ def _resolve_master_toggle() -> str | None:
     return None
 
 
+# v1.10.15 — Delete request handling
+# Two-click confirmation pattern: first click sets pending flag, second
+# click (on the same button) actually deletes. Click any other delete
+# button → clears prior pending and sets new one.
+
+def _is_user_added_thesis(thesis: dict) -> bool:
+    """User-added items have IDs prefixed 'user-' (set by _make_user_id)."""
+    return str(thesis.get("id", "")).startswith("user-")
+
+
+def _is_user_added_synth(paragraph: dict) -> bool:
+    """User-added synthesis paragraphs have IDs prefixed 'user-synth-'."""
+    return str(paragraph.get("id", "")).startswith("user-synth-")
+
+
+def _resolve_delete_request() -> None:
+    """Read URL params for delete operations.
+
+    v1.10.16 patterns (multi-select + confirm panel):
+        ?toggle_select_thesis=<id>     → toggle thesis in/out of selection set
+        ?toggle_select_synth=<idx>     → toggle synth para in/out of selection set
+        ?clear_selection=1             → empty the selection sets
+        ?show_delete_confirm=1         → open confirmation panel
+        ?execute_delete=1              → commit the bulk delete
+
+    v1.10.15 patterns (still supported, single-card flow):
+        ?delete_thesis_pending=<id>    → first click; mark for confirmation
+        ?delete_thesis_confirm=<id>    → second click; actually delete
+        Same for synth: delete_synth_pending / delete_synth_confirm
+
+    All URL params are cleared after handling so a refresh doesn't re-trigger.
+    """
+    try:
+        params = st.query_params
+    except Exception:
+        return
+
+    def _take(key: str) -> str | None:
+        v = params.get(key)
+        if not v:
+            return None
+        if isinstance(v, list):
+            v = v[0] if v else None
+        try:
+            params.pop(key, None)
+        except Exception:
+            pass
+        return v
+
+    # === v1.10.16 multi-select handlers ===
+
+    # Toggle thesis in/out of selection set
+    toggle_thesis = _take("toggle_select_thesis")
+    if toggle_thesis:
+        sel = st.session_state.setdefault("_delete_selection_thesis", set())
+        if toggle_thesis in sel:
+            sel.discard(toggle_thesis)
+        else:
+            sel.add(toggle_thesis)
+        # Close any open confirmation panel
+        st.session_state.pop("_delete_confirm_open", None)
+
+    # Toggle synth para in/out of selection set
+    toggle_synth = _take("toggle_select_synth")
+    if toggle_synth:
+        try:
+            idx = int(toggle_synth)
+            sel = st.session_state.setdefault("_delete_selection_synth", set())
+            if idx in sel:
+                sel.discard(idx)
+            else:
+                sel.add(idx)
+            st.session_state.pop("_delete_confirm_open", None)
+        except ValueError:
+            pass
+
+    # Clear all selections
+    if _take("clear_selection"):
+        st.session_state.pop("_delete_selection_thesis", None)
+        st.session_state.pop("_delete_selection_synth", None)
+        st.session_state.pop("_delete_confirm_open", None)
+
+    # Show confirmation panel
+    if _take("show_delete_confirm"):
+        st.session_state["_delete_confirm_open"] = True
+
+    # Execute the bulk delete (after confirmation)
+    if _take("execute_delete"):
+        sel_thesis = st.session_state.get("_delete_selection_thesis", set())
+        sel_synth = st.session_state.get("_delete_selection_synth", set())
+        if sel_thesis or sel_synth:
+            data = _load_user_data()
+
+            # Delete selected theses
+            if sel_thesis:
+                data["user_theses"] = [
+                    t for t in data.get("user_theses", [])
+                    if str(t.get("id", "")) not in sel_thesis
+                ]
+                # Clean up trend history
+                history = st.session_state.get(_ai_thesis_history_key(), {})
+                for tid in sel_thesis:
+                    history.pop(tid, None)
+
+            # Delete selected synth paragraphs (by index, descending so indices stay valid)
+            if sel_synth:
+                user_synth = data.get("user_synthesis", [])
+                for idx in sorted(sel_synth, reverse=True):
+                    if 0 <= idx < len(user_synth):
+                        user_synth.pop(idx)
+                # Conservatively clear all synth-* history (indices shifted)
+                history = st.session_state.get(_ai_thesis_history_key(), {})
+                stale_keys = [k for k in list(history.keys())
+                              if k.startswith("synthesis-")]
+                for k in stale_keys:
+                    history.pop(k, None)
+
+            _save_user_data(data)
+
+        # Clear all delete-related state
+        st.session_state.pop("_delete_selection_thesis", None)
+        st.session_state.pop("_delete_selection_synth", None)
+        st.session_state.pop("_delete_confirm_open", None)
+
+    # === v1.10.15 single-card delete patterns (kept for backward compat) ===
+
+    pending_thesis = _take("delete_thesis_pending")
+    if pending_thesis:
+        st.session_state["_delete_pending_id"] = pending_thesis
+        st.session_state.pop("_delete_pending_synth_idx", None)
+
+    confirm_thesis = _take("delete_thesis_confirm")
+    if confirm_thesis:
+        data = _load_user_data()
+        before = len(data.get("user_theses", []))
+        data["user_theses"] = [
+            t for t in data.get("user_theses", [])
+            if str(t.get("id", "")) != confirm_thesis
+        ]
+        if len(data["user_theses"]) < before:
+            _save_user_data(data)
+            history = st.session_state.get(_ai_thesis_history_key(), {})
+            if confirm_thesis in history:
+                history.pop(confirm_thesis, None)
+        st.session_state.pop("_delete_pending_id", None)
+
+    pending_synth = _take("delete_synth_pending")
+    if pending_synth:
+        try:
+            st.session_state["_delete_pending_synth_idx"] = int(pending_synth)
+            st.session_state.pop("_delete_pending_id", None)
+        except ValueError:
+            pass
+
+    confirm_synth = _take("delete_synth_confirm")
+    if confirm_synth:
+        try:
+            idx = int(confirm_synth)
+            data = _load_user_data()
+            user_synth = data.get("user_synthesis", [])
+            if 0 <= idx < len(user_synth):
+                deleted = user_synth.pop(idx)
+                _save_user_data(data)
+                history = st.session_state.get(_ai_thesis_history_key(), {})
+                stale_keys = [k for k in history.keys() if k.startswith("synthesis-")]
+                for k in stale_keys:
+                    history.pop(k, None)
+            st.session_state.pop("_delete_pending_synth_idx", None)
+        except ValueError:
+            pass
+
+
+def _is_thesis_selected(thesis_id: str) -> bool:
+    """Check if a thesis ID is in the current multi-select set."""
+    sel = st.session_state.get("_delete_selection_thesis", set())
+    return thesis_id in sel
+
+
+def _is_synth_selected(idx: int) -> bool:
+    """Check if a synth paragraph index is in the current multi-select set."""
+    sel = st.session_state.get("_delete_selection_synth", set())
+    return idx in sel
+
+
+def _is_pending_delete(thesis_id: str) -> bool:
+    """Return True if this thesis is in the 'pending confirmation' state.
+    Kept for backward compat with v1.10.15."""
+    return st.session_state.get("_delete_pending_id") == thesis_id
+
+
+def _is_pending_delete_synth(idx: int) -> bool:
+    """Kept for backward compat with v1.10.15."""
+    return st.session_state.get("_delete_pending_synth_idx") == idx
+
+
 def _topic_should_default_open(stats: dict) -> bool:
     """Auto-expand: low avg_score (diverging) opens, high collapses.
     The whole point is to surface what needs attention."""
@@ -1689,8 +2433,9 @@ def _render_ai_card_html(thesis: dict, validation: dict, lang_zh: bool) -> str:
     claimed = thesis.get("claimed_probability", 50)
     score = validation.get("thesis_score", 50)
     verdict = validation.get("verdict", "neutral")
+    thesis_id = str(thesis.get("id", ""))
 
-    arrow, trend_class, trend_label = _thesis_trend_arrow(thesis.get("id", ""), score)
+    arrow, trend_class, trend_label = _thesis_trend_arrow(thesis_id, score)
 
     # Truncate cross + risk for the card view (full text shows in tracker if needed)
     def trim(s: str, n: int) -> str:
@@ -1703,8 +2448,39 @@ def _render_ai_card_html(thesis: dict, validation: dict, lang_zh: bool) -> str:
     label_validation = "目前驗證" if lang_zh else "Validation"
     label_claimed = "推估成立" if lang_zh else "Claimed"
 
+    # v1.10.16: Selection toggle (multi-select)
+    if _is_user_added_thesis(thesis):
+        if _is_thesis_selected(thesis_id):
+            sel_label = "☑ 已選" if lang_zh else "☑ Selected"
+            actions_html = (
+                f'<div class="ai-card-actions">'
+                f'  <a class="ai-card-action-btn ai-card-action-selected" '
+                f'     href="?toggle_select_thesis={escape(thesis_id)}" target="_self">'
+                f'     {escape(sel_label)}</a>'
+                f'</div>'
+            )
+        else:
+            sel_label = "☐ 選取" if lang_zh else "☐ Select"
+            actions_html = (
+                f'<div class="ai-card-actions">'
+                f'  <a class="ai-card-action-btn ai-card-action-select" '
+                f'     href="?toggle_select_thesis={escape(thesis_id)}" target="_self">'
+                f'     {escape(sel_label)}</a>'
+                f'</div>'
+            )
+    else:
+        # Built-in (read-only) — show lock indicator
+        lock_label = "🔒 內建" if lang_zh else "🔒 Built-in"
+        actions_html = (
+            f'<div class="ai-card-actions">'
+            f'  <span class="ai-card-action-btn ai-card-action-locked">'
+            f'     {escape(lock_label)}</span>'
+            f'</div>'
+        )
+
     return textwrap.dedent(f"""
         <div class="ai-card">
+            {actions_html}
             <div class="ai-card-header">
                 <div class="ai-card-title">{escape(title)}</div>
                 <div class="ai-card-prob-pill ai-card-prob-{escape(verdict)}">
@@ -1830,11 +2606,23 @@ def _render_ai_synthesis_html(synthesis: dict, lang_zh: bool, daily_data=None) -
     label_no_data = "暫無驗證點(可日後補上)" if lang_zh else "No validation points yet"
     label_pos_tag = "判斷"  # used as the small "uppercase" tag at top
 
+    # v1.10.15: Track user-synthesis index for delete buttons.
+    # User-added paragraphs have IDs starting with "user-synth-".
+    # Their position within user_synthesis (not within paragraphs) is what
+    # we need for the delete URL.
+    user_synth_idx_seen = -1
+
     card_html_parts: list[str] = []
     for idx, p in enumerate(paragraphs):
         v = para_validations[idx]
         lead = p.get("lead", "")
         body = p.get("body", "")
+        is_user = _is_user_added_synth(p)
+        if is_user:
+            user_synth_idx_seen += 1
+            user_synth_idx = user_synth_idx_seen
+        else:
+            user_synth_idx = None
 
         # Card border color depends on verdict (or neutral if no validation)
         if v.get("ready"):
@@ -1876,8 +2664,38 @@ def _render_ai_synthesis_html(synthesis: dict, lang_zh: bool, daily_data=None) -
             tag_text = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"][idx] \
                        if idx < 8 else f"#{idx+1}"
 
+        # v1.10.16: Selection toggle (multi-select)
+        if is_user and user_synth_idx is not None:
+            if _is_synth_selected(user_synth_idx):
+                sel_label = "☑ 已選" if lang_zh else "☑ Selected"
+                actions_html = (
+                    f'<div class="ai-card-actions">'
+                    f'  <a class="ai-card-action-btn ai-card-action-selected" '
+                    f'     href="?toggle_select_synth={user_synth_idx}" target="_self">'
+                    f'     {escape(sel_label)}</a>'
+                    f'</div>'
+                )
+            else:
+                sel_label = "☐ 選取" if lang_zh else "☐ Select"
+                actions_html = (
+                    f'<div class="ai-card-actions">'
+                    f'  <a class="ai-card-action-btn ai-card-action-select" '
+                    f'     href="?toggle_select_synth={user_synth_idx}" target="_self">'
+                    f'     {escape(sel_label)}</a>'
+                    f'</div>'
+                )
+        else:
+            lock_label = "🔒 內建" if lang_zh else "🔒 Built-in"
+            actions_html = (
+                f'<div class="ai-card-actions">'
+                f'  <span class="ai-card-action-btn ai-card-action-locked">'
+                f'     {escape(lock_label)}</span>'
+                f'</div>'
+            )
+
         card_html_parts.append(
             f'<div class="ai-synthesis-card {border_class}">'
+            f'  {actions_html}'
             f'  <div class="ai-synthesis-card-tag">{escape(tag_text)}</div>'
             f'  <div class="ai-synthesis-card-lead">{escape(lead)}</div>'
             f'  <div class="ai-synthesis-card-body">{escape(body)}</div>'
@@ -2008,6 +2826,547 @@ def _render_ai_validation_tracker_html(thesis_results: list[dict], lang_zh: bool
     """).strip()
 
 
+# ----------------------------------------------------------------------------
+# v1.10.11 — Input form renderers (Streamlit forms inside expanders)
+# ----------------------------------------------------------------------------
+# These two renderers add UI for users to append new theses + synthesis
+# paragraphs without editing code. They write to ai_analysis_data.json
+# via _save_user_data, then trigger a Streamlit rerun via st.rerun() so
+# the new item appears immediately.
+#
+# Design notes:
+# - Forms are wrapped in st.expander so they stay collapsed by default
+#   and don't dominate the page on first visit.
+# - Inside the expander we use st.form, which batches widget values
+#   into one submit + rerun (avoids re-running on every keystroke).
+# - Validation points are dynamic — we let the user add up to 4 of them
+#   per thesis. Each point's fields adjust based on the selected type.
+# - Smart-detection chips appear above the validation-points section,
+#   showing tickers / thresholds detected from the summary text.
+# ----------------------------------------------------------------------------
+
+
+def _render_thesis_input_form(lang_zh: bool) -> None:
+    """v1.10.12: Batch import form. User pastes a TSV table (or uploads
+    a CSV file) where each row is one thesis. We parse + auto-seed
+    validation_points + auto-detect topics, then preview before commit.
+
+    Expected columns (in this order):
+        1. 影片可確認主題 / title              REQUIRED
+        2. 解說重點 / summary                  REQUIRED
+        3. 目前局勢交叉驗證 / cross_validation
+        4. 風險 / 反證 / risk
+        5. 推估成立機率 / probability
+        6. 主題分類 / topic [OPTIONAL]
+    """
+    if lang_zh:
+        expander_label = "➕ 批次匯入論點"
+        instruction = (
+            "**一次匯入多篇論點。** 從 Excel / Google Docs 複製你的表格"
+            "(Tab 分隔),貼到下方;或下載為 CSV 檔上傳。\n\n"
+            "**預期欄位**(順序要對):\n"
+            "1. 影片可確認主題 · 2. 解說重點 · 3. 目前局勢交叉驗證 · "
+            "4. 風險·反證 · 5. 推估成立機率 · 6. 主題分類(可選)"
+        )
+        tab_paste_label = "貼上表格 (TSV)"
+        tab_csv_label = "上傳 CSV 檔"
+        paste_input_label = "貼上表格 — 每列一篇論點"
+        csv_input_label = "上傳 CSV / TSV 檔"
+        preview_btn = "🔍 預覽匯入結果"
+        no_data_msg = "尚未貼上任何表格內容。"
+        parse_failed = "解析失敗:內容不是有效的表格格式"
+        commit_btn_template = "💾 全部加入 (%d 篇)"
+        commit_success_template = "已匯入 %d 篇論點!請看下方卡片區"
+        commit_failed = "寫入檔案失敗 — 請檢查目錄寫入權限"
+        sample_label = "📄 看範例表格"
+        detected_template = "**偵測到 %d 篇論點**"
+        vp_count_template = "🔍 驗證點(%d 個):"
+    else:
+        expander_label = "➕ Batch Import Theses"
+        instruction = (
+            "**Import multiple theses at once.** Copy a table from "
+            "Excel / Google Docs (tab-separated), or upload a CSV file. "
+            "Expected columns: title, summary, cross_validation, risk, "
+            "probability, topic (optional)."
+        )
+        tab_paste_label = "Paste Table (TSV)"
+        tab_csv_label = "Upload CSV"
+        paste_input_label = "Paste table — one row per thesis"
+        csv_input_label = "Upload CSV / TSV"
+        preview_btn = "🔍 Preview Import"
+        no_data_msg = "No table content provided yet."
+        parse_failed = "Parse failed: not a valid table format"
+        commit_btn_template = "💾 Save All (%d theses)"
+        commit_success_template = "Imported %d theses! See cards below."
+        commit_failed = "File write failed — check directory permissions"
+        sample_label = "📄 View sample table"
+        detected_template = "**Detected %d theses**"
+        vp_count_template = "🔍 Validation points (%d):"
+
+    sample_tsv = (
+        "影片可確認主題\t解說重點\t目前局勢交叉驗證\t風險/反證\t推估成立機率\n"
+        "AI財報點火,外資全翻多\t影片主軸是 AI 財報帶動市場信心,外資由偏空轉為積極買超\t"
+        "5/7外資買超台股約464.11億元,同日加權指數盤中高點42,156.06、收41,933.78\t"
+        "「外資全翻多」要打折看,因為5/7雖現貨買超,但外資指期淨空單仍超過5萬口\t中偏高,約60-65%\n"
+        "台股衝上4萬後,是否繼續走多\t台股主升段尚未結束,但漲多後不會一路直線上攻\t"
+        "5/7台股盤中已衝到42,156.06,5/8收41,603.94,代表4萬點突破後仍站穩\t"
+        "短線從4萬快速衝到4.2萬附近,漲幅過快\t維持高檔震盪偏多:中偏高,約60-65%"
+    )
+
+    # v1.10.14: Toggle button instead of st.expander for clearer UX
+    toggle_key = "_thesis_batch_form_open"
+    is_open = st.session_state.get(toggle_key, False)
+    if lang_zh:
+        btn_label = "✕ 關閉批次匯入" if is_open else expander_label
+    else:
+        btn_label = "✕ Close Batch Import" if is_open else expander_label
+    btn_type = "secondary" if is_open else "primary"
+    if st.button(btn_label, key="thesis_batch_toggle", type=btn_type):
+        st.session_state[toggle_key] = not is_open
+        st.rerun()
+
+    if is_open:
+        st.markdown(instruction)
+
+        with st.expander(sample_label, expanded=False):
+            st.code(sample_tsv, language=None)
+
+        tab_paste, tab_csv = st.tabs([tab_paste_label, tab_csv_label])
+
+        with tab_paste:
+            paste_text = st.text_area(paste_input_label, height=200,
+                                       key="thesis_batch_paste")
+            if st.button(preview_btn, key="thesis_batch_preview_paste"):
+                if not paste_text.strip():
+                    st.warning(no_data_msg)
+                else:
+                    try:
+                        parsed_rows = _parse_table_text(paste_text, separator="\t")
+                        st.session_state["_thesis_batch_preview"] = parsed_rows
+                    except Exception as e:
+                        st.error(f"{parse_failed}: {e}")
+
+        with tab_csv:
+            csv_file = st.file_uploader(csv_input_label, type=["csv", "tsv"],
+                                          key="thesis_batch_csv")
+            if csv_file is not None:
+                try:
+                    text = csv_file.read().decode("utf-8")
+                    sep = "\t" if csv_file.name.endswith(".tsv") else ","
+                    parsed_rows = _parse_table_text(text, separator=sep)
+                    st.session_state["_thesis_batch_preview"] = parsed_rows
+                except Exception as e:
+                    st.error(f"{parse_failed}: {e}")
+
+        # Display preview from session_state (persists across reruns)
+        preview = st.session_state.get("_thesis_batch_preview", [])
+        if preview:
+            st.markdown("---")
+            st.markdown(detected_template % len(preview))
+
+            for idx, row in enumerate(preview):
+                topic_cfg = AI_TOPIC_REGISTRY.get(row["topic"], AI_TOPIC_REGISTRY["uncategorized"])
+                topic_emoji = topic_cfg.get("emoji", "🗂")
+                topic_label = topic_cfg.get("label_zh" if lang_zh else "label_en", "")
+                with st.container():
+                    st.markdown(
+                        f"**#{idx+1} {row['title']}**  ·  {topic_emoji} {topic_label}  "
+                        f"·  {row['claimed_probability']}%"
+                    )
+                    if row["summary"]:
+                        st.caption(f"📝 {row['summary'][:100]}")
+                    if row["validation_points"]:
+                        vp_labels = [
+                            f"{p.get('label', p.get('type', '?'))} (權重 {p.get('weight', 1)})"
+                            for p in row["validation_points"]
+                        ]
+                        st.caption(
+                            (vp_count_template % len(vp_labels)) + " " + " · ".join(vp_labels)
+                        )
+
+            commit_label = commit_btn_template % len(preview)
+            if st.button(commit_label, key="thesis_batch_commit", type="primary"):
+                data = _load_user_data()
+                for row in preview:
+                    new_thesis = {
+                        "id": _make_user_id("user-thesis"),
+                        "topic": row["topic"],
+                        "title": row["title"],
+                        "summary": row["summary"],
+                        "cross_validation": row["cross_validation"],
+                        "risk": row["risk"],
+                        "claimed_probability": row["claimed_probability"],
+                        "issued_date": _time.strftime("%Y-%m-%d"),
+                        "horizon_date": "",
+                        "validation_points": row["validation_points"],
+                    }
+                    data["user_theses"].append(new_thesis)
+                if _save_user_data(data):
+                    st.success(commit_success_template % len(preview))
+                    st.session_state.pop("_thesis_batch_preview", None)
+                    st.rerun()
+                else:
+                    st.error(commit_failed)
+
+
+def _render_synthesis_input_form(lang_zh: bool) -> None:
+    """v1.10.13: Form for adding a new AI 整體判斷 paragraph.
+
+    Workflow:
+      1. User types lead + body in the OUTER text-area widgets (not in
+         st.form, so we get reactive updates).
+      2. User clicks "🔍 從內文自動偵測驗證點" button — system parses
+         body via _auto_generate_validation_points() and stashes the
+         result into session_state['_synth_auto_points'].
+      3. User reviews + edits + saves via the inner st.form.
+
+    The split (outer text-area + auto-detect, inner form for save) is
+    necessary because st.form batches widget changes until form_submit
+    — buttons inside the form can't trigger reruns to update other
+    widgets in the same form.
+    """
+    if lang_zh:
+        expander_label = "➕ 新增 AI 整體判斷"
+        lead_label = "主旨(顯示為粗體黃色標題)*"
+        body_label = "內文 *"
+        detect_btn_label = "🔍 從內文自動偵測驗證點"
+        clear_btn_label = "🧹 清除自動偵測"
+        detect_no_body = "請先填內文"
+        detect_found_template = "✓ 偵測到 %d 個驗證點 — 已預填到下方"
+        detect_none = "從內文偵測不到具體驗證點 — 你可以手動加,或按「🧹 清除」並改用 fallback"
+        vp_label = "驗證點(可選)"
+        n_points_label = "驗證點數量(0 = 不驗證)"
+        save_btn = "💾 儲存判斷"
+        success_msg = "已儲存!新判斷已加入整體判斷區。"
+        error_msg = "儲存失敗 — 請檢查必填欄位。"
+        save_io_err = "寫入檔案失敗 — 請檢查目錄寫入權限。"
+        helper_caption = (
+            "💡 寫完內文後,按「🔍 從內文自動偵測驗證點」可以自動抽取數字 / 股票 / 指數,"
+            "預填驗證點欄位。你之後可以再修改,然後按「💾 儲存」。"
+        )
+    else:
+        expander_label = "➕ Add Synthesis Paragraph"
+        lead_label = "Lead (bold yellow heading) *"
+        body_label = "Body *"
+        detect_btn_label = "🔍 Auto-detect validation points"
+        clear_btn_label = "🧹 Clear auto-detection"
+        detect_no_body = "Please type body text first"
+        detect_found_template = "✓ Detected %d validation points — pre-filled below"
+        detect_none = "No specific validation points detected from body — you can add manually"
+        vp_label = "Validation points (optional)"
+        n_points_label = "Number of validation points (0 = none)"
+        save_btn = "💾 Save paragraph"
+        success_msg = "Saved! Paragraph added to AI Overall Take."
+        error_msg = "Save failed — please check required fields."
+        save_io_err = "File write failed — check directory permissions."
+        helper_caption = (
+            "💡 After typing the body, click 'Auto-detect' to extract numbers / "
+            "stocks / index levels and pre-fill validation-point fields. "
+            "You can then edit and save."
+        )
+
+    # v1.10.14: Toggle button instead of st.expander for clearer UX
+    toggle_key = "_synth_input_form_open"
+    is_open = st.session_state.get(toggle_key, False)
+    if lang_zh:
+        btn_label = "✕ 關閉新增 AI 整體判斷" if is_open else expander_label
+    else:
+        btn_label = "✕ Close Add Synthesis" if is_open else expander_label
+    btn_type = "secondary" if is_open else "primary"
+    if st.button(btn_label, key="synth_input_toggle", type=btn_type):
+        st.session_state[toggle_key] = not is_open
+        st.rerun()
+
+    if is_open:
+        st.caption(helper_caption)
+
+        # OUTER widgets — these can react to button clicks below
+        # (Streamlit reruns whole script on widget change outside st.form)
+        lead = st.text_input(lead_label, key="synth_outer_lead")
+        body = st.text_area(body_label, height=140, key="synth_outer_body")
+
+        # Smart detection hint (read-only, just shows what we found)
+        detected_smart = _smart_detect(body or "")
+        if detected_smart["tickers"] or detected_smart["thresholds"]:
+            hint_parts = []
+            if detected_smart["tickers"]:
+                hint_parts.append(f"🏷 偵測到的股票: {', '.join(detected_smart['tickers'])}" if lang_zh
+                                   else f"🏷 Tickers: {', '.join(detected_smart['tickers'])}")
+            if detected_smart["thresholds"]:
+                hint_parts.append(f"🎯 偵測到的點位: {', '.join(str(t) for t in detected_smart['thresholds'])}" if lang_zh
+                                   else f"🎯 Levels: {', '.join(str(t) for t in detected_smart['thresholds'])}")
+            st.info(" · ".join(hint_parts))
+
+        # Auto-detect button — triggers a rerun, writes pre-filled points
+        # to session_state which the inner form reads as defaults.
+        col_detect, col_clear, _spacer = st.columns([1, 1, 2])
+        with col_detect:
+            if st.button(detect_btn_label, key="synth_btn_detect"):
+                if not body:
+                    st.warning(detect_no_body)
+                else:
+                    auto_points = _auto_generate_validation_points(lead or "", body)
+                    if auto_points:
+                        st.session_state["_synth_auto_points"] = auto_points
+                        st.success(detect_found_template % len(auto_points))
+                    else:
+                        st.session_state.pop("_synth_auto_points", None)
+                        st.info(detect_none)
+        with col_clear:
+            if st.button(clear_btn_label, key="synth_btn_clear"):
+                st.session_state.pop("_synth_auto_points", None)
+                st.rerun()
+
+        # Resolve defaults from auto-detected points (if any)
+        auto_points = st.session_state.get("_synth_auto_points", [])
+        default_n_points = len(auto_points) if auto_points else 0
+
+        st.markdown(f"**{vp_label}**")
+        n_points = st.number_input(
+            n_points_label, min_value=0, max_value=4,
+            value=default_n_points, key="synth_form_n_points",
+        )
+
+        # INNER form — gathers validation-point details + save button
+        with st.form(key="ai_synthesis_input_form", clear_on_submit=False):
+            collected_points: list[dict] = []
+            for i in range(int(n_points)):
+                # Pre-fill from auto-detected if available
+                preset = auto_points[i] if i < len(auto_points) else {}
+                preset_type = preset.get("type", "stock_trend")
+                preset_label = preset.get("label", "")
+                preset_weight = float(preset.get("weight", 1.0))
+
+                st.markdown(f"###### #{i+1}")
+                col_t, col_w, col_lab = st.columns([1, 1, 2])
+                with col_t:
+                    type_options = ["index_level", "stock_trend", "support_zone", "rally_pace"]
+                    try:
+                        type_index = type_options.index(preset_type)
+                    except ValueError:
+                        type_index = 1  # default to stock_trend
+                    vp_type = st.selectbox(
+                        "type", type_options, index=type_index,
+                        key=f"synth_form_vp_{i}_type",
+                    )
+                with col_w:
+                    weight = st.number_input(
+                        "weight", min_value=0.1, max_value=5.0, value=preset_weight,
+                        step=0.1, key=f"synth_form_vp_{i}_weight",
+                    )
+                with col_lab:
+                    vp_label_text = st.text_input(
+                        "label", value=preset_label,
+                        key=f"synth_form_vp_{i}_label",
+                    )
+
+                point_dict: dict = {"type": vp_type, "label": vp_label_text, "weight": weight}
+
+                if vp_type == "index_level":
+                    c1, c2, c3 = st.columns(3)
+                    preset_thresh = preset.get("threshold", 41000) if preset.get("type") == "index_level" else 41000
+                    preset_dir = preset.get("direction", "above") if preset.get("type") == "index_level" else "above"
+                    preset_ticker = preset.get("ticker", "^TWII") if preset.get("type") == "index_level" else "^TWII"
+                    with c1:
+                        thresh = st.number_input("threshold", value=int(preset_thresh),
+                                                  key=f"synth_form_vp_{i}_threshold")
+                    with c2:
+                        direction = st.selectbox(
+                            "direction", ["above", "below"],
+                            index=0 if preset_dir == "above" else 1,
+                            key=f"synth_form_vp_{i}_direction",
+                        )
+                    with c3:
+                        ticker = st.text_input("ticker", value=preset_ticker,
+                                                key=f"synth_form_vp_{i}_ticker_il")
+                    point_dict.update({"threshold": int(thresh), "direction": direction,
+                                       "ticker": ticker, "consec_days": 5})
+                elif vp_type == "stock_trend":
+                    c1, c2, c3 = st.columns(3)
+                    preset_ticker = preset.get("ticker", "0050.TW") if preset.get("type") == "stock_trend" else "0050.TW"
+                    preset_pattern = preset.get("pattern", "rally") if preset.get("type") == "stock_trend" else "rally"
+                    preset_rally_min = float(preset.get("rally_min_pct", 2.0)) if preset.get("type") == "stock_trend" else 2.0
+                    with c1:
+                        ticker = st.text_input("ticker", value=preset_ticker,
+                                                key=f"synth_form_vp_{i}_ticker_st")
+                    with c2:
+                        pattern_options = ["rally", "consolidate", "weak"]
+                        pattern = st.selectbox(
+                            "pattern", pattern_options,
+                            index=pattern_options.index(preset_pattern) if preset_pattern in pattern_options else 0,
+                            key=f"synth_form_vp_{i}_pattern",
+                        )
+                    with c3:
+                        rally_min = st.number_input("rally_min_pct", min_value=0.0, max_value=20.0,
+                                                     value=preset_rally_min, step=0.5,
+                                                     key=f"synth_form_vp_{i}_rally_min")
+                    point_dict.update({"ticker": ticker, "pattern": pattern,
+                                       "lookback": 5, "rally_min_pct": float(rally_min)})
+                elif vp_type == "support_zone":
+                    c1, c2 = st.columns(2)
+                    preset_level = preset.get("level", 40700) if preset.get("type") == "support_zone" else 40700
+                    preset_ticker = preset.get("ticker", "^TWII") if preset.get("type") == "support_zone" else "^TWII"
+                    with c1:
+                        level = st.number_input("level", value=int(preset_level),
+                                                 key=f"synth_form_vp_{i}_level")
+                    with c2:
+                        ticker = st.text_input("ticker", value=preset_ticker,
+                                                key=f"synth_form_vp_{i}_ticker_sz")
+                    point_dict.update({"level": int(level), "ticker": ticker, "tolerance_pct": 0.5})
+                elif vp_type == "rally_pace":
+                    c1, c2, c3 = st.columns(3)
+                    preset_ticker = preset.get("ticker", "^TWII") if preset.get("type") == "rally_pace" else "^TWII"
+                    preset_imin = float(preset.get("ideal_min_pct", 2.0)) if preset.get("type") == "rally_pace" else 2.0
+                    preset_imax = float(preset.get("ideal_max_pct", 8.0)) if preset.get("type") == "rally_pace" else 8.0
+                    with c1:
+                        ticker = st.text_input("ticker", value=preset_ticker,
+                                                key=f"synth_form_vp_{i}_ticker_rp")
+                    with c2:
+                        ideal_min = st.number_input("ideal_min_pct", min_value=-20.0,
+                                                     max_value=20.0, value=preset_imin, step=0.5,
+                                                     key=f"synth_form_vp_{i}_imin")
+                    with c3:
+                        ideal_max = st.number_input("ideal_max_pct", min_value=-20.0,
+                                                     max_value=20.0, value=preset_imax, step=0.5,
+                                                     key=f"synth_form_vp_{i}_imax")
+                    point_dict.update({"ticker": ticker, "lookback": 10,
+                                       "ideal_min_pct": float(ideal_min),
+                                       "ideal_max_pct": float(ideal_max)})
+
+                collected_points.append(point_dict)
+
+            submitted = st.form_submit_button(save_btn)
+
+            if submitted:
+                if not lead or not body:
+                    st.error(error_msg)
+                    return
+                new_para = {
+                    "id": _make_user_id("user-synth"),
+                    "lead": lead,
+                    "body": body,
+                }
+                if collected_points:
+                    new_para["validation_points"] = collected_points
+                data = _load_user_data()
+                data["user_synthesis"].append(new_para)
+                if _save_user_data(data):
+                    st.success(success_msg)
+                    # Clean up form state
+                    st.session_state.pop("_synth_auto_points", None)
+                    st.session_state.pop("synth_outer_lead", None)
+                    st.session_state.pop("synth_outer_body", None)
+                    st.rerun()
+                else:
+                    st.error(save_io_err)
+
+
+def _render_selection_bar_and_confirm(merged_theses: list[dict],
+                                       merged_synthesis: dict,
+                                       lang_zh: bool) -> None:
+    """v1.10.16: Render the selection bar (showing N items selected) and
+    optionally the inline confirmation panel.
+
+    Called once per render. Reads selection state from session_state,
+    looks up titles from the merged data so the confirmation panel can
+    list what's about to be deleted.
+    """
+    sel_thesis: set = st.session_state.get("_delete_selection_thesis", set())
+    sel_synth: set = st.session_state.get("_delete_selection_synth", set())
+    total = len(sel_thesis) + len(sel_synth)
+
+    if total == 0:
+        return  # Nothing selected → don't show the bar
+
+    # === Selection bar ===
+    if lang_zh:
+        count_label = f"已選 <span class='ai-selection-count-num'>{total}</span> 篇 (論點 {len(sel_thesis)} + 整體判斷 {len(sel_synth)})"
+        delete_btn = "🗑 刪除選取"
+        clear_btn = "✕ 全部取消"
+    else:
+        count_label = f"<span class='ai-selection-count-num'>{total}</span> selected (theses {len(sel_thesis)} + synth {len(sel_synth)})"
+        delete_btn = "🗑 Delete Selected"
+        clear_btn = "✕ Clear All"
+
+    bar_html = textwrap.dedent(f"""
+        <div class="ai-selection-bar">
+            <div class="ai-selection-count">☑ {count_label}</div>
+            <div class="ai-selection-actions">
+                <a class="ai-selection-btn ai-selection-btn-danger" href="?show_delete_confirm=1" target="_self">{escape(delete_btn)}</a>
+                <a class="ai-selection-btn" href="?clear_selection=1" target="_self">{escape(clear_btn)}</a>
+            </div>
+        </div>
+    """).strip()
+    _render_html_block(bar_html)
+
+    # === Confirmation panel (only when user clicked "刪除選取") ===
+    if not st.session_state.get("_delete_confirm_open"):
+        return
+
+    if lang_zh:
+        confirm_title = f"⚠️ 確認刪除以下 {total} 篇?"
+        thesis_section_label = f"AI 論點({len(sel_thesis)} 篇)"
+        synth_section_label = f"AI 整體判斷({len(sel_synth)} 段)"
+        confirm_btn = "✓ 確定刪除"
+        cancel_btn = "✕ 取消"
+        warn_note = "刪除後無法復原。整體判斷的 7 日趨勢歷史也會一併清空(因為段落 index 會 shift)。"
+    else:
+        confirm_title = f"⚠️ Confirm deleting {total} item(s)?"
+        thesis_section_label = f"AI Theses ({len(sel_thesis)})"
+        synth_section_label = f"Synthesis ({len(sel_synth)})"
+        confirm_btn = "✓ Confirm Delete"
+        cancel_btn = "✕ Cancel"
+        warn_note = "This cannot be undone. Synthesis 7-day trend history will also reset."
+
+    # Build the list of titles to be deleted
+    titles_html_parts: list[str] = []
+
+    if sel_thesis:
+        titles_html_parts.append(f'<div style="font-size:12px;color:#98a2b8;margin-top:8px;font-weight:600">{escape(thesis_section_label)}</div>')
+        # Look up titles from merged_theses
+        for t in merged_theses:
+            tid = str(t.get("id", ""))
+            if tid in sel_thesis:
+                titles_html_parts.append(
+                    f'<div class="ai-delete-confirm-list-item">{escape(t.get("title", "(無標題)"))}</div>'
+                )
+
+    if sel_synth:
+        titles_html_parts.append(f'<div style="font-size:12px;color:#98a2b8;margin-top:8px;font-weight:600">{escape(synth_section_label)}</div>')
+        # Synth selection is by user_synthesis index, but we need to find them in merged_synthesis
+        # (paragraphs = built-in + user, in that order)
+        builtin_count = sum(
+            1 for p in merged_synthesis.get("paragraphs", [])
+            if not _is_user_added_synth(p)
+        )
+        all_paragraphs = merged_synthesis.get("paragraphs", [])
+        # Filter just user-added ones
+        user_paragraphs = [p for p in all_paragraphs if _is_user_added_synth(p)]
+        for idx in sorted(sel_synth):
+            if 0 <= idx < len(user_paragraphs):
+                lead = user_paragraphs[idx].get("lead", "(無主旨)")
+                # Truncate long leads
+                lead_short = lead if len(lead) <= 60 else lead[:59] + "…"
+                titles_html_parts.append(
+                    f'<div class="ai-delete-confirm-list-item">{escape(lead_short)}</div>'
+                )
+
+    titles_html = "".join(titles_html_parts)
+
+    panel_html = textwrap.dedent(f"""
+        <div class="ai-delete-confirm-panel">
+            <div class="ai-delete-confirm-title">{escape(confirm_title)}</div>
+            <div class="ai-delete-confirm-list">{titles_html}</div>
+            <div style="font-size:11.5px;color:#f4a3aa;font-style:italic;margin-bottom:14px">⚠️ {escape(warn_note)}</div>
+            <div class="ai-delete-confirm-actions">
+                <a class="ai-selection-btn" href="?clear_selection=1" target="_self">{escape(cancel_btn)}</a>
+                <a class="ai-selection-btn ai-selection-btn-danger" href="?execute_delete=1" target="_self">{escape(confirm_btn)}</a>
+            </div>
+        </div>
+    """).strip()
+    _render_html_block(panel_html)
+
+
 def render_ai_analysis_share_dashboard() -> None:
     """Top-level entry for the 🤖 AI 分析分享 Dashboard. Called from
     generate_dashboard when:
@@ -2017,15 +3376,31 @@ def render_ai_analysis_share_dashboard() -> None:
     lang_zh = _news_briefing_is_zh()
     _ensure_ai_analysis_css()
 
+    # v1.10.15: Process pending delete URL params BEFORE we load user data
+    # so the page renders with the post-delete state.
+    _resolve_delete_request()
+
+    # v1.10.11: Read user-added items from JSON every render (no caching)
+    user_data = _load_user_data()
+    user_theses = user_data.get("user_theses", [])
+    user_synthesis_paragraphs = user_data.get("user_synthesis", [])
+
+    # Merge built-in + user-added
+    merged_theses = list(AI_ANALYSIS_THESES) + user_theses
+    merged_synthesis = dict(AI_ANALYSIS_SYNTHESIS)
+    merged_synthesis["paragraphs"] = (
+        list(AI_ANALYSIS_SYNTHESIS.get("paragraphs", []))
+        + user_synthesis_paragraphs
+    )
+
     # 1. Fetch the universe of tickers used by the validation calculators
     needed_tickers: set[str] = {"^TWII", "2330.TW"}  # always need these
-    for thesis in AI_ANALYSIS_THESES:
+    for thesis in merged_theses:
         for point in thesis.get("validation_points", []) or []:
             t = point.get("ticker")
             if t:
                 needed_tickers.add(t)
-    # v1.10.9: Synthesis paragraphs also have validation_points
-    for para in (AI_ANALYSIS_SYNTHESIS.get("paragraphs") or []):
+    for para in (merged_synthesis.get("paragraphs") or []):
         for point in para.get("validation_points", []) or []:
             t = point.get("ticker")
             if t:
@@ -2038,12 +3413,20 @@ def render_ai_analysis_share_dashboard() -> None:
 
     # 2. Compute validation per thesis
     thesis_results: list[dict] = []
-    for thesis in AI_ANALYSIS_THESES:
+    for thesis in merged_theses:
         validation = compute_thesis_validation_score(thesis, daily_data)
-        # Persist today's score for the trend arrow
         if validation.get("ready"):
             _record_thesis_score_today(thesis.get("id", ""), validation["thesis_score"])
         thesis_results.append({"thesis": thesis, "validation": validation})
+
+    # v1.10.11: Show input forms (collapsed by default)
+    _render_thesis_input_form(lang_zh)
+    _render_synthesis_input_form(lang_zh)
+
+    # v1.10.16: Selection bar + confirmation panel (only renders when at least
+    # one item selected). Sits between the input forms and the cards so it's
+    # visible to scroll context.
+    _render_selection_bar_and_confirm(merged_theses, merged_synthesis, lang_zh)
 
     # ----- Block 1: AI 論點卡片 (v1.10.5: now grouped by topic) -----
     section_title = "📋 AI 論點卡片" if lang_zh else "📋 AI Theses"
@@ -2089,16 +3472,18 @@ def render_ai_analysis_share_dashboard() -> None:
     _render_html_block("</div>")  # close ai-share-shell
 
     # ----- Block 2: 整體判斷 -----
-    if AI_ANALYSIS_SYNTHESIS:
-        _render_html_block(_render_ai_synthesis_html(AI_ANALYSIS_SYNTHESIS, lang_zh, daily_data=daily_data))
+    if merged_synthesis:
+        _render_html_block(_render_ai_synthesis_html(merged_synthesis, lang_zh, daily_data=daily_data))
 
     # ----- Block 3: 每日驗證表 -----
     _render_html_block(_render_ai_validation_tracker_html(thesis_results, lang_zh))
 
     # Footer
     foot = (
-        "💡 編輯 AI_ANALYSIS_THESES 來新增 / 修改論點;每張卡片的「目前驗證」分數每天從真實市場數據動態計算"
+        "💡 點上方「➕ 新增論點」/「➕ 新增 AI 整體判斷」可從 UI 加新項目;"
+        "也可編輯 AI_ANALYSIS_THESES 直接新增內建項目。每張卡片的「目前驗證」分數每天從真實市場數據動態計算"
         if lang_zh else
-        "Edit AI_ANALYSIS_THESES to add / modify theses. Validation scores recompute daily from market data."
+        "Use the ➕ buttons above to add new theses / synthesis paragraphs from the UI, or edit "
+        "AI_ANALYSIS_THESES in code. Validation scores recompute daily from market data."
     )
     _render_html_block(f'<div class="ai-share-foot">{escape(foot)}</div>')
