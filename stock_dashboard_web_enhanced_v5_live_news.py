@@ -3,8 +3,8 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.25
-Updated : 2026-05-10
+Version : v1.11.0
+Updated : 2026-05-11
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
 
@@ -244,6 +244,356 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.11.0 (2026-05-11)  [NEW: Stock Comparison & Recommendation Dashboard]
+
+  - Big feature, separate module: stock_comparison_dashboard.py (~1022 lines)
+  - User design intent (verbatim from conversation):
+    "我這個Dashboard的初衷的設計就是以比較優勢開始設計的，目的是正對個股，
+    後來才慢慢添加多個組群進來... 我想把這個Dashboard原有的比較功能，
+    延用在一個新的個股對比和建議Dashboard.py 然後在這個Dashboard裡面就
+    只正對個股的比較..."
+  - Phase A scope (tonight, this commit):
+    Layer 1 — Setup:
+      * Text input (comma-separated)
+      * From watchlist (multi-select)
+      * From supply chain group
+      * Chip-based selected display with X-to-remove
+      * 2-5 tickers, dedup, .TW auto-suffix for digit-only input
+    Layer 2 — Overview (Hero):
+      * Ranking cards (Top 3 highlighted with 🥇🥈🥉)
+      * Verdict text ("顯著領先 / 略勝 / 微幅領先 / 接近")
+      * Comparison table (5 rows: overall + 4 dimensions, with winner+gap)
+      * Auto-generated insights (5 types: top driver / trade-off /
+        warning / all-around-strong / partial-data)
+      * Disclaimer
+    Parallel fetch:
+      * ThreadPoolExecutor (max_workers=5)
+      * Re-uses v1.10.27 yfinance parallel pattern
+      * Re-uses v1.10.29 session_state daily cache (zero re-fetch)
+  - Phase B scope (tomorrow):
+    Layer 3 — Deep dive workspace tabs (point and click into each ticker
+      to see the full render_ticker_page with news, evaluation card,
+      alerts, Trading Lab)
+    Plotly radar chart
+    Mobile responsive polish
+    CSS polish
+  - Architecture:
+    * Separate module (like ai_analysis_dashboard.py)
+    * Deferred import via _resolve_main_module() bridge
+    * Main file dispatches: dashboard_mode == "Stock Comparison" → return
+    * DASHBOARD_MODE_OPTIONS gets "Stock Comparison" appended
+  - Graceful handling of .TWO (OTC) stocks:
+    Chip dimension data fetch may fail (TPEx 307 not yet fixed in v1.10.31).
+    Ranking still works on 3 dimensions (tech + value + growth).
+    Insights includes "partial data" warning.
+  - Tests: 8 smoke cases covering:
+    1. Module loads and CSS injects
+    2. Ranking sorts correctly (high to low)
+    3. Verdict text uses appropriate gap thresholds
+    4. Comparison table handles None scores (graceful)
+    5. Insights detect trade-off (value vs growth winner mismatch)
+    6. Insights detect very-weak technical warning
+    7. Insights detect partial-data warning
+    8. Empty / 1-ticker / 5-ticker edge cases
+
+v1.10.31 (2026-05-11)  [SSL/redirect resilient fallback for TPEx OpenAPI]
+
+  - User's local diagnostic (Windows, Python 3.13) showed:
+      SSL: CERTIFICATE_VERIFY_FAILED — Missing Subject Key Identifier
+    Root cause: Python 3.13 + urllib3 2.4.0+ tightened SSL strict mode
+    (VERIFY_X509_STRICT). TPEx's SSL cert was generated before 2019 and
+    is missing the SKI field — Python 3.13 now rejects it. urllib's
+    Streamlit Cloud production may also exhibit similar behavior even
+    though it reports HTTP 307 (the layer translates SSL errors
+    differently in production).
+  - Why "estimated 50% chance to fully fix 307":
+    * Adding `requests` library fallback with verify=False bypasses
+      both SSL strict mode AND any urllib redirect quirks
+    * `requests` follows redirects across schemes/hosts by default
+    * BUT if TPEx server is intermittently rejecting CDN edge IPs
+      or the cached error is stuck, this won't help
+  - What this patch DEFINITELY fixes:
+    * SSL CERTIFICATE_VERIFY_FAILED across the codebase (any endpoint)
+    * Future-proofing against Python 3.13+ strict mode rollouts
+    * Better diagnostic messages for users (no more cryptic 307)
+  - Strategy: keep urllib as primary (faster, no new dep used as primary).
+    Add `requests` library as final fallback when urllib exhausts all
+    SSL contexts. `requests` already comes with Streamlit so no new
+    dependency.
+  - Implementation:
+    * New helper: _try_requests_fallback(url, timeout, headers)
+      - Uses requests.get(url, verify=False, allow_redirects=True)
+      - Suppresses InsecureRequestWarning to avoid log noise
+      - Returns (content_bytes, status_code) on success, None on fail
+    * Modified _read_request_bytes:
+      - After all urllib SSL contexts fail, try _try_requests_fallback
+      - If that succeeds, return content
+      - If that also fails, raise the last urllib error
+    * Diagnostic logging: when requests fallback succeeds, log
+      "fell back to requests" for future debugging (only in dev mode)
+  - Test coverage: 4 new cases — SSL fail then requests works,
+    SSL fail then requests also fails, HTTP error untouched, no
+    requests library available (still graceful degradation).
+
+v1.10.30 (2026-05-11)  [Eval card UX polish: move to decision brief + toggle style]
+
+  - User feedback after v1.10.29 went live:
+    * "搬到決策摘要下方" — move evaluation card from bottom of ticker
+      page to right after the decision brief section
+    * "換成這種按鈕式的展開" — replace st.expander with st.toggle
+      (the red ON/OFF switch style)
+  - Why the move: decision brief is the high-level summary; users want
+    eval card right after the summary, not buried at the page bottom
+    after charts/news/etc.
+  - Why the switch widget: visually cleaner — single tap, immediate
+    feedback. Matches the toggle aesthetic used elsewhere in the dashboard.
+  - Behavior change:
+    * OLD (v1.10.29): st.expander at very bottom of ticker page
+    * NEW (v1.10.30): st.toggle right after decision brief
+        - Default OFF (per user choice in dialog)
+        - Toggle ON → fetch + render card inline
+        - Toggle OFF → card disappears, but data stays cached
+        - Same daily cache as v1.10.29 (no re-fetch on toggle flip)
+  - Implementation:
+    * Removed the old call from render_ticker_page() bottom
+    * Renamed the helper from render_evaluation_card_for_ticker() to
+      render_evaluation_card_toggle_for_ticker() for clarity
+    * New helper uses st.toggle + conditional render block
+    * Called in render_ticker_bundle_page() right after render_decision_brief()
+  - The 4-dimension scoring engine (v1.10.26-28) and data fetchers
+    are UNCHANGED. Only the UI wrapper changed.
+
+  TODO (not in this patch, pending user diagnostic):
+    * HTTP 307 from TPEx valuation/flow endpoints — diagnostic script
+      `diagnose_tpex_307.py` will identify root cause; fix in v1.10.31
+
+v1.10.29 (2026-05-11)  [Eval card UI integration + HTTP 307 redirect fix]
+
+  - TWO things in one patch (both safe pre-tested):
+    1. Wire evaluation card into Ticker Workspace (Supply Chain Lab)
+    2. Fix HTTP 307 Temporary Redirect handling for TPEx endpoints
+
+  PART 1 — Eval card UI integration:
+  - User reported: "evaluation card should be visible in supply chain
+    dashboard". v1.10.26-28 wrote the scoring + render engines but
+    intentionally left them disconnected from UI. v1.10.29 connects them.
+  - Integration point: render_ticker_page() — every ticker that has
+    a workspace gets an evaluation card section
+  - Architecture: lazy compute + day-level cache
+    * Card is collapsed by default (st.expander, expanded=False)
+    * Click to expand → triggers fetch + score compute
+    * Results cached in session_state with daily key
+      (e.g. "_eval_card_cache:2330.TW:2026-05-11")
+    * Same ticker re-click same day = O(1) lookup
+    * TWSE T86 dict cached at module level (1 fetch per day for whole
+      market = covers all 1700 stocks in one call)
+  - User flow:
+      Supply Chain Lab → 個股工作台 → select ticker (e.g. 2330.TW)
+      → existing ticker page renders
+      → at the bottom, "📊 個股評估卡" expander appears
+      → click to expand → spinner "正在分析中..." → card displays
+  - Card shows 4 dimensions: 技術面 / 價值面 / 成長面 / 籌碼面
+  - Graceful degradation: if yfinance.info fails, value+growth show
+    "資料準備中"; if TWSE T86 fails, chip shows "資料準備中"; tech
+    always works (uses existing daily_df)
+
+  PART 2 — HTTP 307 redirect fix:
+  - User reported: "估值 / 法人 / 外資持股比" all show HTTP 307
+    Temporary Redirect errors in Beginner stock radar diagnostics
+  - Root cause: TPEx OpenAPI endpoints started returning 307 redirects
+    (server side change, not our code). Python's urllib.request handles
+    most redirects automatically BUT raises HTTPError on 307 in some
+    edge cases, and our _read_request_bytes() raises on first HTTPError
+    without trying to follow
+  - Fix: enhanced _read_request_bytes() to:
+    * Follow 301/302/303/307/308 redirects up to 5 hops
+    * Preserve request method (important for 307/308)
+    * Handle relative URL redirects via urljoin
+    * Loop guard prevents infinite redirect chains
+  - Backward compat: zero — all callers see the same return signature.
+    Endpoints with no redirects behave exactly as before.
+  - Test coverage: 5 cases — direct 200, single 307, chain of 3 redirects,
+    cross-domain redirect (e.g. http → https), redirect loop guard.
+
+  New code in v1.10.29:
+    * _read_request_bytes() — enhanced with redirect following
+    * _resolve_eval_card_cache_key(ticker, date_str) — session_state key
+    * _fetch_eval_card_data(ticker, daily_df) — lazy fetch + score compute
+    * render_evaluation_card_for_ticker(ticker, name, daily_df) — wrapper
+      that creates expander, handles cache, calls render
+  Modified:
+    * render_ticker_page() — adds eval card section at bottom
+
+v1.10.28 (2026-05-11)  [Stock evaluation card — Phase 3: chip dimension (TWSE T86 individual stock)]
+
+  - Phase 3 of the 4-dimension evaluation card. Adds 籌碼面 (chip /
+    institutional flow) using TWSE T86 endpoint which returns ALL ~1700
+    listed stocks' institutional buy/sell volumes in one call.
+  - Why one-shot fetch: T86 already returns whole market in ~2-3 sec,
+    so we cache the dict and query individual tickers from it in O(1).
+    Beats per-ticker fetch by 1000x.
+  - 3 new sub-indicators (each 0-10):
+    CHIP (3 sub):
+      1. 外資買賣超 (Foreign institutional net):
+         - Score from net shares (thousand-share units, "千股")
+         - Sigmoid: -2000 → 1, +2000 → 9 (scale aware of mid-cap volume)
+         - Auto-normalizes against avg daily volume for context
+      2. 三大法人合計 (Combined three-investor net):
+         - Foreign + Investment Trust + Dealer
+         - Same sigmoid scale as foreign
+      3. 量能爆量比 (Volume vs 20MA ratio):
+         - From existing daily K-line (already in prefetch)
+         - <0.5x sluggish, 1.0x normal, 2x+ surge (good if up, bad if down)
+         - Direction-aware (rising on volume = good)
+  - Verdict buckets:
+      8.0+ → 籌碼強勢進駐 (strong_inflow)
+      6.0-7.9 → 籌碼偏多 (inflow)
+      4.0-5.9 → 籌碼中性 (neutral)
+      2.0-3.9 → 籌碼偏空 (outflow)
+      < 2.0 → 籌碼大量流出 (strong_outflow)
+  - New code:
+      * fetch_twse_individual_chip_data(date_str) → dict {ticker: chip_dict}
+        — One call, all 1700 stocks, cached per day
+      * build_chip_score(ticker, chip_dict, daily_df) → dict | None
+      * render_eval_card_html() UPGRADED to 4 dimensions
+  - Notes on T86 endpoint:
+      * URL: https://www.twse.com.tw/rwd/zh/fund/T86?date=YYYYMMDD&selectType=ALLBUT0999&response=json
+      * Returns rows of [代號, 名稱, 外資買, 外資賣, 外資淨, 投信買, 投信賣, 投信淨, ...]
+      * Units: shares (need /1000 for 千股 display)
+      * Empty on weekends/holidays — graceful fallback to None
+      * v1.10.22 holiday check is reused to skip useless calls
+  - Test coverage: 7 cases including high-volume foreign buying,
+    foreign net selling, mixed signals, missing T86 data graceful
+    fallback, and T86 weekend (no data) handling.
+
+v1.10.27 (2026-05-11)  [Stock evaluation card — Phase 2: value + growth dimensions (yfinance.info)]
+
+  - Phase 2 of the 4-dimension evaluation card. Spike (verified
+    Monday morning, 15/15 tickers across large/mid/small cap)
+    confirmed yfinance.info returns 100% for all needed fields:
+      * trailingPE, priceToBook, dividendYield (value)
+      * revenueGrowth, earningsGrowth (growth)
+    Speed: 0.29s/ticker (better than predicted 1.2-1.5s).
+  - 5 new sub-indicators, each scored 0-10:
+    VALUE (3 sub):
+      1. 本益比 PE - sigmoid curve, score 10 at PE=10, score 0 at PE=80
+         (allows for sector heterogeneity — TSMC PE 30 not penalized)
+      2. 股價淨值比 PB - sigmoid, score 10 at PB=1, score 0 at PB=15
+      3. 殖利率 DivYld - score 10 at 5%+, score 0 at 0%
+    GROWTH (2 sub):
+      4. 營收年增 - sigmoid, score 10 at +40%, score 0 at -20%
+      5. EPS 年增 - sigmoid, score 10 at +60%, score 0 at -40%
+  - Why sigmoid not threshold:
+      * Fixed thresholds (PE<20=pass) fail for sector heterogeneity
+      * Sigmoid gives smooth gradient, no cliff-edge "all-or-nothing"
+      * Easy to tune curve shape if calibration is off
+  - Output: dict with overall_value_score, overall_growth_score, sub-scores,
+    verdict_key, verdict_text. Same structure as build_technical_score.
+  - Value verdict buckets:
+      8.0+ → cheap (價值面便宜)
+      6.0-7.9 → reasonable (價值面合理)
+      4.0-5.9 → fair (價值面尚可)
+      2.0-3.9 → expensive (價值面偏貴)
+      < 2.0 → very_expensive (價值面極貴)
+  - Growth verdict buckets:
+      8.0+ → high_growth (高成長)
+      6.0-7.9 → growing (成長中)
+      4.0-5.9 → flat (持平)
+      2.0-3.9 → declining (衰退)
+      < 2.0 → contracting (萎縮)
+  - New code:
+      * build_value_score(yf_info_dict) → dict
+      * build_growth_score(yf_info_dict) → dict
+      * _sigmoid_score(value, low_anchor, high_anchor) → float (0-10)
+      * fetch_yfinance_info_for_tickers(tickers, max_workers=5) → dict
+        (Thread-pooled fetcher — 30 tickers in ~5-8 seconds instead of ~9s linear)
+      * render_eval_card_html() UPGRADED to 3-dimension card
+        (technical + value + growth; chip dimension added in v1.10.28)
+  - All new functions are SELF-CONTAINED (don't modify existing renderers).
+  - Test coverage: 9 test cases including TSMC profile (PE=30, growing),
+    high-growth small cap, value trap (low PE + declining), missing data
+    graceful fallback (returns N/A entries).
+
+v1.10.26 (2026-05-11)  [Stock evaluation card — Phase 1: technical score (uses existing data, 0 new APIs)]
+
+  - First phase of the 4-dimension stock evaluation card. User
+    Sunday's spike (verified Monday morning) showed yfinance.info
+    returns 100% for value/growth fields, but this phase intentionally
+    uses ONLY existing daily K-line data (already in prefetch) to:
+      * Minimize risk on first integration
+      * Validate UI design before adding more dimensions
+      * Avoid any new API calls
+  - 5 sub-indicators, each scored 0-10:
+      1. 均線多空 (MA stack): 5MA / 20MA / 60MA arrangement
+         - Perfect bull stack (5>20>60, all rising)        → 10
+         - Bull stack (5>20>60, mixed slopes)              → 7-8
+         - Mixed                                            → 4-6
+         - Bear stack                                       → 0-3
+      2. KD 隨機指標 (KD oscillator, 9-3-3):
+         - 50-75 healthy bull                               → 8-10
+         - 30-50 neutral, 75-85 overbought                  → 5-7
+         - <20 oversold or >85 stretched                    → 2-4
+      3. RSI 14-day:
+         - 50-65 healthy bull                               → 8-10
+         - 35-50 weak or 65-75 stretching                   → 5-7
+         - <30 oversold or >75 overbought                   → 2-4
+      4. MACD:
+         - Golden cross + rising hist                       → 9-10
+         - Above signal, hist neutral                       → 6-8
+         - Death cross + falling hist                       → 0-3
+      5. 量價配合 (vol-price conv):
+         - Rising on rising vol (1.3x+ 20MA)                → 8-10
+         - Healthy normal vol                               → 5-7
+         - Falling on rising vol (distribution)             → 0-3
+  - Output: dict with overall_score (0-10), 5 sub-scores, verdict_key,
+    verdict_text. Verdict buckets:
+      8.0+ → strong (技術面強勢)
+      6.0-7.9 → bullish (技術面偏多)
+      4.0-5.9 → neutral (技術面中性)
+      2.0-3.9 → weak (技術面偏弱)
+      < 2.0 → very_weak (技術面弱勢)
+  - New code (all NEW, no existing function modified):
+      * build_technical_score(daily_df) → dict
+      * _calc_ma_stack_score(daily_df) → (score, detail)
+      * _calc_kd_score(daily_df) → (score, detail)
+      * _calc_rsi_score(daily_df) → (score, detail)
+      * _calc_macd_score(daily_df) → (score, detail)
+      * _calc_volume_price_score(daily_df) → (score, detail)
+      * render_eval_card_html(ticker, name, scores_dict, lang_zh) → str
+      * _EVAL_CARD_CSS
+      * _ensure_eval_card_css()
+  - Phase 1 is SELF-CONTAINED:
+      * Does NOT modify Supply Chain Lab rendering
+      * Does NOT modify prefetch jobs
+      * Does NOT touch existing TSMC Top 5 / Tomorrow Momentum Pulse
+      * Can be called from anywhere by future patches; for now,
+        users will see it via an opt-in test page (next patch will
+        wire it into a real entry point)
+  - Why "build first, integrate later":
+      * If the scoring logic has issues (e.g. KD too sensitive),
+        fixing it shouldn't require touching the Supply Chain Lab
+        renderer
+      * Future v1.10.27 (value+growth) and v1.10.28 (chip) will
+        add to the same card structure, all integrate at the end
+      * Each phase ships standalone testable code
+  - Output card HTML structure (mobile-responsive):
+      ┌─────────────────────────────────┐
+      │ 📊 技術面評估                    │
+      │ 7.5 / 10  「技術面偏多」          │
+      │ ──────────────────────────────│
+      │ 均線多空    [██████░░░] 8/10    │
+      │ KD 指標     [████░░░░░] 5/10    │
+      │ RSI         [██████░░░] 7/10    │
+      │ MACD        [███████░░] 8/10    │
+      │ 量價配合    [█████░░░░] 6/10    │
+      │ ──────────────────────────────│
+      │ ⚠️ 量化指標自動計算,僅供參考     │
+      └─────────────────────────────────┘
+  - Test coverage: 7 test cases including bull stack scenarios,
+    bear stack, oversold KD, overbought RSI, healthy MACD, volume
+    distribution patterns, and "insufficient data" graceful failure
+    (returns None instead of crashing).
 
 v1.10.25 (2026-05-10)  [Auto-refresh for momentum pulse + TSMC Top 5 during TW market hours]
 
@@ -1946,7 +2296,7 @@ DEFAULT_WAVE_PERIOD = "6mo"
 SUPPORTED_PERIODS = ["3mo", "6mo", "1y", "2y"]
 SUPPORTED_INTERVALS = ["1d", "1wk"]
 
-DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab", "Supply Chain Lab", "Taiwan Futures Lab"]
+DASHBOARD_MODE_OPTIONS = ["General Market", "Active ETF Lab", "Supply Chain Lab", "Taiwan Futures Lab", "Stock Comparison"]
 
 
 def dashboard_mode_label(value: str) -> str:
@@ -1955,6 +2305,7 @@ def dashboard_mode_label(value: str) -> str:
         "Active ETF Lab": t("dashboard_mode_active_etf"),
         "Supply Chain Lab": t("dashboard_mode_supply_chain"),
         "Taiwan Futures Lab": t("dashboard_mode_taiwan_futures"),
+        "Stock Comparison": t("dashboard_mode_stock_comparison"),
     }
     return labels.get(str(value), str(value))
 
@@ -9233,6 +9584,7 @@ TRANSLATIONS["English"].update({
     "dashboard_mode_active_etf": "Active ETF Dashboard",
     "dashboard_mode_supply_chain": "Supply Chain Dashboard",
     "dashboard_mode_taiwan_futures": "Taiwan Options Calculator",
+    "dashboard_mode_stock_comparison": "Stock Comparison & Recommendation",
     "taiwan_futures_vision_deck": "Taiwan Options Lab",
     "taiwan_futures_vision_deck_copy": "A focused TX-options planning workspace for strike, premium, break-even, and remaining-days pace checks using public TAIEX and front-month TX references.",
     "taiwan_futures_dashboard_kicker": "Dashboard mode",
@@ -9367,6 +9719,7 @@ TRANSLATIONS["繁體中文"].update({
     "dashboard_mode_active_etf": "主動式 ETF Dashboard",
     "dashboard_mode_supply_chain": "供應鏈 Dashboard",
     "dashboard_mode_taiwan_futures": "台指選擇權 試算Dashboard",
+    "dashboard_mode_stock_comparison": "個股對比與建議",
     "taiwan_futures_vision_deck": "台指選擇權試算專區",
     "taiwan_futures_vision_deck_copy": "聚焦台指選擇權履約價、權利金、回本價與剩餘交易日節奏的專用工作台，並用公開加權指數與近月台指期做參考。",
     "taiwan_futures_dashboard_kicker": "Dashboard 模式",
@@ -16263,6 +16616,1862 @@ def _render_tsmc_top5_html(payload: dict, lang_zh: bool) -> str:
         </div>
         """
     ).strip()
+
+
+# ============================================================================
+# v1.10.26 — Stock evaluation card: technical score (Phase 1 of 4 dimensions)
+# ============================================================================
+# Computes a 0-10 technical score for any ticker from daily K-line data
+# (which prefetch already loads). Self-contained — does NOT modify Supply
+# Chain Lab rendering, prefetch, or other existing code. Future patches
+# (v1.10.27 value+growth, v1.10.28 chip) will add to the same card.
+#
+# Score breakdown (each 0-10, then averaged):
+#   1. MA stack (5/20/60 day arrangement)
+#   2. KD oscillator (9-3-3)
+#   3. RSI (14-day)
+#   4. MACD (12-26-9)
+#   5. Volume-price convergence
+#
+# Output: dict with overall_score, 5 sub-scores, verdict, detail strings.
+# ============================================================================
+
+
+def _ema(series, period):
+    """Standard exponential moving average."""
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def _calc_ma_stack_score(df) -> tuple[float, str]:
+    """5MA / 20MA / 60MA stacking score.
+
+    Returns (score 0-10, detail string).
+    Needs ≥60 trading days of close data.
+    """
+    if df is None or len(df) < 60:
+        return 0.0, "資料不足"
+    close = df["Close"]
+    ma5 = close.rolling(5).mean()
+    ma20 = close.rolling(20).mean()
+    ma60 = close.rolling(60).mean()
+    m5, m20, m60 = ma5.iloc[-1], ma20.iloc[-1], ma60.iloc[-1]
+    if any(pd.isna(x) for x in [m5, m20, m60]):
+        return 0.0, "資料不足"
+
+    # Stack arrangement
+    if m5 > m20 > m60:
+        bull_stack = True
+    elif m5 < m20 < m60:
+        bull_stack = False
+    else:
+        # Mixed — partial credit
+        if m5 > m60:
+            return 6.0, "短中期偏多但 20MA 雜亂"
+        return 3.5, "短中期偏空但 60MA 仍多"
+
+    # Slope check (last 5 days)
+    if len(ma5) < 6:
+        return 7.0 if bull_stack else 3.0, "排列就緒,趨勢未明"
+    ma5_rising = ma5.iloc[-1] > ma5.iloc[-5]
+    ma20_rising = ma20.iloc[-1] > ma20.iloc[-5]
+
+    if bull_stack:
+        if ma5_rising and ma20_rising:
+            return 9.5, f"完美多頭排列(5MA={m5:.1f} > 20MA={m20:.1f} > 60MA={m60:.1f})"
+        elif ma5_rising:
+            return 8.0, f"多頭排列,5MA 上揚"
+        else:
+            return 7.0, "多頭排列就緒,5MA 平坦"
+    else:
+        if not ma5_rising and not ma20_rising:
+            return 0.5, f"完美空頭排列(5MA={m5:.1f} < 20MA={m20:.1f} < 60MA={m60:.1f})"
+        elif not ma5_rising:
+            return 2.0, "空頭排列,5MA 下行"
+        else:
+            return 3.0, "空頭排列但 5MA 反彈"
+
+
+def _calc_kd_score(df) -> tuple[float, str]:
+    """KD stochastic oscillator (9-3-3).
+
+    K = SMA of RSV with period 3; D = SMA of K with period 3.
+    Healthy bull: K, D both 50-75 (golden zone).
+    """
+    if df is None or len(df) < 20:
+        return 0.0, "資料不足"
+
+    high9 = df["High"].rolling(9).max()
+    low9 = df["Low"].rolling(9).min()
+    rsv = (df["Close"] - low9) / (high9 - low9) * 100
+    rsv = rsv.fillna(50.0)  # safe fallback for division edge cases
+
+    k = rsv.ewm(span=3, adjust=False).mean()
+    d = k.ewm(span=3, adjust=False).mean()
+    if pd.isna(k.iloc[-1]) or pd.isna(d.iloc[-1]):
+        return 0.0, "資料不足"
+
+    k_val = float(k.iloc[-1])
+    d_val = float(d.iloc[-1])
+    avg = (k_val + d_val) / 2
+
+    # Healthy bull zone
+    if 50 <= avg <= 75:
+        if k_val > d_val:  # golden cross territory
+            return 9.0, f"健康多頭區(K={k_val:.1f}, D={d_val:.1f}, K>D)"
+        return 7.5, f"多頭區但 K<D(K={k_val:.1f}, D={d_val:.1f})"
+    elif 30 <= avg < 50:
+        return 5.5, f"中性偏弱(K={k_val:.1f}, D={d_val:.1f})"
+    elif 75 < avg <= 85:
+        return 4.5, f"過熱區(K={k_val:.1f}, D={d_val:.1f})"
+    elif avg > 85:
+        return 2.5, f"極度過熱(K={k_val:.1f}, D={d_val:.1f})"
+    elif 20 <= avg < 30:
+        return 3.5, f"超賣邊緣(K={k_val:.1f}, D={d_val:.1f})"
+    else:  # < 20
+        return 2.0, f"深度超賣(K={k_val:.1f}, D={d_val:.1f})"
+
+
+def _calc_rsi_score(df) -> tuple[float, str]:
+    """RSI 14-day. Healthy 50-65."""
+    if df is None or len(df) < 30:
+        return 0.0, "資料不足"
+
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.ewm(span=14, adjust=False).mean()
+    avg_loss = loss.ewm(span=14, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, 1e-9)
+    rsi = 100 - (100 / (1 + rs))
+
+    if pd.isna(rsi.iloc[-1]):
+        return 0.0, "資料不足"
+    val = float(rsi.iloc[-1])
+
+    if 50 <= val <= 65:
+        return 9.0, f"健康多頭(RSI={val:.1f})"
+    elif 65 < val <= 75:
+        return 7.0, f"偏強但接近過熱(RSI={val:.1f})"
+    elif 75 < val <= 85:
+        return 4.5, f"過熱區(RSI={val:.1f})"
+    elif val > 85:
+        return 2.0, f"極度過熱(RSI={val:.1f})"
+    elif 40 <= val < 50:
+        return 5.5, f"中性偏弱(RSI={val:.1f})"
+    elif 30 <= val < 40:
+        return 4.0, f"偏弱(RSI={val:.1f})"
+    elif 20 <= val < 30:
+        return 3.5, f"超賣邊緣(RSI={val:.1f})"
+    else:
+        return 2.5, f"深度超賣(RSI={val:.1f})"
+
+
+def _calc_macd_score(df) -> tuple[float, str]:
+    """MACD (12-26-9). Look at: 1) MACD vs Signal line, 2) Histogram direction."""
+    if df is None or len(df) < 35:
+        return 0.0, "資料不足"
+
+    ema12 = _ema(df["Close"], 12)
+    ema26 = _ema(df["Close"], 26)
+    macd = ema12 - ema26
+    signal = _ema(macd, 9)
+    hist = macd - signal
+
+    if pd.isna(macd.iloc[-1]) or pd.isna(signal.iloc[-1]):
+        return 0.0, "資料不足"
+
+    macd_val = float(macd.iloc[-1])
+    signal_val = float(signal.iloc[-1])
+    hist_val = float(hist.iloc[-1])
+    hist_prev = float(hist.iloc[-3]) if len(hist) >= 3 else hist_val
+
+    above = macd_val > signal_val
+    hist_rising = hist_val > hist_prev
+
+    if above and hist_rising and hist_val > 0:
+        return 9.5, f"金叉 + 紅柱擴大(MACD={macd_val:.2f}, Signal={signal_val:.2f})"
+    elif above and hist_val > 0:
+        return 7.5, f"多頭區但動能緩(MACD={macd_val:.2f})"
+    elif above and not hist_rising:
+        return 6.0, f"多頭區但紅柱收斂"
+    elif not above and not hist_rising and hist_val < 0:
+        return 0.5, f"死叉 + 綠柱擴大(MACD={macd_val:.2f}, Signal={signal_val:.2f})"
+    elif not above and hist_val < 0:
+        return 2.0, f"空頭區但動能緩"
+    elif not above and hist_rising:
+        return 3.5, f"空頭區但綠柱收斂(可能轉折)"
+    else:
+        return 5.0, f"中性(MACD={macd_val:.2f})"
+
+
+def _calc_volume_price_score(df) -> tuple[float, str]:
+    """Volume-price convergence: rising on volume = healthy; falling on volume = distribution."""
+    if df is None or len(df) < 25 or "Volume" not in df.columns:
+        return 0.0, "資料不足"
+
+    close = df["Close"]
+    vol = df["Volume"]
+    if pd.isna(close.iloc[-1]) or pd.isna(vol.iloc[-1]):
+        return 0.0, "資料不足"
+
+    vol_ma20 = vol.rolling(20).mean()
+    if pd.isna(vol_ma20.iloc[-1]) or vol_ma20.iloc[-1] == 0:
+        return 5.0, "量能資料異常"
+
+    # Yesterday's move + today's move (use last 3 sessions average for stability)
+    if len(close) < 4:
+        return 5.0, "資料不足"
+    recent_ret = (close.iloc[-1] / close.iloc[-4] - 1) * 100  # 3-day return
+    vol_ratio = vol.iloc[-1] / vol_ma20.iloc[-1]
+
+    rising = recent_ret > 0.5
+    falling = recent_ret < -0.5
+    high_vol = vol_ratio >= 1.3
+    low_vol = vol_ratio <= 0.7
+
+    if rising and high_vol:
+        return 9.0, f"漲時放量(量比 {vol_ratio:.2f}x)"
+    elif rising and not low_vol:
+        return 7.0, f"漲勢但量能普通(量比 {vol_ratio:.2f}x)"
+    elif rising and low_vol:
+        return 5.5, f"漲時量縮 — 動能存疑(量比 {vol_ratio:.2f}x)"
+    elif falling and high_vol:
+        return 1.5, f"跌時放量(籌碼鬆動,量比 {vol_ratio:.2f}x)"
+    elif falling and low_vol:
+        return 5.0, f"跌時量縮 — 賣壓有限(量比 {vol_ratio:.2f}x)"
+    elif falling:
+        return 3.5, f"跌勢但量能普通"
+    else:
+        return 6.0, f"量價平穩(量比 {vol_ratio:.2f}x)"
+
+
+def build_technical_score(daily_df) -> dict | None:
+    """Top-level: compute technical score for one ticker's daily data.
+
+    Args:
+        daily_df: DataFrame with columns Open/High/Low/Close/Volume,
+                  indexed by date. Needs ≥60 rows for full scoring.
+
+    Returns dict (or None if data insufficient):
+        {
+            "overall_score": float (0-10),
+            "verdict_key": str ("strong" | "bullish" | "neutral" | "weak" | "very_weak"),
+            "subscores": {
+                "ma_stack": {"score": float, "detail": str},
+                "kd": {"score": float, "detail": str},
+                "rsi": {"score": float, "detail": str},
+                "macd": {"score": float, "detail": str},
+                "volume_price": {"score": float, "detail": str},
+            }
+        }
+    """
+    if daily_df is None or len(daily_df) < 60:
+        return None
+
+    # Compute all 5 sub-scores
+    ma_score, ma_detail = _calc_ma_stack_score(daily_df)
+    kd_score, kd_detail = _calc_kd_score(daily_df)
+    rsi_score, rsi_detail = _calc_rsi_score(daily_df)
+    macd_score, macd_detail = _calc_macd_score(daily_df)
+    vp_score, vp_detail = _calc_volume_price_score(daily_df)
+
+    overall = (ma_score + kd_score + rsi_score + macd_score + vp_score) / 5
+
+    if overall >= 8.0:
+        verdict_key = "strong"
+    elif overall >= 6.0:
+        verdict_key = "bullish"
+    elif overall >= 4.0:
+        verdict_key = "neutral"
+    elif overall >= 2.0:
+        verdict_key = "weak"
+    else:
+        verdict_key = "very_weak"
+
+    return {
+        "overall_score": round(overall, 1),
+        "verdict_key": verdict_key,
+        "subscores": {
+            "ma_stack":     {"score": round(ma_score, 1),  "detail": ma_detail},
+            "kd":           {"score": round(kd_score, 1),  "detail": kd_detail},
+            "rsi":          {"score": round(rsi_score, 1), "detail": rsi_detail},
+            "macd":         {"score": round(macd_score, 1),"detail": macd_detail},
+            "volume_price": {"score": round(vp_score, 1),  "detail": vp_detail},
+        },
+    }
+
+
+def render_eval_card_html(ticker: str, name: str, scores: dict | None,
+                           lang_zh: bool = True) -> str:
+    """Render the evaluation card HTML for one ticker.
+
+    v1.10.26: Phase 1 — only "技術面" dimension shown. Phases 2+3 will add
+    value/growth/chip dimensions to the same card structure.
+
+    Args:
+        ticker: e.g. "2330.TW"
+        name: e.g. "台積電"
+        scores: output from build_technical_score() — may be None if data insufficient
+        lang_zh: True for ZH, False for EN
+
+    Returns: HTML string. Empty string if scores is None.
+    """
+    if scores is None:
+        if lang_zh:
+            return f'<div class="eval-card-empty">📊 {escape(ticker)} {escape(name)} — 資料不足無法評估</div>'
+        return f'<div class="eval-card-empty">📊 {escape(ticker)} {escape(name)} — Insufficient data</div>'
+
+    overall = scores["overall_score"]
+    verdict_key = scores["verdict_key"]
+    subscores = scores["subscores"]
+
+    # Verdict labels
+    if lang_zh:
+        verdict_map = {
+            "strong":   ("技術面強勢", "eval-verdict-strong"),
+            "bullish":  ("技術面偏多", "eval-verdict-bullish"),
+            "neutral":  ("技術面中性", "eval-verdict-neutral"),
+            "weak":     ("技術面偏弱", "eval-verdict-weak"),
+            "very_weak":("技術面弱勢", "eval-verdict-very-weak"),
+        }
+        section_title = "📊 技術面評估"
+        rows_labels = {
+            "ma_stack":     "均線多空",
+            "kd":           "KD 指標",
+            "rsi":          "RSI",
+            "macd":         "MACD",
+            "volume_price": "量價配合",
+        }
+        disclaimer = "⚠️ 量化指標自動計算,僅供研究參考,不構成投資建議。"
+    else:
+        verdict_map = {
+            "strong":   ("Strong Technical", "eval-verdict-strong"),
+            "bullish":  ("Bullish Technical", "eval-verdict-bullish"),
+            "neutral":  ("Neutral Technical", "eval-verdict-neutral"),
+            "weak":     ("Weak Technical", "eval-verdict-weak"),
+            "very_weak":("Very Weak Technical", "eval-verdict-very-weak"),
+        }
+        section_title = "📊 Technical Evaluation"
+        rows_labels = {
+            "ma_stack":     "MA Stack",
+            "kd":           "KD Stochastic",
+            "rsi":          "RSI",
+            "macd":         "MACD",
+            "volume_price": "Vol-Price",
+        }
+        disclaimer = "⚠️ Quantitative indicators — for research only, not investment advice."
+
+    verdict_text, verdict_class = verdict_map.get(verdict_key, ("—", "eval-verdict-neutral"))
+
+    # Build sub-score rows
+    row_html_parts = []
+    for key in ["ma_stack", "kd", "rsi", "macd", "volume_price"]:
+        sub = subscores[key]
+        sc = sub["score"]
+        label = rows_labels[key]
+        detail = sub["detail"]
+        # Color class for score
+        if sc >= 7:
+            color_cls = "eval-row-good"
+        elif sc >= 4:
+            color_cls = "eval-row-neutral"
+        else:
+            color_cls = "eval-row-poor"
+        # Bar fill
+        fill_pct = max(0, min(100, int(sc * 10)))
+        row_html_parts.append(f"""
+        <div class="eval-row {color_cls}">
+            <div class="eval-row-label">{escape(label)}</div>
+            <div class="eval-row-bar"><div class="eval-row-bar-fill" style="width:{fill_pct}%;"></div></div>
+            <div class="eval-row-score">{sc}/10</div>
+            <div class="eval-row-detail">{escape(detail)}</div>
+        </div>
+        """)
+    rows_html = "".join(row_html_parts)
+
+    return f"""
+    <div class="eval-card-shell">
+        <div class="eval-card-header">
+            <div class="eval-card-section-title">{escape(section_title)}</div>
+            <div class="eval-card-ticker">{escape(ticker)} · {escape(name)}</div>
+        </div>
+        <div class="eval-card-overall">
+            <div class="eval-card-overall-num">{overall:.1f}<span class="eval-card-overall-denom">/10</span></div>
+            <div class="eval-card-verdict {escape(verdict_class)}">{escape(verdict_text)}</div>
+        </div>
+        <div class="eval-card-rows">
+            {rows_html}
+        </div>
+        <div class="eval-card-disclaimer">{escape(disclaimer)}</div>
+    </div>
+    """
+
+
+_EVAL_CARD_CSS = """
+<style>
+.eval-card-shell {
+    background: linear-gradient(180deg, rgba(28,30,55,.92), rgba(20,22,40,.92));
+    border: 1px solid rgba(96,110,145,.40);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin: 12px 0;
+    color: #d8dde9;
+}
+.eval-card-empty {
+    background: rgba(96,110,145,.10);
+    border: 1px dashed rgba(96,110,145,.30);
+    border-radius: 8px;
+    padding: 14px;
+    color: #98a2b8;
+    font-size: 13px;
+    text-align: center;
+    margin: 8px 0;
+}
+.eval-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.eval-card-section-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f4f6fb;
+}
+.eval-card-ticker {
+    font-size: 12px;
+    color: #98a2b8;
+    font-weight: 600;
+}
+.eval-card-overall {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(96,110,145,.20);
+}
+.eval-card-overall-num {
+    font-size: 32px;
+    font-weight: 800;
+    color: #f4f6fb;
+    line-height: 1;
+}
+.eval-card-overall-denom {
+    font-size: 14px;
+    color: #98a2b8;
+    font-weight: 600;
+    margin-left: 2px;
+}
+.eval-card-verdict {
+    font-size: 14px;
+    font-weight: 700;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid;
+}
+.eval-verdict-strong {
+    color: #8be8b1;
+    background: rgba(76,208,168,.15);
+    border-color: rgba(76,208,168,.55);
+}
+.eval-verdict-bullish {
+    color: #8be8b1;
+    background: rgba(76,208,168,.08);
+    border-color: rgba(76,208,168,.35);
+}
+.eval-verdict-neutral {
+    color: #f4d68a;
+    background: rgba(230,195,95,.10);
+    border-color: rgba(230,195,95,.35);
+}
+.eval-verdict-weak {
+    color: #f4a3aa;
+    background: rgba(217,102,112,.08);
+    border-color: rgba(217,102,112,.35);
+}
+.eval-verdict-very-weak {
+    color: #f4a3aa;
+    background: rgba(217,102,112,.15);
+    border-color: rgba(217,102,112,.55);
+}
+.eval-card-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.eval-row {
+    display: grid;
+    grid-template-columns: minmax(80px, 100px) 1fr minmax(50px, 60px) minmax(160px, 2fr);
+    gap: 10px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12.5px;
+}
+.eval-row-label {
+    font-weight: 700;
+    color: #e8eef9;
+}
+.eval-row-bar {
+    height: 8px;
+    background: rgba(96,110,145,.20);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.eval-row-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, currentColor 0%, currentColor 100%);
+    opacity: 0.85;
+}
+.eval-row-good { color: #8be8b1; }
+.eval-row-good .eval-row-bar-fill { background: linear-gradient(90deg, #4cd0a8, #8be8b1); }
+.eval-row-neutral { color: #f4d68a; }
+.eval-row-neutral .eval-row-bar-fill { background: linear-gradient(90deg, #e6c35f, #f4d68a); }
+.eval-row-poor { color: #f4a3aa; }
+.eval-row-poor .eval-row-bar-fill { background: linear-gradient(90deg, #d96670, #f4a3aa); }
+.eval-row-score {
+    font-weight: 700;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.eval-row-detail {
+    color: #98a2b8;
+    font-size: 11.5px;
+}
+.eval-card-disclaimer {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(96,110,145,.15);
+    font-size: 11px;
+    color: #98a2b8;
+    font-style: italic;
+    line-height: 1.5;
+}
+
+/* === Mobile (< 768px) === */
+@media (max-width: 767px) {
+    .eval-card-shell { padding: 14px 15px !important; }
+    .eval-card-section-title { font-size: 14px !important; }
+    .eval-card-ticker { font-size: 11.5px !important; }
+    .eval-card-overall { gap: 10px !important; margin-bottom: 10px !important; padding-bottom: 10px !important; }
+    .eval-card-overall-num { font-size: 26px !important; }
+    .eval-card-verdict { font-size: 12.5px !important; padding: 4px 9px !important; }
+    .eval-row {
+        grid-template-columns: 80px 1fr 50px !important;
+        grid-template-rows: auto auto !important;
+        gap: 6px !important;
+        font-size: 12px !important;
+    }
+    .eval-row-detail {
+        grid-column: 1 / -1 !important;
+        font-size: 11px !important;
+        padding-left: 0 !important;
+    }
+    .eval-card-disclaimer { font-size: 10.5px !important; }
+}
+
+/* === Tablet (768-1024px) === */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .eval-card-shell { padding: 16px 18px !important; }
+    .eval-row { font-size: 12px !important; }
+}
+
+/* === v1.10.27 — Multi-dimension styles (technical / value / growth blocks) === */
+.eval-dim-block {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(96,110,145,.15);
+}
+.eval-dim-block:first-of-type {
+    margin-top: 4px;
+    padding-top: 0;
+    border-top: none;
+}
+.eval-dim-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.eval-dim-title {
+    font-size: 14px;
+    font-weight: 800;
+    color: #e8eef9;
+    flex-shrink: 0;
+}
+.eval-dim-score {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f4f6fb;
+    font-variant-numeric: tabular-nums;
+}
+.eval-dim-chip {
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid;
+    margin-left: auto;
+}
+.eval-dim-chip-good {
+    color: #8be8b1;
+    background: rgba(76,208,168,.15);
+    border-color: rgba(76,208,168,.55);
+}
+.eval-dim-chip-bullish {
+    color: #8be8b1;
+    background: rgba(76,208,168,.08);
+    border-color: rgba(76,208,168,.35);
+}
+.eval-dim-chip-neutral {
+    color: #f4d68a;
+    background: rgba(230,195,95,.10);
+    border-color: rgba(230,195,95,.35);
+}
+.eval-dim-chip-weak {
+    color: #f4a3aa;
+    background: rgba(217,102,112,.08);
+    border-color: rgba(217,102,112,.35);
+}
+.eval-dim-chip-very-weak {
+    color: #f4a3aa;
+    background: rgba(217,102,112,.15);
+    border-color: rgba(217,102,112,.55);
+}
+@media (max-width: 767px) {
+    .eval-dim-header { gap: 8px !important; }
+    .eval-dim-title { font-size: 13px !important; }
+    .eval-dim-score { font-size: 14px !important; }
+    .eval-dim-chip { font-size: 10.5px !important; padding: 2px 7px !important; }
+}
+</style>
+"""
+
+
+def _ensure_eval_card_css():
+    """Inject CSS every render — idempotent."""
+    render_html_block(_EVAL_CARD_CSS)
+
+
+# ============================================================================
+# End v1.10.26 evaluation card scaffolding
+# Future patches:
+#   v1.10.27 — add value + growth dimensions (yfinance.info)
+#   v1.10.28 — add chip dimension (TWSE T86 endpoint for individual stock flows)
+#   v1.10.29 — wire into actual entry points (Supply Chain Lab individual stock view)
+# ============================================================================
+
+
+# ============================================================================
+# v1.10.27 — Stock evaluation card: value + growth dimensions
+# ============================================================================
+# Uses yfinance.Ticker(ticker).info — verified 100% available for 15/15 TW
+# supply chain stocks (large + mid + small cap) per spike test 2026-05-11.
+# Average call time 0.29s/ticker, parallelizable with ThreadPoolExecutor.
+#
+# Sigmoid scoring used instead of fixed thresholds — accommodates sector
+# heterogeneity (e.g. TSMC PE=30 in AI cycle is OK, not "fail").
+# ============================================================================
+
+import math
+
+
+def _sigmoid_score(value, low_anchor: float, high_anchor: float,
+                    invert: bool = False) -> float:
+    """Map a number to 0-10 using a smooth sigmoid curve.
+
+    Args:
+        value: the raw value (e.g. PE = 30.7)
+        low_anchor: value that maps to ~1 (poor end)
+        high_anchor: value that maps to ~9 (good end)
+        invert: if True, LOW value = HIGH score (e.g. for PE — lower is better)
+
+    Returns float in [0, 10].
+
+    Sigmoid is centered between the two anchors, with steepness scaled to
+    cover ~8 score points across the anchor range.
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return 0.0  # caller should check for None instead
+
+    # Center of the sigmoid
+    center = (low_anchor + high_anchor) / 2
+    span = abs(high_anchor - low_anchor)
+    if span == 0:
+        return 5.0  # degenerate
+
+    # Steepness — scale so anchors map to ~1 and ~9
+    k = 4.4 / span  # 4.4 chosen so sigmoid(4.4/2) ≈ 0.9 → score ≈ 9
+
+    if invert:
+        x = -(value - center) * k
+    else:
+        x = (value - center) * k
+
+    # Standard sigmoid: 1 / (1 + e^-x), then scale to 0-10
+    try:
+        sig = 1.0 / (1.0 + math.exp(-x))
+    except OverflowError:
+        sig = 0.0 if x < 0 else 1.0
+
+    return round(max(0.0, min(10.0, sig * 10)), 1)
+
+
+def build_value_score(yf_info: dict | None) -> dict | None:
+    """Compute value dimension score from yfinance.info dict.
+
+    Args:
+        yf_info: dict from yf.Ticker(ticker).info, or None if fetch failed
+
+    Returns dict (or None if all fields missing):
+        {
+            "overall_score": float (0-10),
+            "verdict_key": str ("cheap" | "reasonable" | "fair" | "expensive" | "very_expensive"),
+            "subscores": {
+                "pe":      {"score": float, "detail": str, "raw": float | None},
+                "pb":      {"score": float, "detail": str, "raw": float | None},
+                "div_yld": {"score": float, "detail": str, "raw": float | None},
+            }
+        }
+    """
+    if not yf_info:
+        return None
+
+    pe_raw = yf_info.get("trailingPE")
+    pb_raw = yf_info.get("priceToBook")
+    div_raw = yf_info.get("dividendYield")  # already in %, e.g. 1.05 = 1.05%
+
+    # Handle None vs missing — some yfinance returns None, some omit the key
+    if pe_raw is None and pb_raw is None and div_raw is None:
+        return None
+
+    # === PE: low is good, invert; score 10 at PE=10, score ~1 at PE=80 ===
+    if pe_raw is None or pe_raw <= 0:
+        pe_score = 0.0
+        pe_detail = "本益比資料缺失"
+        pe_raw_val = None
+    else:
+        pe_score = _sigmoid_score(pe_raw, low_anchor=80, high_anchor=10, invert=False)
+        # Note: when invert=False, low_anchor=80 high_anchor=10 swaps meaning intentionally
+        # — we want high values (PE=80) to map to LOW score, low values (PE=10) to HIGH score.
+        # So actually use _sigmoid_score(pe, low=10, high=80, invert=True) — clearer
+        pe_score = _sigmoid_score(pe_raw, low_anchor=10, high_anchor=80, invert=True)
+        if pe_raw < 12:
+            pe_detail = f"極便宜(PE={pe_raw:.1f})"
+        elif pe_raw < 18:
+            pe_detail = f"便宜(PE={pe_raw:.1f})"
+        elif pe_raw < 25:
+            pe_detail = f"合理(PE={pe_raw:.1f})"
+        elif pe_raw < 40:
+            pe_detail = f"偏貴(PE={pe_raw:.1f})"
+        elif pe_raw < 60:
+            pe_detail = f"昂貴(PE={pe_raw:.1f})"
+        else:
+            pe_detail = f"極貴(PE={pe_raw:.1f})"
+        pe_raw_val = round(pe_raw, 1)
+
+    # === PB: low is good; score 10 at PB=1, score ~1 at PB=15 ===
+    if pb_raw is None or pb_raw <= 0:
+        pb_score = 0.0
+        pb_detail = "股價淨值比資料缺失"
+        pb_raw_val = None
+    else:
+        pb_score = _sigmoid_score(pb_raw, low_anchor=1.0, high_anchor=15, invert=True)
+        if pb_raw < 1.5:
+            pb_detail = f"低於淨值附近(PB={pb_raw:.2f})"
+        elif pb_raw < 3:
+            pb_detail = f"合理(PB={pb_raw:.2f})"
+        elif pb_raw < 5:
+            pb_detail = f"略貴(PB={pb_raw:.2f})"
+        elif pb_raw < 10:
+            pb_detail = f"偏貴(PB={pb_raw:.2f})"
+        else:
+            pb_detail = f"極貴(PB={pb_raw:.2f})"
+        pb_raw_val = round(pb_raw, 2)
+
+    # === Dividend Yield: high is good ===
+    # Per spike: yfinance dividendYield is already in PERCENT (e.g. 1.05 = 1.05%)
+    if div_raw is None:
+        div_score = 0.0
+        div_detail = "殖利率資料缺失"
+        div_raw_val = None
+    else:
+        # Some yfinance versions return ratio (0.0105 = 1.05%) — auto-detect
+        if div_raw < 1.0:
+            div_pct = div_raw * 100  # convert ratio to percent
+        else:
+            div_pct = div_raw
+        div_score = _sigmoid_score(div_pct, low_anchor=0.0, high_anchor=5.0, invert=False)
+        if div_pct < 0.5:
+            div_detail = f"幾乎無股息(殖利率 {div_pct:.2f}%)"
+        elif div_pct < 2.0:
+            div_detail = f"低殖利率({div_pct:.2f}%)"
+        elif div_pct < 4.0:
+            div_detail = f"中等殖利率({div_pct:.2f}%)"
+        elif div_pct < 6.0:
+            div_detail = f"高殖利率({div_pct:.2f}%)"
+        else:
+            div_detail = f"極高殖利率({div_pct:.2f}%)— 需檢查可持續性"
+        div_raw_val = round(div_pct, 2)
+
+    overall = (pe_score + pb_score + div_score) / 3
+
+    if overall >= 8.0:
+        verdict_key = "cheap"
+    elif overall >= 6.0:
+        verdict_key = "reasonable"
+    elif overall >= 4.0:
+        verdict_key = "fair"
+    elif overall >= 2.0:
+        verdict_key = "expensive"
+    else:
+        verdict_key = "very_expensive"
+
+    return {
+        "overall_score": round(overall, 1),
+        "verdict_key": verdict_key,
+        "subscores": {
+            "pe":      {"score": round(pe_score, 1),  "detail": pe_detail,  "raw": pe_raw_val},
+            "pb":      {"score": round(pb_score, 1),  "detail": pb_detail,  "raw": pb_raw_val},
+            "div_yld": {"score": round(div_score, 1), "detail": div_detail, "raw": div_raw_val},
+        },
+    }
+
+
+def build_growth_score(yf_info: dict | None) -> dict | None:
+    """Compute growth dimension score from yfinance.info dict.
+
+    Args:
+        yf_info: dict from yf.Ticker(ticker).info, or None
+
+    Returns dict or None:
+        {
+            "overall_score": float,
+            "verdict_key": str ("high_growth" | "growing" | "flat" | "declining" | "contracting"),
+            "subscores": {
+                "revenue_growth":  {"score": float, "detail": str, "raw": float | None},
+                "earnings_growth": {"score": float, "detail": str, "raw": float | None},
+            }
+        }
+    """
+    if not yf_info:
+        return None
+
+    rev_raw = yf_info.get("revenueGrowth")    # ratio e.g. 0.351 = 35.1%
+    earn_raw = yf_info.get("earningsGrowth")  # ratio
+
+    if rev_raw is None and earn_raw is None:
+        return None
+
+    # === Revenue Growth: high is good ===
+    if rev_raw is None:
+        rev_score = 0.0
+        rev_detail = "營收成長資料缺失"
+        rev_raw_val = None
+    else:
+        rev_pct = rev_raw * 100  # convert to percent
+        # Sigmoid: -20% → score 1, +40% → score 9
+        rev_score = _sigmoid_score(rev_pct, low_anchor=-20, high_anchor=40, invert=False)
+        if rev_pct < -10:
+            rev_detail = f"營收大幅衰退({rev_pct:+.1f}%)"
+        elif rev_pct < 0:
+            rev_detail = f"營收衰退({rev_pct:+.1f}%)"
+        elif rev_pct < 10:
+            rev_detail = f"營收持平({rev_pct:+.1f}%)"
+        elif rev_pct < 25:
+            rev_detail = f"營收成長({rev_pct:+.1f}%)"
+        elif rev_pct < 50:
+            rev_detail = f"營收高速成長({rev_pct:+.1f}%)"
+        else:
+            rev_detail = f"營收爆炸性成長({rev_pct:+.1f}%)"
+        rev_raw_val = round(rev_pct, 1)
+
+    # === Earnings Growth: high is good ===
+    if earn_raw is None:
+        earn_score = 0.0
+        earn_detail = "EPS 成長資料缺失"
+        earn_raw_val = None
+    else:
+        earn_pct = earn_raw * 100
+        # Sigmoid: -40% → score 1, +60% → score 9
+        earn_score = _sigmoid_score(earn_pct, low_anchor=-40, high_anchor=60, invert=False)
+        if earn_pct < -30:
+            earn_detail = f"EPS 大幅衰退({earn_pct:+.1f}%)"
+        elif earn_pct < -10:
+            earn_detail = f"EPS 衰退({earn_pct:+.1f}%)"
+        elif earn_pct < 10:
+            earn_detail = f"EPS 持平({earn_pct:+.1f}%)"
+        elif earn_pct < 30:
+            earn_detail = f"EPS 成長({earn_pct:+.1f}%)"
+        elif earn_pct < 80:
+            earn_detail = f"EPS 高速成長({earn_pct:+.1f}%)"
+        else:
+            earn_detail = f"EPS 爆炸性成長({earn_pct:+.1f}%)"
+        earn_raw_val = round(earn_pct, 1)
+
+    overall = (rev_score + earn_score) / 2
+
+    if overall >= 8.0:
+        verdict_key = "high_growth"
+    elif overall >= 6.0:
+        verdict_key = "growing"
+    elif overall >= 4.0:
+        verdict_key = "flat"
+    elif overall >= 2.0:
+        verdict_key = "declining"
+    else:
+        verdict_key = "contracting"
+
+    return {
+        "overall_score": round(overall, 1),
+        "verdict_key": verdict_key,
+        "subscores": {
+            "revenue_growth":  {"score": round(rev_score, 1),  "detail": rev_detail,  "raw": rev_raw_val},
+            "earnings_growth": {"score": round(earn_score, 1), "detail": earn_detail, "raw": earn_raw_val},
+        },
+    }
+
+
+def fetch_yfinance_info_for_tickers(tickers, max_workers: int = 5,
+                                     timeout: float = 10.0) -> dict:
+    """v1.10.27: Batch-fetch yfinance.info for multiple tickers using a
+    thread pool. ~0.3s per ticker linear becomes ~0.06s with 5 workers
+    (limited by API throughput, not threads).
+
+    Args:
+        tickers: list of ticker strings (e.g. ["2330.TW", "2317.TW"])
+        max_workers: thread pool size (default 5, don't exceed 10 to avoid
+                     overwhelming yfinance's backend)
+        timeout: per-ticker timeout in seconds
+
+    Returns: dict {ticker: info_dict_or_None}
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {t: None for t in tickers}
+
+    def _fetch_one(ticker):
+        try:
+            info = yf.Ticker(ticker).info
+            if not info or len(info) < 5:
+                return ticker, None
+            return ticker, info
+        except Exception:
+            return ticker, None
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch_one, t): t for t in tickers}
+        for fut in as_completed(futures, timeout=timeout * len(tickers)):
+            try:
+                ticker, info = fut.result(timeout=timeout)
+                results[ticker] = info
+            except Exception:
+                ticker = futures[fut]
+                results[ticker] = None
+
+    # Ensure every requested ticker has an entry (None if missing)
+    for t in tickers:
+        if t not in results:
+            results[t] = None
+    return results
+
+
+# ============================================================================
+# v1.10.27 — UPGRADED render_eval_card_html: now supports 3 dimensions
+# (technical + value + growth). Chip dimension added in v1.10.28.
+# v1.10.26's original signature kept as backward-compat wrapper below.
+# ============================================================================
+
+
+def render_eval_card_html(ticker: str, name: str,
+                          tech_scores: dict | None,
+                          value_scores: dict | None = None,
+                          growth_scores: dict | None = None,
+                          lang_zh: bool = True) -> str:
+    """v1.10.27: Render the multi-dimension evaluation card.
+
+    Args:
+        ticker: e.g. "2330.TW"
+        name: e.g. "台積電"
+        tech_scores: from build_technical_score()
+        value_scores: from build_value_score() — None if not computed yet
+        growth_scores: from build_growth_score() — None if not computed yet
+        lang_zh: language
+
+    Returns: HTML string. If all scores are None, returns minimal "資料不足" card.
+    """
+    # Count available dimensions for the overall verdict
+    dims_available = []
+    if tech_scores is not None:
+        dims_available.append(("tech", tech_scores))
+    if value_scores is not None:
+        dims_available.append(("value", value_scores))
+    if growth_scores is not None:
+        dims_available.append(("growth", growth_scores))
+
+    if not dims_available:
+        if lang_zh:
+            return f'<div class="eval-card-empty">📊 {escape(ticker)} {escape(name)} — 資料不足無法評估</div>'
+        return f'<div class="eval-card-empty">📊 {escape(ticker)} {escape(name)} — Insufficient data</div>'
+
+    # Overall combined score = average of available dimensions
+    combined = sum(d[1]["overall_score"] for d in dims_available) / len(dims_available)
+    combined = round(combined, 1)
+
+    if combined >= 7.5:
+        combined_class = "eval-verdict-strong"
+        combined_label_zh = "綜合評等:優"
+        combined_label_en = "Overall: Strong"
+    elif combined >= 6.0:
+        combined_class = "eval-verdict-bullish"
+        combined_label_zh = "綜合評等:良"
+        combined_label_en = "Overall: Good"
+    elif combined >= 4.0:
+        combined_class = "eval-verdict-neutral"
+        combined_label_zh = "綜合評等:中"
+        combined_label_en = "Overall: Average"
+    else:
+        combined_class = "eval-verdict-weak"
+        combined_label_zh = "綜合評等:弱"
+        combined_label_en = "Overall: Weak"
+
+    combined_label = combined_label_zh if lang_zh else combined_label_en
+
+    if lang_zh:
+        section_title = "📊 個股評估卡"
+        dim_title_map = {"tech": "技術面", "value": "價值面", "growth": "成長面"}
+        verdict_text_map = {
+            # Technical
+            "strong":   "強勢",     "bullish":  "偏多",    "neutral":  "中性",
+            "weak":     "偏弱",     "very_weak":"弱勢",
+            # Value
+            "cheap":    "便宜",     "reasonable":"合理",   "fair":     "尚可",
+            "expensive":"偏貴",     "very_expensive":"極貴",
+            # Growth
+            "high_growth":"高成長","growing":  "成長中",  "flat":     "持平",
+            "declining":"衰退",     "contracting":"萎縮",
+        }
+        tech_sublabels = {"ma_stack":"均線多空","kd":"KD","rsi":"RSI","macd":"MACD","volume_price":"量價"}
+        value_sublabels = {"pe":"本益比","pb":"股價淨值比","div_yld":"殖利率"}
+        growth_sublabels = {"revenue_growth":"營收年增","earnings_growth":"EPS 年增"}
+        disclaimer = "⚠️ 量化指標自動計算,僅供研究參考,不構成投資建議。"
+    else:
+        section_title = "📊 Stock Evaluation Card"
+        dim_title_map = {"tech": "Technical", "value": "Value", "growth": "Growth"}
+        verdict_text_map = {
+            "strong":"Strong","bullish":"Bullish","neutral":"Neutral",
+            "weak":"Weak","very_weak":"V. Weak",
+            "cheap":"Cheap","reasonable":"Reasonable","fair":"Fair",
+            "expensive":"Expensive","very_expensive":"V. Expensive",
+            "high_growth":"High Growth","growing":"Growing","flat":"Flat",
+            "declining":"Declining","contracting":"Contracting",
+        }
+        tech_sublabels = {"ma_stack":"MA Stack","kd":"KD","rsi":"RSI","macd":"MACD","volume_price":"Vol-Price"}
+        value_sublabels = {"pe":"P/E","pb":"P/B","div_yld":"Div Yield"}
+        growth_sublabels = {"revenue_growth":"Rev Growth","earnings_growth":"EPS Growth"}
+        disclaimer = "⚠️ Quantitative indicators — for research only, not investment advice."
+
+    def _row_color_class(score):
+        if score >= 7: return "eval-row-good"
+        if score >= 4: return "eval-row-neutral"
+        return "eval-row-poor"
+
+    def _build_dim_section(dim_key, dim_scores, sublabels):
+        dim_label = dim_title_map[dim_key]
+        verdict = verdict_text_map.get(dim_scores["verdict_key"], "—")
+        overall = dim_scores["overall_score"]
+        # verdict class for the small chip
+        vk = dim_scores["verdict_key"]
+        if vk in ("strong", "cheap", "high_growth"):
+            vchip_cls = "eval-dim-chip-good"
+        elif vk in ("bullish", "reasonable", "growing"):
+            vchip_cls = "eval-dim-chip-bullish"
+        elif vk in ("neutral", "fair", "flat"):
+            vchip_cls = "eval-dim-chip-neutral"
+        elif vk in ("weak", "expensive", "declining"):
+            vchip_cls = "eval-dim-chip-weak"
+        else:
+            vchip_cls = "eval-dim-chip-very-weak"
+
+        # Sub-rows
+        rows = []
+        for key, sub in dim_scores["subscores"].items():
+            sc = sub["score"]
+            label = sublabels.get(key, key)
+            detail = sub["detail"]
+            color_cls = _row_color_class(sc)
+            fill_pct = max(0, min(100, int(sc * 10)))
+            rows.append(f"""
+            <div class="eval-row {color_cls}">
+                <div class="eval-row-label">{escape(label)}</div>
+                <div class="eval-row-bar"><div class="eval-row-bar-fill" style="width:{fill_pct}%;"></div></div>
+                <div class="eval-row-score">{sc}/10</div>
+                <div class="eval-row-detail">{escape(detail)}</div>
+            </div>
+            """)
+        rows_html = "".join(rows)
+
+        return f"""
+        <div class="eval-dim-block">
+            <div class="eval-dim-header">
+                <div class="eval-dim-title">{escape(dim_label)}</div>
+                <div class="eval-dim-score">{overall:.1f}/10</div>
+                <div class="eval-dim-chip {vchip_cls}">{escape(verdict)}</div>
+            </div>
+            <div class="eval-card-rows">{rows_html}</div>
+        </div>
+        """
+
+    sections_html = []
+    if tech_scores is not None:
+        sections_html.append(_build_dim_section("tech", tech_scores, tech_sublabels))
+    if value_scores is not None:
+        sections_html.append(_build_dim_section("value", value_scores, value_sublabels))
+    if growth_scores is not None:
+        sections_html.append(_build_dim_section("growth", growth_scores, growth_sublabels))
+    sections_total_html = "".join(sections_html)
+
+    return f"""
+    <div class="eval-card-shell">
+        <div class="eval-card-header">
+            <div class="eval-card-section-title">{escape(section_title)}</div>
+            <div class="eval-card-ticker">{escape(ticker)} · {escape(name)}</div>
+        </div>
+        <div class="eval-card-overall">
+            <div class="eval-card-overall-num">{combined:.1f}<span class="eval-card-overall-denom">/10</span></div>
+            <div class="eval-card-verdict {escape(combined_class)}">{escape(combined_label)}</div>
+        </div>
+        {sections_total_html}
+        <div class="eval-card-disclaimer">{escape(disclaimer)}</div>
+    </div>
+    """
+
+
+# ============================================================================
+# End v1.10.27 value + growth dimensions
+# Next: v1.10.28 — chip dimension (TWSE T86 endpoint for individual stock flows)
+# Then: v1.10.29 — wire into Supply Chain Lab individual stock view
+# ============================================================================
+
+
+# ============================================================================
+# v1.10.28 — Stock evaluation card: chip dimension (institutional flow)
+# ============================================================================
+# Uses TWSE T86 endpoint that returns institutional buy/sell for ALL ~1700
+# listed stocks in one call. Cached per-day so per-ticker lookup is O(1).
+#
+# Endpoint:
+#   https://www.twse.com.tw/rwd/zh/fund/T86?date=YYYYMMDD
+#       &selectType=ALLBUT0999&response=json
+#
+# Returns rows formatted as:
+#   [code, name, foreign_buy, foreign_sell, foreign_net,
+#    trust_buy, trust_sell, trust_net,
+#    dealer_buy, dealer_sell, dealer_net, total_net]
+# Units: shares (need /1000 for 千股)
+# ============================================================================
+
+
+def fetch_twse_individual_chip_data(date_yyyymmdd: str | None = None) -> dict:
+    """v1.10.28: Fetch TWSE T86 endpoint for ALL listed stocks' institutional flows.
+
+    Args:
+        date_yyyymmdd: e.g. "20260508". If None, uses today's date in TW timezone.
+                       Walks back if today has no data (weekend/holiday).
+
+    Returns dict keyed by ticker (no .TW suffix from TWSE but we add it):
+        {
+            "2330.TW": {
+                "code": "2330",
+                "name": "台積電",
+                "foreign_buy":   <int>,   # shares
+                "foreign_sell":  <int>,
+                "foreign_net":   <int>,   # signed shares (buy - sell)
+                "trust_net":     <int>,
+                "dealer_net":    <int>,
+                "total_net":     <int>,
+                "data_date":     "2026-05-08",
+            },
+            ...
+        }
+        Returns {} on fetch failure (e.g. T86 not yet published today).
+    """
+    if date_yyyymmdd is None:
+        date_yyyymmdd = datetime.now(TW_TZ).strftime("%Y%m%d")
+
+    # Walk back up to 7 days if data missing (weekend / holiday / pre-close)
+    from datetime import timedelta as _td
+    try:
+        probe = datetime.strptime(date_yyyymmdd, "%Y%m%d").replace(tzinfo=TW_TZ)
+    except ValueError:
+        return {}
+
+    for _ in range(7):
+        probe_str = probe.strftime("%Y%m%d")
+        url = (
+            f"https://www.twse.com.tw/rwd/zh/fund/T86"
+            f"?date={probe_str}&selectType=ALLBUT0999&response=json"
+        )
+        try:
+            payload = _twse_request_json(url)
+        except Exception:
+            payload = None
+        if not payload:
+            probe = probe - _td(days=1)
+            continue
+
+        # TWSE T86 returns {fields: [...], data: [[...],...], date: "YYYYMMDD", stat: "OK"}
+        rows = payload.get("data") or []
+        if not rows:
+            probe = probe - _td(days=1)
+            continue
+
+        result = {}
+        # T86 schema (Chinese version, current as of 2026):
+        # 0: 證券代號  1: 證券名稱
+        # 2: 外陸資買進股數  3: 外陸資賣出股數  4: 外陸資買賣超股數
+        #     (excluding 外資自營商)
+        # 5: 外資自營商買進股數  6: 外資自營商賣出股數  7: 外資自營商買賣超股數
+        # 8: 投信買進股數  9: 投信賣出股數  10: 投信買賣超股數
+        # 11: 自營商買賣超股數
+        # 12: 自營商買進股數(自行買賣)  13: 自營商賣出股數(自行買賣)
+        # 14: 自營商買賣超股數(自行買賣)
+        # 15: 自營商買進股數(避險)  16: 自營商賣出股數(避險)
+        # 17: 自營商買賣超股數(避險)
+        # 18: 三大法人買賣超股數
+        # We need: col 0 code, col 1 name, col 4 foreign net, col 10 trust net,
+        #         col 11 dealer net, col 18 total
+        def _to_int_signed(s) -> int:
+            """Parse "1,234,567" or "-1,234" → int. Returns 0 on parse failure."""
+            try:
+                return int(str(s or "0").replace(",", "").strip())
+            except (ValueError, TypeError):
+                return 0
+
+        data_iso = ""
+        # Try parsing date from payload
+        for date_key in ("date", "title"):
+            d = payload.get(date_key, "")
+            if isinstance(d, str) and len(d) >= 8:
+                try:
+                    # date might be "YYYYMMDD" or contain "民國XXX年..."
+                    if d.isdigit() and len(d) == 8:
+                        data_iso = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+                        break
+                except Exception:
+                    pass
+        if not data_iso:
+            data_iso = f"{probe.year}-{probe.month:02d}-{probe.day:02d}"
+
+        for row in rows:
+            if not row or len(row) < 12:
+                continue
+            code = str(row[0] or "").strip()
+            name = str(row[1] or "").strip()
+            if not code:
+                continue
+            ticker_full = f"{code}.TW"
+
+            # Foreign net (col 4) — excludes 外資自營商 which is col 7
+            # For our purpose, use col 4 (mainstream "外資" definition)
+            foreign_net = _to_int_signed(row[4]) if len(row) > 4 else 0
+            trust_net = _to_int_signed(row[10]) if len(row) > 10 else 0
+            dealer_net = _to_int_signed(row[11]) if len(row) > 11 else 0
+            # Total: prefer explicit total column if present
+            if len(row) > 18:
+                total_net = _to_int_signed(row[18])
+            else:
+                total_net = foreign_net + trust_net + dealer_net
+
+            result[ticker_full] = {
+                "code": code,
+                "name": name,
+                "foreign_buy":  _to_int_signed(row[2]) if len(row) > 2 else 0,
+                "foreign_sell": _to_int_signed(row[3]) if len(row) > 3 else 0,
+                "foreign_net":  foreign_net,
+                "trust_net":    trust_net,
+                "dealer_net":   dealer_net,
+                "total_net":    total_net,
+                "data_date":    data_iso,
+            }
+
+        if result:
+            return result
+
+        probe = probe - _td(days=1)
+
+    return {}
+
+
+def build_chip_score(ticker: str, chip_dict: dict | None,
+                      daily_df=None) -> dict | None:
+    """v1.10.28: Compute chip-flow dimension score for one ticker.
+
+    Args:
+        ticker: e.g. "2330.TW"
+        chip_dict: from fetch_twse_individual_chip_data() — full market dict
+        daily_df: optional daily K-line for volume context
+
+    Returns dict (or None if no data):
+        {
+            "overall_score": float (0-10),
+            "verdict_key": str,
+            "subscores": {
+                "foreign_net":   {"score": float, "detail": str, "raw": int | None},
+                "combined_net":  {"score": float, "detail": str, "raw": int | None},
+                "volume_ratio":  {"score": float, "detail": str, "raw": float | None},
+            }
+        }
+    """
+    if not chip_dict or ticker not in chip_dict:
+        return None
+
+    info = chip_dict[ticker]
+    foreign_net = info.get("foreign_net", 0)
+    total_net = info.get("total_net", 0)
+
+    # Convert shares → thousand-shares (千股) for display clarity
+    foreign_net_k = foreign_net / 1000
+    total_net_k = total_net / 1000
+
+    # === Foreign net: scale by avg daily volume if available ===
+    # Anchor: ±2000 千股 net = ±9 / ±1 score (works for mid/large caps)
+    # Small caps might need adjustment but we'll calibrate after v1.10.29 deployment
+    foreign_score = _sigmoid_score(foreign_net_k, low_anchor=-2000, high_anchor=2000, invert=False)
+    if abs(foreign_net_k) < 50:
+        foreign_detail = f"外資近乎持平({foreign_net_k:+.0f} 千股)"
+    elif foreign_net_k > 0:
+        if foreign_net_k > 5000:
+            foreign_detail = f"外資大舉買進(+{foreign_net_k:.0f} 千股)"
+        elif foreign_net_k > 1000:
+            foreign_detail = f"外資明顯買超(+{foreign_net_k:.0f} 千股)"
+        elif foreign_net_k > 200:
+            foreign_detail = f"外資小幅買超(+{foreign_net_k:.0f} 千股)"
+        else:
+            foreign_detail = f"外資微幅買超(+{foreign_net_k:.0f} 千股)"
+    else:
+        if foreign_net_k < -5000:
+            foreign_detail = f"外資大舉賣出({foreign_net_k:.0f} 千股)"
+        elif foreign_net_k < -1000:
+            foreign_detail = f"外資明顯賣超({foreign_net_k:.0f} 千股)"
+        elif foreign_net_k < -200:
+            foreign_detail = f"外資小幅賣超({foreign_net_k:.0f} 千股)"
+        else:
+            foreign_detail = f"外資微幅賣超({foreign_net_k:.0f} 千股)"
+
+    # === Combined three-investor net ===
+    combined_score = _sigmoid_score(total_net_k, low_anchor=-3000, high_anchor=3000, invert=False)
+    if abs(total_net_k) < 50:
+        combined_detail = f"三大法人持平({total_net_k:+.0f} 千股)"
+    elif total_net_k > 0:
+        if total_net_k > 5000:
+            combined_detail = f"三大法人大買({total_net_k:+.0f} 千股)"
+        elif total_net_k > 1000:
+            combined_detail = f"三大法人買超({total_net_k:+.0f} 千股)"
+        else:
+            combined_detail = f"三大法人小買({total_net_k:+.0f} 千股)"
+    else:
+        if total_net_k < -5000:
+            combined_detail = f"三大法人大賣({total_net_k:.0f} 千股)"
+        elif total_net_k < -1000:
+            combined_detail = f"三大法人賣超({total_net_k:.0f} 千股)"
+        else:
+            combined_detail = f"三大法人小賣({total_net_k:.0f} 千股)"
+
+    # === Volume vs 20-day MA (uses daily_df if available; else neutral 5) ===
+    volume_score = 5.0
+    volume_detail = "量能資料不足"
+    volume_ratio = None
+    if daily_df is not None and len(daily_df) >= 25 and "Volume" in daily_df.columns:
+        try:
+            recent_vol = daily_df["Volume"].iloc[-1]
+            vol_ma20 = daily_df["Volume"].rolling(20).mean().iloc[-1]
+            if vol_ma20 and not pd.isna(vol_ma20) and vol_ma20 > 0:
+                volume_ratio = float(recent_vol / vol_ma20)
+                # Direction context: rising on volume = good
+                recent_close = daily_df["Close"].iloc[-1]
+                close_5d = daily_df["Close"].iloc[-5] if len(daily_df) >= 5 else recent_close
+                rising = recent_close > close_5d
+                if volume_ratio >= 2.0:
+                    if rising:
+                        volume_score = 9.5
+                        volume_detail = f"大爆量上漲(量比 {volume_ratio:.2f}x)"
+                    else:
+                        volume_score = 1.5
+                        volume_detail = f"大爆量下跌 — 籌碼鬆動(量比 {volume_ratio:.2f}x)"
+                elif volume_ratio >= 1.3:
+                    if rising:
+                        volume_score = 8.0
+                        volume_detail = f"放量上漲(量比 {volume_ratio:.2f}x)"
+                    else:
+                        volume_score = 3.0
+                        volume_detail = f"放量下跌(量比 {volume_ratio:.2f}x)"
+                elif volume_ratio >= 0.8:
+                    volume_score = 5.5
+                    volume_detail = f"量能正常(量比 {volume_ratio:.2f}x)"
+                elif volume_ratio >= 0.5:
+                    if rising:
+                        volume_score = 4.5
+                        volume_detail = f"量縮上漲 — 動能存疑(量比 {volume_ratio:.2f}x)"
+                    else:
+                        volume_score = 5.0
+                        volume_detail = f"量縮下跌 — 賣壓有限(量比 {volume_ratio:.2f}x)"
+                else:
+                    volume_score = 3.5
+                    volume_detail = f"極度量縮(量比 {volume_ratio:.2f}x)"
+                volume_ratio = round(volume_ratio, 2)
+        except Exception:
+            pass
+
+    overall = (foreign_score + combined_score + volume_score) / 3
+
+    if overall >= 8.0:
+        verdict_key = "strong_inflow"
+    elif overall >= 6.0:
+        verdict_key = "inflow"
+    elif overall >= 4.0:
+        verdict_key = "neutral"
+    elif overall >= 2.0:
+        verdict_key = "outflow"
+    else:
+        verdict_key = "strong_outflow"
+
+    return {
+        "overall_score": round(overall, 1),
+        "verdict_key": verdict_key,
+        "subscores": {
+            "foreign_net":  {"score": round(foreign_score, 1),  "detail": foreign_detail,  "raw": round(foreign_net_k, 1)},
+            "combined_net": {"score": round(combined_score, 1), "detail": combined_detail, "raw": round(total_net_k, 1)},
+            "volume_ratio": {"score": round(volume_score, 1),   "detail": volume_detail,   "raw": volume_ratio},
+        },
+    }
+
+
+# ============================================================================
+# v1.10.28 — UPGRADED render_eval_card_html: now supports 4 dimensions
+# (technical + value + growth + chip). This replaces v1.10.27's 3-dim version.
+# ============================================================================
+
+
+def render_eval_card_html(ticker: str, name: str,
+                          tech_scores: dict | None,
+                          value_scores: dict | None = None,
+                          growth_scores: dict | None = None,
+                          chip_scores: dict | None = None,
+                          lang_zh: bool = True) -> str:
+    """v1.10.28: Render the 4-dimension evaluation card.
+
+    Args:
+        ticker: e.g. "2330.TW"
+        name: e.g. "台積電"
+        tech_scores:   from build_technical_score()
+        value_scores:  from build_value_score()  — None OK
+        growth_scores: from build_growth_score() — None OK
+        chip_scores:   from build_chip_score()   — None OK
+        lang_zh: language
+
+    Returns: HTML. If all scores None, returns minimal empty card.
+    """
+    dims_available = []
+    if tech_scores is not None:
+        dims_available.append(("tech", tech_scores))
+    if value_scores is not None:
+        dims_available.append(("value", value_scores))
+    if growth_scores is not None:
+        dims_available.append(("growth", growth_scores))
+    if chip_scores is not None:
+        dims_available.append(("chip", chip_scores))
+
+    if not dims_available:
+        if lang_zh:
+            return f'<div class="eval-card-empty">📊 {escape(ticker)} {escape(name)} — 資料不足無法評估</div>'
+        return f'<div class="eval-card-empty">📊 {escape(ticker)} {escape(name)} — Insufficient data</div>'
+
+    combined = sum(d[1]["overall_score"] for d in dims_available) / len(dims_available)
+    combined = round(combined, 1)
+
+    if combined >= 7.5:
+        combined_class = "eval-verdict-strong"
+        combined_label_zh = "綜合評等:優"
+        combined_label_en = "Overall: Strong"
+    elif combined >= 6.0:
+        combined_class = "eval-verdict-bullish"
+        combined_label_zh = "綜合評等:良"
+        combined_label_en = "Overall: Good"
+    elif combined >= 4.0:
+        combined_class = "eval-verdict-neutral"
+        combined_label_zh = "綜合評等:中"
+        combined_label_en = "Overall: Average"
+    else:
+        combined_class = "eval-verdict-weak"
+        combined_label_zh = "綜合評等:弱"
+        combined_label_en = "Overall: Weak"
+
+    combined_label = combined_label_zh if lang_zh else combined_label_en
+
+    if lang_zh:
+        section_title = "📊 個股評估卡"
+        dim_title_map = {"tech": "技術面", "value": "價值面", "growth": "成長面", "chip": "籌碼面"}
+        verdict_text_map = {
+            # Technical
+            "strong":   "強勢",     "bullish":  "偏多",    "neutral":  "中性",
+            "weak":     "偏弱",     "very_weak":"弱勢",
+            # Value
+            "cheap":    "便宜",     "reasonable":"合理",   "fair":     "尚可",
+            "expensive":"偏貴",     "very_expensive":"極貴",
+            # Growth
+            "high_growth":"高成長","growing":  "成長中",  "flat":     "持平",
+            "declining":"衰退",     "contracting":"萎縮",
+            # Chip
+            "strong_inflow":  "強勢進駐", "inflow":      "偏多",
+            "outflow":        "偏空",     "strong_outflow":"大量流出",
+        }
+        tech_sublabels = {"ma_stack":"均線多空","kd":"KD","rsi":"RSI","macd":"MACD","volume_price":"量價"}
+        value_sublabels = {"pe":"本益比","pb":"股價淨值比","div_yld":"殖利率"}
+        growth_sublabels = {"revenue_growth":"營收年增","earnings_growth":"EPS 年增"}
+        chip_sublabels = {"foreign_net":"外資買賣超","combined_net":"三大法人","volume_ratio":"量能比"}
+        disclaimer = "⚠️ 量化指標自動計算,僅供研究參考,不構成投資建議。"
+    else:
+        section_title = "📊 Stock Evaluation Card"
+        dim_title_map = {"tech": "Technical", "value": "Value", "growth": "Growth", "chip": "Chip Flow"}
+        verdict_text_map = {
+            "strong":"Strong","bullish":"Bullish","neutral":"Neutral",
+            "weak":"Weak","very_weak":"V. Weak",
+            "cheap":"Cheap","reasonable":"Reasonable","fair":"Fair",
+            "expensive":"Expensive","very_expensive":"V. Expensive",
+            "high_growth":"High Growth","growing":"Growing","flat":"Flat",
+            "declining":"Declining","contracting":"Contracting",
+            "strong_inflow":"Strong Inflow","inflow":"Inflow",
+            "outflow":"Outflow","strong_outflow":"Strong Outflow",
+        }
+        tech_sublabels = {"ma_stack":"MA Stack","kd":"KD","rsi":"RSI","macd":"MACD","volume_price":"Vol-Price"}
+        value_sublabels = {"pe":"P/E","pb":"P/B","div_yld":"Div Yield"}
+        growth_sublabels = {"revenue_growth":"Rev Growth","earnings_growth":"EPS Growth"}
+        chip_sublabels = {"foreign_net":"Foreign Net","combined_net":"3-Inv Net","volume_ratio":"Vol Ratio"}
+        disclaimer = "⚠️ Quantitative indicators — for research only, not investment advice."
+
+    def _row_color_class(score):
+        if score >= 7: return "eval-row-good"
+        if score >= 4: return "eval-row-neutral"
+        return "eval-row-poor"
+
+    def _build_dim_section(dim_key, dim_scores, sublabels):
+        dim_label = dim_title_map[dim_key]
+        verdict = verdict_text_map.get(dim_scores["verdict_key"], "—")
+        overall = dim_scores["overall_score"]
+        vk = dim_scores["verdict_key"]
+        if vk in ("strong", "cheap", "high_growth", "strong_inflow"):
+            vchip_cls = "eval-dim-chip-good"
+        elif vk in ("bullish", "reasonable", "growing", "inflow"):
+            vchip_cls = "eval-dim-chip-bullish"
+        elif vk in ("neutral", "fair", "flat"):
+            vchip_cls = "eval-dim-chip-neutral"
+        elif vk in ("weak", "expensive", "declining", "outflow"):
+            vchip_cls = "eval-dim-chip-weak"
+        else:
+            vchip_cls = "eval-dim-chip-very-weak"
+
+        rows = []
+        for key, sub in dim_scores["subscores"].items():
+            sc = sub["score"]
+            label = sublabels.get(key, key)
+            detail = sub["detail"]
+            color_cls = _row_color_class(sc)
+            fill_pct = max(0, min(100, int(sc * 10)))
+            rows.append(f"""
+            <div class="eval-row {color_cls}">
+                <div class="eval-row-label">{escape(label)}</div>
+                <div class="eval-row-bar"><div class="eval-row-bar-fill" style="width:{fill_pct}%;"></div></div>
+                <div class="eval-row-score">{sc}/10</div>
+                <div class="eval-row-detail">{escape(detail)}</div>
+            </div>
+            """)
+        rows_html = "".join(rows)
+
+        return f"""
+        <div class="eval-dim-block">
+            <div class="eval-dim-header">
+                <div class="eval-dim-title">{escape(dim_label)}</div>
+                <div class="eval-dim-score">{overall:.1f}/10</div>
+                <div class="eval-dim-chip {vchip_cls}">{escape(verdict)}</div>
+            </div>
+            <div class="eval-card-rows">{rows_html}</div>
+        </div>
+        """
+
+    sections_html = []
+    if tech_scores is not None:
+        sections_html.append(_build_dim_section("tech", tech_scores, tech_sublabels))
+    if value_scores is not None:
+        sections_html.append(_build_dim_section("value", value_scores, value_sublabels))
+    if growth_scores is not None:
+        sections_html.append(_build_dim_section("growth", growth_scores, growth_sublabels))
+    if chip_scores is not None:
+        sections_html.append(_build_dim_section("chip", chip_scores, chip_sublabels))
+    sections_total_html = "".join(sections_html)
+
+    return f"""
+    <div class="eval-card-shell">
+        <div class="eval-card-header">
+            <div class="eval-card-section-title">{escape(section_title)}</div>
+            <div class="eval-card-ticker">{escape(ticker)} · {escape(name)}</div>
+        </div>
+        <div class="eval-card-overall">
+            <div class="eval-card-overall-num">{combined:.1f}<span class="eval-card-overall-denom">/10</span></div>
+            <div class="eval-card-verdict {escape(combined_class)}">{escape(combined_label)}</div>
+        </div>
+        {sections_total_html}
+        <div class="eval-card-disclaimer">{escape(disclaimer)}</div>
+    </div>
+    """
+
+
+# ============================================================================
+# End v1.10.28 chip dimension
+# Next: v1.10.29 — wire all 4 dimensions into Supply Chain Lab individual stock view
+# ============================================================================
+
+
+# ============================================================================
+# v1.10.29 — Stock evaluation card UI integration
+# ============================================================================
+# Wires the 4-dimension evaluation card (built in v1.10.26-28) into the
+# ticker page used by Supply Chain Lab. Lazy-fetch pattern: data is only
+# fetched when user expands the card, then cached in session_state with
+# a daily key so re-opens are instant.
+# ============================================================================
+
+
+def _resolve_eval_card_cache_key(ticker: str) -> str:
+    """Daily cache key: same ticker re-opened same day = O(1) hit."""
+    today_str = datetime.now(TW_TZ).strftime("%Y-%m-%d")
+    return f"_eval_card_cache:{ticker}:{today_str}"
+
+
+def _resolve_chip_dict_cache_key() -> str:
+    """Module-level daily cache for TWSE T86 (whole market = 1 fetch covers all)."""
+    today_str = datetime.now(TW_TZ).strftime("%Y-%m-%d")
+    return f"_twse_t86_chip_dict:{today_str}"
+
+
+def _fetch_eval_card_data(ticker: str, daily_df) -> dict:
+    """v1.10.29: Fetch all data + compute all 4 dimension scores for one ticker.
+
+    Result is fully serializable so it can be cached in session_state.
+
+    Returns dict:
+        {
+            "tech": {...} or None,
+            "value": {...} or None,
+            "growth": {...} or None,
+            "chip": {...} or None,
+        }
+    """
+    # Technical: from existing daily_df (no API call needed)
+    tech = build_technical_score(daily_df)
+
+    # Value + Growth: from yfinance.info (single ticker, ~0.3s)
+    yf_info = None
+    try:
+        info_dict = fetch_yfinance_info_for_tickers([ticker], max_workers=1, timeout=8.0)
+        yf_info = info_dict.get(ticker)
+    except Exception:
+        yf_info = None
+    value = build_value_score(yf_info) if yf_info else None
+    growth = build_growth_score(yf_info) if yf_info else None
+
+    # Chip: from TWSE T86 (cached at module level — covers whole market in 1 call)
+    chip_dict_key = _resolve_chip_dict_cache_key()
+    chip_dict = st.session_state.get(chip_dict_key)
+    if chip_dict is None:
+        try:
+            chip_dict = fetch_twse_individual_chip_data(None)
+        except Exception:
+            chip_dict = {}
+        st.session_state[chip_dict_key] = chip_dict
+    chip = build_chip_score(ticker, chip_dict, daily_df) if chip_dict else None
+
+    return {
+        "tech": tech,
+        "value": value,
+        "growth": growth,
+        "chip": chip,
+    }
+
+
+def render_evaluation_card_for_ticker(ticker: str, name: str | None,
+                                       daily_df) -> None:
+    """v1.10.29: Render the evaluation card section for one ticker.
+
+    This is the actual UI wrapper called from render_ticker_page.
+
+    Behavior:
+        - Renders a collapsed st.expander labeled "📊 個股評估卡"
+        - When expanded, lazy-fetches all data and computes scores
+        - Results are cached in session_state with a daily key
+        - Card HTML uses render_eval_card_html() from v1.10.26-28
+        - All 4 dimensions can independently fail gracefully
+
+    Args:
+        ticker: e.g. "2330.TW"
+        name: display name (e.g. "台積電"); falls back to ticker if None
+        daily_df: pandas DataFrame with OHLCV (from existing prefetch)
+    """
+    if not ticker or daily_df is None or len(daily_df) < 30:
+        return  # silent skip if data insufficient — card just doesn't appear
+
+    lang_zh = get_language() == "zh_TW"
+    display_name = name or display_ticker_label(ticker)
+
+    expander_label = "📊 個股評估卡(技術/價值/成長/籌碼)" if lang_zh else "📊 Stock Evaluation Card"
+
+    # Inject CSS once
+    _ensure_eval_card_css()
+
+    with st.expander(expander_label, expanded=False):
+        cache_key = _resolve_eval_card_cache_key(ticker)
+        cached = st.session_state.get(cache_key)
+
+        if cached is None:
+            spinner_text = "正在分析中..." if lang_zh else "Analyzing..."
+            with st.spinner(spinner_text):
+                try:
+                    cached = _fetch_eval_card_data(ticker, daily_df)
+                    st.session_state[cache_key] = cached
+                except Exception as exc:
+                    err_msg = f"⚠️ 評估卡生成失敗:{exc}" if lang_zh else f"⚠️ Evaluation card failed: {exc}"
+                    st.warning(err_msg)
+                    return
+
+        html = render_eval_card_html(
+            ticker=ticker,
+            name=display_name,
+            tech_scores=cached.get("tech"),
+            value_scores=cached.get("value"),
+            growth_scores=cached.get("growth"),
+            chip_scores=cached.get("chip"),
+            lang_zh=lang_zh,
+        )
+        render_html_block(html)
+
+        # Refresh button — lets user manually invalidate cache
+        refresh_label = "🔄 重新計算" if lang_zh else "🔄 Recompute"
+        if st.button(refresh_label, key=f"eval_card_refresh_{ticker}"):
+            if cache_key in st.session_state:
+                del st.session_state[cache_key]
+            chip_key = _resolve_chip_dict_cache_key()
+            if chip_key in st.session_state:
+                del st.session_state[chip_key]
+            st.rerun()
+
+
+# ============================================================================
+# End v1.10.29 evaluation card UI integration
+# ============================================================================
+
+
+# ============================================================================
+# v1.10.30 — Eval card toggle-style wrapper
+# ============================================================================
+# Replaces v1.10.29's st.expander with a clean st.toggle. Same data layer
+# and cache logic — only the UI widget changed.
+# ============================================================================
+
+
+def render_evaluation_card_toggle_for_ticker(ticker: str, name: str | None,
+                                              daily_df) -> None:
+    """v1.10.30: Render the evaluation card as a toggle (replaces v1.10.29 expander).
+
+    Behavior:
+      - Show a section header with a toggle switch (default OFF)
+      - When toggle is ON:
+          * Show spinner (first time) → fetch + compute → render card
+          * Subsequent same-day re-toggle: instant (session_state cache)
+      - When toggle is OFF: card hidden, but cached data persists
+
+    Args:
+        ticker: e.g. "2330.TW"
+        name: display name; falls back to ticker
+        daily_df: pandas DataFrame with OHLCV
+    """
+    if not ticker or daily_df is None or len(daily_df) < 30:
+        return
+
+    lang_zh = get_language() == "zh_TW"
+    display_name = name or display_ticker_label(ticker)
+
+    toggle_label = (
+        f"📊 個股評估卡(技術 / 價值 / 成長 / 籌碼)— {display_name}"
+        if lang_zh else
+        f"📊 Stock Evaluation Card (Technical / Value / Growth / Chip) — {display_name}"
+    )
+
+    # Inject CSS once
+    _ensure_eval_card_css()
+
+    # Toggle state — key is ticker-specific so different tickers have independent state
+    toggle_key = f"eval_card_toggle_{ticker}"
+    is_on = st.toggle(toggle_label, key=toggle_key, value=False)
+
+    if not is_on:
+        # Show a subtle hint that the card is available
+        hint_text = (
+            "👆 開啟上方開關可顯示個股評估卡(4 維度量化指標)"
+            if lang_zh else
+            "👆 Toggle on above to show the evaluation card (4-dimension quant indicators)"
+        )
+        render_html_block(
+            f'<div style="color:#98a2b8; font-size:12px; font-style:italic; '
+            f'margin: 4px 0 14px 0; padding-left: 4px;">{escape(hint_text)}</div>'
+        )
+        return
+
+    # Toggle is ON — fetch + render
+    cache_key = _resolve_eval_card_cache_key(ticker)
+    cached = st.session_state.get(cache_key)
+
+    if cached is None:
+        spinner_text = "正在分析中..." if lang_zh else "Analyzing..."
+        with st.spinner(spinner_text):
+            try:
+                cached = _fetch_eval_card_data(ticker, daily_df)
+                st.session_state[cache_key] = cached
+            except Exception as exc:
+                err_msg = f"⚠️ 評估卡生成失敗:{exc}" if lang_zh else f"⚠️ Evaluation card failed: {exc}"
+                st.warning(err_msg)
+                return
+
+    html = render_eval_card_html(
+        ticker=ticker,
+        name=display_name,
+        tech_scores=cached.get("tech"),
+        value_scores=cached.get("value"),
+        growth_scores=cached.get("growth"),
+        chip_scores=cached.get("chip"),
+        lang_zh=lang_zh,
+    )
+    render_html_block(html)
+
+    # Refresh button — lets user manually invalidate cache
+    refresh_label = "🔄 重新計算" if lang_zh else "🔄 Recompute"
+    if st.button(refresh_label, key=f"eval_card_refresh_v2_{ticker}"):
+        if cache_key in st.session_state:
+            del st.session_state[cache_key]
+        chip_key = _resolve_chip_dict_cache_key()
+        if chip_key in st.session_state:
+            del st.session_state[chip_key]
+        st.rerun()
+
+
+# ============================================================================
+# End v1.10.30 toggle-style wrapper
+# ============================================================================
 
 
 _TSMC_TOP5_CSS = """
@@ -28017,6 +30226,17 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
 
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
+
+    # v1.10.30: evaluation card toggle right after decision brief.
+    # Default OFF — user toggles ON to lazy-fetch + display.
+    try:
+        if daily_ohlc is not None and len(daily_ohlc) >= 30:
+            ticker_name = analysis.get("name") if isinstance(analysis, dict) else None
+            render_evaluation_card_toggle_for_ticker(ticker, ticker_name, daily_ohlc)
+    except Exception:
+        # Best effort — never break the ticker page if eval card fails
+        pass
+
     render_asset_profile_section(bundle, selected_count=selected_count)
     render_workspace_target_watch_panel(bundle, selected_count=selected_count)
 
@@ -28067,6 +30287,8 @@ def render_ticker_page(daily_data: pd.DataFrame, intraday_data: pd.DataFrame | N
         st.warning("找不到可用的價格序列。" if get_lang() == "繁體中文" else f"No usable price series found for {display_ticker_label(ticker)}.")
         return
     render_ticker_bundle_page(bundle, lens_meta=lens_meta, selected_count=selected_count)
+    # v1.10.30: evaluation card moved from here to render_ticker_bundle_page,
+    # right after render_decision_brief() — see render_evaluation_card_toggle_for_ticker
 
 
 def is_taiwan_active_etf(ticker: str) -> bool:
@@ -28332,30 +30554,133 @@ def _build_ssl_contexts() -> list[ssl.SSLContext]:
     return deduped
 
 
+def _try_requests_fallback(url: str, timeout: int,
+                            headers: dict | None = None) -> tuple[bytes, int] | None:
+    """v1.10.31: Final-resort HTTPS fetcher using the `requests` library.
+
+    Used when all urllib SSL contexts have failed (typically due to Python
+    3.13's strict X509 verification rejecting certificates missing SKI/AKI
+    fields, e.g. TPEx OpenAPI's older cert).
+
+    Behavior:
+        - verify=False (bypass SSL strict mode)
+        - allow_redirects=True (handle 307/302/etc)
+        - Suppresses InsecureRequestWarning to avoid log spam
+
+    Returns:
+        (content_bytes, status_code) on HTTP 2xx
+        None on any failure (caller falls back to raising urllib error)
+    """
+    try:
+        import requests
+        from urllib3.exceptions import InsecureRequestWarning
+        import urllib3
+        urllib3.disable_warnings(InsecureRequestWarning)
+    except ImportError:
+        return None  # requests not installed (shouldn't happen on Streamlit)
+
+    try:
+        request_headers = dict(headers) if headers else {
+            "User-Agent": "Mozilla/5.0 (compatible; StockDashboard/1.10.31)",
+            "Accept": "application/json,text/plain,*/*",
+        }
+        response = requests.get(
+            url,
+            headers=request_headers,
+            timeout=timeout,
+            verify=False,           # bypass SSL strict mode
+            allow_redirects=True,   # handle 307/302/308
+        )
+        if 200 <= response.status_code < 300:
+            return response.content, response.status_code
+        # Non-2xx — return None so caller falls back to original error
+        return None
+    except Exception:
+        return None
+
+
 def _read_request_bytes(
     request: Request,
     timeout: int = 20,
     *,
     allow_insecure_fallback: bool = True,
 ) -> tuple[bytes, int]:
+    # v1.10.29: follow 301/302/303/307/308 redirects up to 5 hops.
+    # v1.10.31: when all urllib SSL contexts fail, fall back to `requests`
+    # library which has more permissive SSL handling (helps with Python 3.13
+    # rejecting older certs missing Subject Key Identifier, e.g. TPEx).
     last_error: Exception | None = None
     contexts = _build_ssl_contexts()
     if allow_insecure_fallback:
         contexts.append(ssl._create_unverified_context())
 
-    for context in contexts:
+    MAX_REDIRECTS = 5
+    current_request = request
+    visited_urls: set[str] = set()
+
+    for _hop in range(MAX_REDIRECTS + 1):  # initial + max redirects
+        current_url = current_request.full_url
+        if current_url in visited_urls:
+            # Redirect loop — bail out
+            raise RuntimeError(f"Redirect loop detected at {current_url}")
+        visited_urls.add(current_url)
+
+        last_error = None
+        followed_redirect = False
+
+        for context in contexts:
+            try:
+                with urlopen(current_request, timeout=timeout, context=context) as response:
+                    return response.read(), int(getattr(response, "status", 200) or 200)
+            except HTTPError as exc:
+                if exc.code in (301, 302, 303, 307, 308):
+                    new_location = exc.headers.get("Location") if hasattr(exc, "headers") and exc.headers else None
+                    if new_location:
+                        from urllib.parse import urljoin as _urljoin
+                        new_url = _urljoin(current_url, new_location)
+                        # For 307/308, preserve method + headers (per RFC).
+                        # For 301/302/303, GET is fine (we only use GET).
+                        try:
+                            new_headers = dict(current_request.headers) if hasattr(current_request, "headers") else {}
+                        except Exception:
+                            new_headers = {}
+                        try:
+                            new_method = current_request.get_method()
+                        except Exception:
+                            new_method = "GET"
+                        current_request = Request(new_url, headers=new_headers, method=new_method)
+                        followed_redirect = True
+                        break  # break for-context, continue outer redirect loop
+                # Not a redirect, or no Location header → save and continue;
+                # don't immediately raise — let SSL fallback try
+                last_error = exc
+                continue
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if followed_redirect:
+            continue  # try the new URL
+
+        # v1.10.31: all urllib contexts failed. Try `requests` library fallback
+        # as final resort. This handles:
+        #   - Python 3.13 strict X509 rejecting older certs (Missing SKI/AKI)
+        #   - Edge cases where urllib's redirect handler stumbles
+        #   - Hosts where urllib SSL handshake fails but requests succeeds
         try:
-            with urlopen(request, timeout=timeout, context=context) as response:
-                return response.read(), int(getattr(response, "status", 200) or 200)
-        except HTTPError:
-            raise
-        except Exception as exc:
-            last_error = exc
-            continue
+            req_headers = dict(current_request.headers) if hasattr(current_request, "headers") else None
+        except Exception:
+            req_headers = None
+        fallback_result = _try_requests_fallback(current_url, timeout, req_headers)
+        if fallback_result is not None:
+            return fallback_result
+
+        # No context succeeded and no redirect to follow → break out
+        break
 
     if last_error is not None:
         raise last_error
-    raise RuntimeError("Unable to open request.")
+    raise RuntimeError("Unable to open request after redirects.")
 
 
 def _open_url_bytes(url: str, timeout: int = 20, accept: str = "application/json,text/plain,*/*") -> bytes:
@@ -43359,6 +45684,14 @@ def generate_dashboard():
 
     if dashboard_mode == "Taiwan Futures Lab":
         render_taiwan_futures_dashboard(layout_mode=layout_mode)
+        return
+
+    # v1.11.0: Stock Comparison & Recommendation Dashboard — full-page takeover.
+    # Like Taiwan Futures Lab, this is a self-contained mode with its own
+    # ticker selection (2-5 user-picked tickers, not the dashboard watchlist).
+    if dashboard_mode == "Stock Comparison":
+        from stock_comparison_dashboard import render_stock_comparison_dashboard
+        render_stock_comparison_dashboard(watchlist_tickers=tickers)
         return
 
     # v1.10.18: AI Analysis Share Dashboard — full-page takeover.
