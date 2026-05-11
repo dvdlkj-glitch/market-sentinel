@@ -2,35 +2,39 @@
 stock_comparison_dashboard.py
 =============================
 
-Individual Stock Comparison & Recommendation Dashboard — v1.11.0 (2026-05-11)
+Individual Stock Comparison & Recommendation Dashboard — v1.12.0 (2026-05-11)
 
 Extracted as a separate module (similar to ai_analysis_dashboard.py) so the
-main file (already ~48,948 lines) doesn't grow further. This module owns
+main file (already ~49,200 lines) doesn't grow further. This module owns
 the entire "📊 個股對比與建議" full-page experience.
 
-Layers
-------
+v1.12.0 ARCHITECTURE CHANGE (per user request):
+-----------------------------------------------
+Instead of a custom comparison render, this module now DELEGATES to the
+main file's existing render_comparison_section() (line ~27645), which is
+the existing "Comparison Arena" already used by Supply Chain Lab etc.
+That brings:
+  - 🏆 Winner card (existing)
+  - 🎯 Opportunity radar (existing)
+  - 3-tile hero (strongest / best 1Y / best news)
+  - Comparison overview cards (digest_items grid)
+  - Comparison focus detail (pill selector + drill-down)
+
+The 4-dimension evaluation card data (tech/value/growth/chip) is fetched
+in parallel here, then attached to each bundle as bundle["eval_scores"]
+BEFORE passing to render_comparison_section. Main file's
+build_comparison_digest_items + render_comparison_overview_cards have been
+enhanced (v1.12.0) to display a 4-dim chip strip when eval_scores is present.
+
 Layer 1 — 對比設置(Setup):
-    User picks 2-5 tickers via three entry points:
-      (a) Direct text input (comma-separated, e.g. "2330,2317,2454")
-      (b) Multi-select from watchlist
-      (c) Multi-select from a supply-chain group
-    Selected tickers are stored as chips with X-to-remove.
+    Same as before. User picks 2-5 tickers via three entry points.
 
 Layer 2 — 對比總覽(Overview, the Hero):
-    For each ticker:
-      (1) Parallel fetch of 4-dimension evaluation card data (re-uses
-          v1.10.27 ThreadPoolExecutor pattern)
-      (2) Computes per-dimension scores + overall score
-    Then renders:
-      (a) 🏆 Ranking with verdict text ("2330 顯著領先 / 略勝 / 微幅領先")
-      (b) 📋 Comparison table (5 rows: overall + 4 dimensions, with
-          winner-by-dimension and gap)
-      (c) 💡 Auto-generated insights (2-4 short paragraphs)
+    NEW (v1.12.0): delegates to render_comparison_section().
+    Eval card data attached to bundles upstream.
 
 Layer 3 — 深入工作台(Deep Dive, TOMORROW polish):
     Per-ticker tab. Each tab uses render_ticker_page() from main file.
-    Tomorrow's polish phase.
 
 Public surface
 --------------
@@ -38,32 +42,20 @@ Public surface
 
 Imports from main file (deferred via _main_module bridge)
 ---------------------------------------------------------
-  - _fetch_eval_card_data(ticker, daily_df)
-  - render_eval_card_html(ticker, name, tech, value, growth, chip, lang_zh)
-  - _ensure_eval_card_css()
-  - render_html_block(html)
-  - get_language() / get_lang()
-  - display_ticker_label(ticker)
-  - is_taiwan_ticker(ticker)
-  - fetch_daily_data(ticker)  — for tickers not in watchlist
-  - SUPPLY_CHAIN_FOCUS_CONFIGS  — supply chain group constants
-
-Tonight's scope (v1.11.0 phase A)
----------------------------------
-  ✅ Layer 1 + Layer 2 only
-  ✅ Comparison table + ranking + insights (text only, no radar chart)
-  ✅ Parallel fetch
-  ✅ Smoke tests
-  ❌ Layer 3 (tabs) — tomorrow
-  ❌ Plotly radar chart — tomorrow
-  ❌ Mobile responsive polish — tomorrow
+  - render_comparison_section(daily_data, intraday_data, tickers, lens_meta)
+  - collect_ticker_context(daily_data, intraday_data, ticker, news_limit)
+  - fetch_daily_data(tickers_list, period, interval)
+  - fetch_intraday_data(tickers_list)
+  - _fetch_eval_card_data(ticker, daily_df) — 4-dim scoring
+  - render_eval_card_html, _ensure_eval_card_css
+  - get_language, display_ticker_label, is_taiwan_ticker
+  - SUPPLY_CHAIN_FOCUS_CONFIGS
 
 Note on .TWO (OTC) stocks
 -------------------------
-v1.10.31's SSL fallback for TPEx is not fully working (user-reported).
-This means chip dimension for .TWO stocks shows "資料準備中". This is
-graceful degradation — comparison for .TWO stocks works on 3 dimensions
-(technical, value, growth) only. Fix scheduled for next week.
+TPEx 307 still unresolved (last attempted v1.10.31). Chip dimension for
+.TWO stocks shows "資料準備中". Ranking still works on 3 dimensions
+(tech + value + growth).
 """
 
 from __future__ import annotations
@@ -164,13 +156,13 @@ _COMPARISON_CSS = """
 }
 
 .comparison-title {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   color: #f1f5f9;
 }
 
 .comparison-subtitle {
-  font-size: 12px;
+  font-size: 13px;
   color: #98a2b8;
 }
 
@@ -204,41 +196,41 @@ _COMPARISON_CSS = """
 }
 
 .ranking-rank {
-  font-size: 11px;
+  font-size: 12px;
   color: #98a2b8;
   font-weight: 600;
   letter-spacing: 0.05em;
 }
 
 .ranking-trophy {
-  font-size: 16px;
+  font-size: 18px;
   margin-left: 6px;
 }
 
 .ranking-ticker {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   color: #f1f5f9;
   margin: 4px 0 6px 0;
 }
 
 .ranking-score {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
   color: #f1f5f9;
 }
 
 .ranking-score-denom {
-  font-size: 13px;
+  font-size: 14px;
   color: #98a2b8;
   font-weight: 400;
 }
 
 .ranking-verdict-chip {
   display: inline-block;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 12px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   margin-top: 6px;
 }
@@ -269,11 +261,11 @@ _COMPARISON_CSS = """
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .comp-table th, .comp-table td {
-  padding: 10px 12px;
+  padding: 12px 14px;
   text-align: left;
   border-bottom: 1px solid rgba(96,140,200,0.10);
 }
@@ -282,7 +274,7 @@ _COMPARISON_CSS = """
   background: rgba(15,22,35,0.7);
   font-weight: 600;
   color: #98a2b8;
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 0.03em;
 }
 
@@ -294,11 +286,13 @@ _COMPARISON_CSS = """
 .comp-table .col-dim {
   color: #98a2b8;
   font-weight: 500;
+  font-size: 14px;
 }
 
 .comp-table .col-score {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .comp-table .score-good    { color: #5ed79a; }
@@ -308,16 +302,16 @@ _COMPARISON_CSS = """
 
 .comp-table .col-winner {
   color: #c2cdde;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .comp-table .winner-badge {
   display: inline-block;
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: 8px;
   background: rgba(82,196,138,0.16);
   color: #6dc28a;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   margin-right: 4px;
 }
@@ -332,19 +326,19 @@ _COMPARISON_CSS = """
 }
 
 .insights-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #c2cdde;
   margin-bottom: 8px;
 }
 
 .insights-item {
-  font-size: 13px;
+  font-size: 14px;
   color: #d8e1ec;
-  margin: 6px 0;
+  margin: 8px 0;
   padding-left: 16px;
   position: relative;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .insights-item::before {
@@ -358,7 +352,7 @@ _COMPARISON_CSS = """
 .insights-item.insight-trade-off::before { color: #d4be7b; }
 
 .comparison-disclaimer {
-  font-size: 11px;
+  font-size: 12px;
   color: #98a2b8;
   font-style: italic;
   margin-top: 14px;
@@ -368,8 +362,64 @@ _COMPARISON_CSS = """
 
 @media (max-width: 768px) {
   .comparison-shell { padding: 16px 14px; }
-  .comp-table { font-size: 12px; }
-  .comp-table th, .comp-table td { padding: 8px 6px; }
+  .comparison-title { font-size: 17px; }
+  .comp-table { font-size: 13px; }
+  .comp-table th, .comp-table td { padding: 9px 7px; }
+  .comp-table th { font-size: 12px; }
+  .comp-table .col-dim { font-size: 13px; }
+  .comp-table .col-score { font-size: 14px; }
+  .comp-table .col-winner { font-size: 12px; }
+  .ranking-score { font-size: 24px; }
+  .ranking-ticker { font-size: 16px; }
+  .insights-item { font-size: 13px; }
+}
+
+/* v1.12.0d: Force visible Material icons + text on remove/clear-all buttons.
+   ROOT CAUSE: Streamlit's default light theme renders secondary buttons with
+   white-on-white in non-hover state — icon/text only becomes visible on hover.
+   FIX: Use Streamlit's modern element key API (st.button now adds a
+   `st-key-{key}` class to its parent div) to scope CSS to our specific
+   buttons without affecting other secondary buttons in the app.
+*/
+.st-key-_comparison_clear_all_btn button,
+div[class*="st-key-_comparison_remove_"] button {
+    background: rgba(82, 196, 138, 0.12) !important;
+    border: 1px solid rgba(82, 196, 138, 0.32) !important;
+    color: #d8e1ec !important;
+    transition: all 0.18s ease !important;
+}
+.st-key-_comparison_clear_all_btn button *,
+div[class*="st-key-_comparison_remove_"] button * {
+    color: #d8e1ec !important;
+    fill: #d8e1ec !important;
+}
+.st-key-_comparison_clear_all_btn button svg,
+div[class*="st-key-_comparison_remove_"] button svg {
+    fill: #d8e1ec !important;
+    color: #d8e1ec !important;
+    stroke: #d8e1ec !important;
+    opacity: 1 !important;
+}
+.st-key-_comparison_clear_all_btn button p,
+div[class*="st-key-_comparison_remove_"] button p {
+    color: #d8e1ec !important;
+    font-weight: 600 !important;
+    opacity: 1 !important;
+}
+/* Hover: brighter green, white icon for clear feedback */
+.st-key-_comparison_clear_all_btn button:hover,
+div[class*="st-key-_comparison_remove_"] button:hover {
+    background: rgba(82, 196, 138, 0.28) !important;
+    border-color: rgba(82, 196, 138, 0.55) !important;
+    transform: translateY(-1px);
+}
+.st-key-_comparison_clear_all_btn button:hover *,
+div[class*="st-key-_comparison_remove_"] button:hover *,
+.st-key-_comparison_clear_all_btn button:hover svg,
+div[class*="st-key-_comparison_remove_"] button:hover svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
 }
 </style>
 """
@@ -388,6 +438,10 @@ def _ensure_comparison_css():
 
 def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
     """Render the ticker selection UI. Returns the user's chosen tickers.
+
+    v1.11.0a:
+      - 2 expanders converted to st.toggle (project-wide standard from v1.10.30)
+      - Text input + button aligned with label_visibility="collapsed"
 
     Args:
         watchlist_tickers: tickers already in user's watchlist (for quick-add)
@@ -416,14 +470,22 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
         )
 
     # === Entry point 1: Direct text input ===
-    col1, col2 = st.columns([3, 1])
+    # v1.11.0a: Show label as markdown above so it's separate from the input row,
+    # then text_input + button on the same row both with label_visibility="collapsed"
+    # → vertically aligned.
+    if lang_zh:
+        st.markdown("**輸入 ticker(逗號分隔,例如 2330,2317,2454)**")
+    else:
+        st.markdown("**Enter tickers (comma-separated, e.g. 2330,2317,2454)**")
+
+    col1, col2 = st.columns([4, 1])
     with col1:
-        input_label = "輸入 ticker(逗號分隔,例如 2330,2317,2454)" if lang_zh else "Enter tickers (comma-separated, e.g. 2330,2317,2454)"
         text_input = st.text_input(
-            input_label,
+            "ticker input",
             value="",
             key="_comparison_text_input",
             placeholder="2330, 2317, 2454" if lang_zh else "2330, 2317, 2454",
+            label_visibility="collapsed",
         )
     with col2:
         add_label = "➕ 加入" if lang_zh else "➕ Add"
@@ -440,32 +502,49 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
                         st.session_state[setup_key].append(ticker)
             st.rerun()
 
-    # === Entry point 2: From watchlist ===
-    if watchlist_tickers:
-        with st.expander("📋 從 Watchlist 加入" if lang_zh else "📋 Add from watchlist", expanded=False):
-            tw_watchlist = [t for t in watchlist_tickers if is_taiwan_ticker(t)]
-            if tw_watchlist:
-                wl_picks = st.multiselect(
-                    "從 watchlist 多選" if lang_zh else "Multi-select from watchlist",
-                    options=tw_watchlist,
-                    default=[],
-                    key="_comparison_wl_picks",
-                    label_visibility="collapsed",
-                )
-                wl_add_label = "加入" if lang_zh else "Add selected"
-                if st.button(wl_add_label, key="_comparison_wl_add_btn"):
-                    for ticker in wl_picks:
-                        if ticker not in st.session_state[setup_key]:
-                            if len(st.session_state[setup_key]) < COMPARISON_MAX_TICKERS:
-                                st.session_state[setup_key].append(ticker)
-                    st.rerun()
-            else:
-                st.info("Watchlist 沒有台股 ticker" if lang_zh else "No Taiwan tickers in watchlist")
+    # === Entry point 2: From watchlist (toggle, project-wide standard) ===
+    wl_toggle_label = "📋 從 Watchlist 加入" if lang_zh else "📋 Add from watchlist"
+    wl_open = st.toggle(wl_toggle_label, key="_comparison_wl_toggle", value=False)
+    if not wl_open:
+        hint = "👆 開啟上方開關可顯示 Watchlist 多選" if lang_zh else "👆 Toggle on to show watchlist multi-select"
+        st.markdown(
+            f'<div style="color:#98a2b8; font-size:12px; font-style:italic; '
+            f'margin: 4px 0 14px 0; padding-left: 4px;">{escape(hint)}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        tw_watchlist = [t for t in watchlist_tickers if is_taiwan_ticker(t)] if watchlist_tickers else []
+        if tw_watchlist:
+            wl_picks = st.multiselect(
+                "從 watchlist 多選" if lang_zh else "Multi-select from watchlist",
+                options=tw_watchlist,
+                default=[],
+                key="_comparison_wl_picks",
+                label_visibility="collapsed",
+            )
+            wl_add_label = "加入所選" if lang_zh else "Add selected"
+            if st.button(wl_add_label, key="_comparison_wl_add_btn"):
+                for ticker in wl_picks:
+                    if ticker not in st.session_state[setup_key]:
+                        if len(st.session_state[setup_key]) < COMPARISON_MAX_TICKERS:
+                            st.session_state[setup_key].append(ticker)
+                st.rerun()
+        else:
+            st.info("Watchlist 沒有台股 ticker" if lang_zh else "No Taiwan tickers in watchlist")
 
-    # === Entry point 3: From supply chain group ===
-    supply_chain_configs = _main("SUPPLY_CHAIN_FOCUS_CONFIGS")
-    if supply_chain_configs:
-        with st.expander("🔗 從供應鏈組群加入" if lang_zh else "🔗 Add from supply chain group", expanded=False):
+    # === Entry point 3: From supply chain group (toggle) ===
+    sc_toggle_label = "🔗 從供應鏈組群加入" if lang_zh else "🔗 Add from supply chain group"
+    sc_open = st.toggle(sc_toggle_label, key="_comparison_sc_toggle", value=False)
+    if not sc_open:
+        hint = "👆 開啟上方開關可選供應鏈組群" if lang_zh else "👆 Toggle on to pick a supply chain group"
+        st.markdown(
+            f'<div style="color:#98a2b8; font-size:12px; font-style:italic; '
+            f'margin: 4px 0 14px 0; padding-left: 4px;">{escape(hint)}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        supply_chain_configs = _main("SUPPLY_CHAIN_FOCUS_CONFIGS")
+        if supply_chain_configs:
             group_options = list(supply_chain_configs.keys())
             group_label_map = {}
             for k, v in supply_chain_configs.items():
@@ -494,13 +573,23 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
                         default=[],
                         key="_comparison_group_picks",
                     )
-                    grp_add_label = "加入" if lang_zh else "Add selected"
+                    grp_add_label = "加入所選" if lang_zh else "Add selected"
                     if st.button(grp_add_label, key="_comparison_grp_add_btn"):
                         for ticker in group_picks:
                             if ticker not in st.session_state[setup_key]:
                                 if len(st.session_state[setup_key]) < COMPARISON_MAX_TICKERS:
                                     st.session_state[setup_key].append(ticker)
                         st.rerun()
+                else:
+                    st.info(
+                        "此組群沒有 ticker"
+                        if lang_zh else "No tickers in this group"
+                    )
+        else:
+            st.info(
+                "找不到供應鏈組群設定"
+                if lang_zh else "Supply chain config not available"
+            )
 
     # === Selected chips display ===
     selected = st.session_state[setup_key]
@@ -510,15 +599,69 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
         else:
             st.markdown(f"**Selected ({len(selected)}/{COMPARISON_MAX_TICKERS}):**")
 
-        # Render chips as columns with remove buttons
+        # v1.12.0c (Option D): HTML chip + per-ticker Material icon close button
+        # + clear-all reset button below.
         cols = st.columns(min(len(selected), 5))
         for idx, ticker in enumerate(selected):
             with cols[idx % 5]:
-                if st.button(f"❌ {ticker}", key=f"_comparison_remove_{ticker}",
-                             help="點擊移除" if lang_zh else "Click to remove",
-                             use_container_width=True):
+                # Chip with proper contrast (dark text on themed background)
+                chip_html = (
+                    f'<div style="background: rgba(82, 196, 138, 0.14); '
+                    f'border: 1px solid rgba(82, 196, 138, 0.35); '
+                    f'border-radius: 18px; padding: 8px 14px; text-align: center; '
+                    f'font-weight: 600; color: #c2cdde; font-size: 14px; '
+                    f'margin-bottom: 6px; letter-spacing: 0.02em;">'
+                    f'📌 {escape(ticker)}'
+                    f'</div>'
+                )
+                st.markdown(chip_html, unsafe_allow_html=True)
+
+                # Per-ticker remove button — Material icon (Streamlit 1.34+).
+                # Wrap in try/except for graceful fallback on older versions.
+                remove_clicked = False
+                btn_key = f"_comparison_remove_{ticker}"
+                btn_help = f"移除 {ticker}" if lang_zh else f"Remove {ticker}"
+                try:
+                    # Streamlit 1.34+: empty label + icon = icon-only button
+                    remove_clicked = st.button(
+                        "",
+                        icon=":material/close:",
+                        key=btn_key,
+                        help=btn_help,
+                        use_container_width=True,
+                    )
+                except TypeError:
+                    # Fallback for older Streamlit without icon parameter
+                    remove_clicked = st.button(
+                        "✕",
+                        key=btn_key,
+                        help=btn_help,
+                        use_container_width=True,
+                    )
+
+                if remove_clicked:
                     st.session_state[setup_key] = [t for t in selected if t != ticker]
+                    # Also clear locked state so user doesn't see stale comparison
+                    st.session_state.pop("_comparison_locked_tickers", None)
                     st.rerun()
+
+        # v1.12.0c: Clear-all reset button (handles "fresh start" case)
+        st.markdown("")  # tiny spacer
+        clear_all_label = "🗑 清空全部 ticker" if lang_zh else "🗑 Clear all tickers"
+        clear_all_help = (
+            "一鍵移除所有已選 ticker,從頭開始"
+            if lang_zh else
+            "Remove all selected tickers and start fresh"
+        )
+        if st.button(
+            clear_all_label,
+            key="_comparison_clear_all_btn",
+            help=clear_all_help,
+            use_container_width=True,
+        ):
+            st.session_state[setup_key] = []
+            st.session_state.pop("_comparison_locked_tickers", None)
+            st.rerun()
     else:
         if lang_zh:
             st.info("👆 用上方任一方式加入 ticker")
@@ -539,20 +682,62 @@ def _fetch_comparison_data(tickers: list[str]) -> dict:
         {ticker: {"tech": ..., "value": ..., "growth": ..., "chip": ...,
                   "overall_score": float, "name": str}}
 
-    Uses ThreadPoolExecutor for concurrency (max_workers=5).
-    Each ticker re-uses the v1.10.29 day-cached data via _fetch_eval_card_data.
+    v1.11.0a fix: use the actual main-file API signature for fetch_daily_data,
+    which is `fetch_daily_data([ticker], period, interval)` returning a
+    multi-ticker DataFrame; then extract per-ticker OHLCV via get_series().
     """
     _fetch_eval = _main("_fetch_eval_card_data")
     fetch_daily = _main("fetch_daily_data")
+    get_series = _main("get_series")
     display_label = _main("display_ticker_label", lambda t: t)
 
-    if not _fetch_eval or not fetch_daily:
+    if not _fetch_eval or not fetch_daily or not get_series:
         return {}
+
+    def _build_daily_df_for_ticker(ticker: str):
+        """Wrap main file's fetch_daily_data + get_series into a single-ticker
+        OHLCV DataFrame (the format _fetch_eval_card_data expects).
+
+        v1.11.0b: dropped the misguided "^TWII batch" hack and added 1-retry
+        for yfinance transient failures. Single-ticker fetch is more reliable
+        for some Taiwan tickers (e.g. 2454.TW occasionally fails in batch mode).
+        """
+        def _try_fetch():
+            try:
+                multi_df = fetch_daily([ticker], "1y", "1d")
+                if multi_df is None or multi_df.empty:
+                    return None
+                open_s = get_series(multi_df, "Open", ticker)
+                high_s = get_series(multi_df, "High", ticker)
+                low_s = get_series(multi_df, "Low", ticker)
+                close_s = get_series(multi_df, "Close", ticker)
+                vol_s = get_series(multi_df, "Volume", ticker)
+                if close_s is None or len(close_s) < 30:
+                    return None
+                df = pd.concat({
+                    "Open": open_s, "High": high_s, "Low": low_s,
+                    "Close": close_s, "Volume": vol_s,
+                }, axis=1).dropna(subset=["Close"])
+                if len(df) < 30:
+                    return None
+                return df
+            except Exception:
+                return None
+
+        # First attempt
+        result = _try_fetch()
+        if result is not None:
+            return result
+
+        # Retry once after a short pause (yfinance can have transient failures)
+        import time
+        time.sleep(0.6)
+        return _try_fetch()
 
     def _fetch_one(ticker: str) -> tuple[str, dict | None]:
         try:
-            daily_df = fetch_daily(ticker)
-            if daily_df is None or len(daily_df) < 30:
+            daily_df = _build_daily_df_for_ticker(ticker)
+            if daily_df is None:
                 return (ticker, None)
             scores = _fetch_eval(ticker, daily_df)
             return (ticker, scores)
@@ -566,7 +751,6 @@ def _fetch_comparison_data(tickers: list[str]) -> dict:
             ticker, scores = future.result()
             if scores is None:
                 continue
-            # Compute overall = mean of available dimensions
             dim_scores = [
                 scores[k]["overall_score"] for k in ("tech", "value", "growth", "chip")
                 if scores.get(k) is not None
@@ -915,19 +1099,422 @@ def _render_comparison_overview(comparison_data: dict, lang_zh: bool) -> None:
 # Top-level entry
 # ---------------------------------------------------------------------------
 
+def _render_four_dim_hero(bundles: list[dict], eval_scores_dict: dict, lang_zh: bool) -> None:
+    """v1.12.0a: Prominent 4-dimension hero section rendered BEFORE the
+    main Comparison Arena. Gives the user immediate visibility into the
+    4-dim ranking without scrolling.
+
+    Layout:
+      ┌──────────────────────────────────────────────────────────┐
+      │ 📊 4 維度評估對比                                          │
+      │ Top 1: 2330 (avg 7.05)                                   │
+      │                                                          │
+      │ ┌────────────┐ ┌────────────┐ ┌────────────┐            │
+      │ │ 2330 7.05  │ │ 2454 6.23  │ │ 2317 6.05  │            │
+      │ │ 技 7.4 🟢  │ │ 技 6.5 🟢  │ │ 技 5.0 🟡  │            │
+      │ │ 價 4.3 🟡  │ │ 價 5.1 🟡  │ │ 價 7.2 🟢  │            │
+      │ │ 成 8.8 🟢  │ │ 成 7.0 🟢  │ │ 成 5.5 🟡  │            │
+      │ │ 籌 7.7 🟢  │ │ 籌 6.3 🟢  │ │ 籌 6.5 🟢  │            │
+      │ └────────────┘ └────────────┘ └────────────┘            │
+      └──────────────────────────────────────────────────────────┘
+    """
+    render_html_block = _main("render_html_block")
+    display_label = _main("display_ticker_label", lambda t: t)
+    if not render_html_block:
+        return
+
+    # Build per-ticker summary
+    items = []
+    for bundle in bundles:
+        ticker = bundle["ticker"]
+        scores = eval_scores_dict.get(ticker)
+        if not scores:
+            continue
+        dim_values = []
+        for dim_key in ("tech", "value", "growth", "chip"):
+            d = scores.get(dim_key)
+            if d is not None:
+                dim_values.append(d["overall_score"])
+        if not dim_values:
+            continue
+        overall = round(sum(dim_values) / len(dim_values), 2)
+        items.append({
+            "ticker": ticker,
+            "name": display_label(ticker),
+            "overall": overall,
+            "scores": scores,
+            "dims_available": len(dim_values),
+        })
+
+    if not items:
+        return  # no eval scores at all — skip silently
+
+    # Sort by overall desc
+    items.sort(key=lambda x: x["overall"], reverse=True)
+
+    # Verdict
+    top = items[0]
+    if len(items) >= 2:
+        gap = round(top["overall"] - items[1]["overall"], 2)
+        if gap >= 1.5:
+            verdict_zh = f"🏆 {top['name']} 顯著領先 (+{gap:.1f})"
+            verdict_en = f"🏆 {top['name']} clearly leads (+{gap:.1f})"
+        elif gap >= 0.5:
+            verdict_zh = f"🏆 {top['name']} 略勝 (+{gap:.1f})"
+            verdict_en = f"🏆 {top['name']} slightly ahead (+{gap:.1f})"
+        elif gap >= 0.1:
+            verdict_zh = f"🏆 {top['name']} 微幅領先 (+{gap:.1f})"
+            verdict_en = f"🏆 {top['name']} marginally ahead (+{gap:.1f})"
+        else:
+            verdict_zh = "⚖️ 4 維度分數接近,看細節決定"
+            verdict_en = "⚖️ 4-dim scores are close — check details"
+    else:
+        verdict_zh = f"{top['name']} (僅 1 檔可評)"
+        verdict_en = f"{top['name']} (only 1 evaluable)"
+
+    verdict = verdict_zh if lang_zh else verdict_en
+
+    title = "📊 4 維度評估對比" if lang_zh else "📊 4-Dimension Evaluation Comparison"
+    subtitle = (
+        "技術面 / 價值面 / 成長面 / 籌碼面 — 量化評分"
+        if lang_zh else
+        "Technical / Value / Growth / Chip — quant scores"
+    )
+
+    # Color class helper
+    def _score_class(score):
+        if score >= 7: return "fdh-good"
+        if score >= 4: return "fdh-mid"
+        return "fdh-poor"
+
+    dim_labels_zh = {"tech": "技術", "value": "價值", "growth": "成長", "chip": "籌碼"}
+    dim_labels_en = {"tech": "Tech", "value": "Value", "growth": "Growth", "chip": "Chip"}
+    dim_labels = dim_labels_zh if lang_zh else dim_labels_en
+
+    # Build cards
+    card_html_list = []
+    for rank_idx, item in enumerate(items):
+        rank = rank_idx + 1
+        trophy = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+        rank_class = f"fdh-rank-{rank}" if rank <= 3 else ""
+
+        # Per-dim rows
+        dim_rows = []
+        for dim_key in ("tech", "value", "growth", "chip"):
+            d = item["scores"].get(dim_key)
+            label = dim_labels[dim_key]
+            if d is None:
+                dim_rows.append(
+                    f'<div class="fdh-dim-row fdh-dim-na">'
+                    f'<span class="fdh-dim-label">{escape(label)}</span>'
+                    f'<span class="fdh-dim-score">—</span></div>'
+                )
+            else:
+                score = d["overall_score"]
+                pct = max(0, min(100, int(score * 10)))
+                cls = _score_class(score)
+                dim_rows.append(
+                    f'<div class="fdh-dim-row {cls}">'
+                    f'<span class="fdh-dim-label">{escape(label)}</span>'
+                    f'<div class="fdh-dim-bar"><div class="fdh-dim-bar-fill" style="width:{pct}%;"></div></div>'
+                    f'<span class="fdh-dim-score">{score:.1f}</span></div>'
+                )
+
+        # Partial data warning
+        partial_warning = ""
+        if item["dims_available"] < 4:
+            warn_text = f"{item['dims_available']}/4 維度" if lang_zh else f"{item['dims_available']}/4 dims"
+            partial_warning = f'<div class="fdh-partial">⚠️ {escape(warn_text)}</div>'
+
+        card_html_list.append(f"""
+        <div class="fdh-card {rank_class}">
+            <div class="fdh-card-head">
+                <span class="fdh-rank">{trophy}</span>
+                <span class="fdh-ticker">{escape(item['name'])}</span>
+            </div>
+            <div class="fdh-overall">
+                <span class="fdh-overall-num">{item['overall']:.1f}</span>
+                <span class="fdh-overall-denom">/10</span>
+            </div>
+            <div class="fdh-dim-grid">
+                {"".join(dim_rows)}
+            </div>
+            {partial_warning}
+        </div>
+        """)
+
+    # Inline CSS scoped to fdh-* classes
+    fdh_css = """
+    <style>
+    .fdh-shell {
+        background: linear-gradient(180deg, rgba(20,28,42,0.85), rgba(15,22,35,0.85));
+        border: 1px solid rgba(96,140,200,0.2);
+        border-radius: 16px;
+        padding: 22px 26px;
+        margin: 16px 0;
+    }
+    .fdh-header {
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(96,140,200,0.15);
+    }
+    .fdh-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #f1f5f9;
+    }
+    .fdh-subtitle {
+        font-size: 12px;
+        color: #98a2b8;
+        margin-top: 2px;
+    }
+    .fdh-verdict {
+        font-size: 16px;
+        font-weight: 600;
+        color: #f1f5f9;
+        margin: 8px 0 14px 0;
+    }
+    .fdh-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+    }
+    .fdh-card {
+        background: rgba(15,22,35,0.6);
+        border: 1px solid rgba(96,140,200,0.15);
+        border-radius: 12px;
+        padding: 14px 16px;
+    }
+    .fdh-card.fdh-rank-1 {
+        border-color: rgba(82,196,138,0.4);
+        background: linear-gradient(135deg, rgba(82,196,138,0.10), rgba(15,22,35,0.6));
+    }
+    .fdh-card.fdh-rank-2 { border-color: rgba(199,178,108,0.32); }
+    .fdh-card.fdh-rank-3 { border-color: rgba(199,178,108,0.22); }
+
+    .fdh-card-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+    .fdh-rank { font-size: 18px; }
+    .fdh-ticker {
+        font-size: 16px;
+        font-weight: 600;
+        color: #f1f5f9;
+    }
+    .fdh-overall {
+        margin-bottom: 12px;
+    }
+    .fdh-overall-num {
+        font-size: 32px;
+        font-weight: 700;
+        color: #f1f5f9;
+    }
+    .fdh-overall-denom {
+        font-size: 14px;
+        color: #98a2b8;
+    }
+    .fdh-dim-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .fdh-dim-row {
+        display: grid;
+        grid-template-columns: 50px 1fr 40px;
+        gap: 8px;
+        align-items: center;
+        font-size: 13px;
+    }
+    .fdh-dim-label {
+        color: #98a2b8;
+        font-size: 12px;
+    }
+    .fdh-dim-bar {
+        background: rgba(255,255,255,0.06);
+        height: 6px;
+        border-radius: 3px;
+        overflow: hidden;
+    }
+    .fdh-dim-bar-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+    }
+    .fdh-good .fdh-dim-bar-fill { background: linear-gradient(90deg, #5ed79a, #6dc28a); }
+    .fdh-mid  .fdh-dim-bar-fill { background: linear-gradient(90deg, #d4be7b, #c2ae6b); }
+    .fdh-poor .fdh-dim-bar-fill { background: linear-gradient(90deg, #e98787, #d97777); }
+    .fdh-good .fdh-dim-score { color: #6dc28a; font-weight: 600; }
+    .fdh-mid  .fdh-dim-score { color: #d4be7b; font-weight: 600; }
+    .fdh-poor .fdh-dim-score { color: #e98787; font-weight: 600; }
+    .fdh-dim-na .fdh-dim-score { color: #6c7686; font-style: italic; }
+    .fdh-dim-na .fdh-dim-bar-fill { background: transparent; }
+    .fdh-dim-score {
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 13px;
+        text-align: right;
+    }
+    .fdh-partial {
+        font-size: 11px;
+        color: #d4be7b;
+        margin-top: 8px;
+        font-style: italic;
+    }
+    </style>
+    """
+    render_html_block(fdh_css)
+    render_html_block(f"""
+    <div class="fdh-shell">
+        <div class="fdh-header">
+            <div class="fdh-title">{escape(title)}</div>
+            <div class="fdh-subtitle">{escape(subtitle)}</div>
+        </div>
+        <div class="fdh-verdict">{escape(verdict)}</div>
+        <div class="fdh-grid">
+            {"".join(card_html_list)}
+        </div>
+    </div>
+    """)
+
+
+def _compute_eval_scores_from_shared(daily_data, tickers: list[str]) -> dict:
+    """v1.12.0b: Compute 4-dim eval scores using already-fetched daily_data.
+
+    KEY DIFFERENCE from earlier versions: This does NOT re-fetch daily data.
+    It re-uses the multi-ticker DataFrame that the main flow already fetched
+    via fetch_daily_data(tickers, "1y", "1d"). Per-ticker OHLCV is extracted
+    in-memory via get_series. This eliminates the yfinance race conditions
+    that caused 2454/2308/etc to fail.
+
+    yfinance.info for value/growth scoring is STILL fetched per-ticker
+    (it's part of _fetch_eval_card_data internals), but daily-OHLCV is no
+    longer re-fetched.
+
+    Returns dict {ticker: {tech, value, growth, chip}} keyed by ticker.
+    Tickers that fail compute (e.g. missing data) are silently omitted.
+    """
+    _fetch_eval = _main("_fetch_eval_card_data")
+    get_series = _main("get_series")
+
+    if not _fetch_eval or not get_series:
+        return {}
+
+    if daily_data is None or daily_data.empty:
+        return {}
+
+    def _extract_df(ticker: str):
+        """Extract per-ticker OHLCV DataFrame from the shared multi-ticker frame."""
+        try:
+            open_s = get_series(daily_data, "Open", ticker)
+            high_s = get_series(daily_data, "High", ticker)
+            low_s = get_series(daily_data, "Low", ticker)
+            close_s = get_series(daily_data, "Close", ticker)
+            vol_s = get_series(daily_data, "Volume", ticker)
+            if close_s is None or len(close_s) < 30:
+                return None
+            df = pd.concat({
+                "Open": open_s, "High": high_s, "Low": low_s,
+                "Close": close_s, "Volume": vol_s,
+            }, axis=1).dropna(subset=["Close"])
+            return df if len(df) >= 30 else None
+        except Exception:
+            return None
+
+    def _compute_one(ticker: str):
+        try:
+            df = _extract_df(ticker)
+            if df is None:
+                return (ticker, None)
+            return (ticker, _fetch_eval(ticker, df))
+        except Exception:
+            return (ticker, None)
+
+    results: dict[str, dict] = {}
+    # Still use ThreadPool to parallelize yfinance.info calls inside _fetch_eval
+    # (value + growth dim fetches). But the daily-data part is now zero-fetch.
+    with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as executor:
+        futures = {executor.submit(_compute_one, t): t for t in tickers}
+        for future in as_completed(futures):
+            ticker, scores = future.result()
+            if scores is not None:
+                results[ticker] = scores
+    return results
+
+
+def _fetch_eval_scores_parallel(tickers: list[str]) -> dict:
+    """v1.12.0: Parallel-fetch 4-dim eval card scores for all tickers.
+
+    Returns dict {ticker: {tech, value, growth, chip}} for use as bundle["eval_scores"].
+    Each ticker may have a None for some dims (e.g. chip dim for .TWO stocks).
+    """
+    _fetch_eval = _main("_fetch_eval_card_data")
+    fetch_daily = _main("fetch_daily_data")
+    get_series = _main("get_series")
+
+    if not _fetch_eval or not fetch_daily or not get_series:
+        return {}
+
+    def _build_df(ticker):
+        def _try():
+            try:
+                multi_df = fetch_daily([ticker], "1y", "1d")
+                if multi_df is None or multi_df.empty:
+                    return None
+                open_s = get_series(multi_df, "Open", ticker)
+                high_s = get_series(multi_df, "High", ticker)
+                low_s = get_series(multi_df, "Low", ticker)
+                close_s = get_series(multi_df, "Close", ticker)
+                vol_s = get_series(multi_df, "Volume", ticker)
+                if close_s is None or len(close_s) < 30:
+                    return None
+                df = pd.concat({
+                    "Open": open_s, "High": high_s, "Low": low_s,
+                    "Close": close_s, "Volume": vol_s,
+                }, axis=1).dropna(subset=["Close"])
+                return df if len(df) >= 30 else None
+            except Exception:
+                return None
+        # 2 attempts with backoff
+        df = _try()
+        if df is not None:
+            return df
+        import time
+        time.sleep(0.6)
+        return _try()
+
+    def _fetch_one(ticker):
+        try:
+            daily_df = _build_df(ticker)
+            if daily_df is None:
+                return (ticker, None)
+            return (ticker, _fetch_eval(ticker, daily_df))
+        except Exception:
+            return (ticker, None)
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as executor:
+        futures = {executor.submit(_fetch_one, t): t for t in tickers}
+        for future in as_completed(futures):
+            ticker, scores = future.result()
+            if scores is not None:
+                results[ticker] = scores
+    return results
+
+
 def render_stock_comparison_dashboard(watchlist_tickers: list[str] | None = None) -> None:
-    """v1.11.0: Top-level entry for the stock comparison dashboard.
+    """v1.12.0: Top-level entry for the stock comparison dashboard.
 
-    Called from main file's generate_dashboard() via early-return dispatch
-    when dashboard_mode == "Stock Comparison" (or the localized name).
-
-    Args:
-        watchlist_tickers: optional list of tickers from user's watchlist
-                          (passed in for quick-add convenience)
+    Delegates Layer 2 rendering to main file's existing render_comparison_section().
+    This module retains responsibility for:
+      - Layer 1: ticker selection UI (text input / watchlist / supply chain)
+      - Eval scores parallel fetch
+      - Bundle construction via collect_ticker_context
+      - Attaching eval_scores to bundles before delegating
     """
     lang_zh = (_main("get_language", lambda: "zh_TW")() == "zh_TW")
 
-    # Inject CSS
     _ensure_comparison_css()
     render_html_block = _main("render_html_block")
     if not render_html_block:
@@ -937,9 +1524,9 @@ def render_stock_comparison_dashboard(watchlist_tickers: list[str] | None = None
     # Header
     title = "📊 個股對比與建議" if lang_zh else "📊 Stock Comparison & Recommendation"
     subtitle = (
-        f"選 {COMPARISON_MIN_TICKERS}-{COMPARISON_MAX_TICKERS} 檔個股 → 4 維度對比 → 排名 → 點進工作台看細節(明天上線)"
+        f"選 {COMPARISON_MIN_TICKERS}-{COMPARISON_MAX_TICKERS} 檔個股 → 重用 Comparison Arena + 4 維度評分整合"
         if lang_zh else
-        f"Pick {COMPARISON_MIN_TICKERS}-{COMPARISON_MAX_TICKERS} tickers → 4-dim comparison → ranking → deep-dive workspace (tomorrow)"
+        f"Pick {COMPARISON_MIN_TICKERS}-{COMPARISON_MAX_TICKERS} tickers → Reuses Comparison Arena + 4-dim score integration"
     )
     render_html_block(f"""
     <div class="comparison-header">
@@ -969,7 +1556,6 @@ def render_stock_comparison_dashboard(watchlist_tickers: list[str] | None = None
     if st.button(run_label, key="_comparison_run_btn", type="primary", use_container_width=True):
         st.session_state["_comparison_locked_tickers"] = list(selected_tickers)
 
-    # Show comparison if a run is locked
     locked = st.session_state.get("_comparison_locked_tickers")
     if not locked:
         info_msg = (
@@ -980,41 +1566,127 @@ def render_stock_comparison_dashboard(watchlist_tickers: list[str] | None = None
         st.info(info_msg)
         return
 
-    # Layer 2 — Fetch + render overview
+    # === Step 1: Batch fetch daily + intraday using main file's APIs ===
+    fetch_daily = _main("fetch_daily_data")
+    fetch_intraday = _main("fetch_intraday_data")
+    collect_ticker_context = _main("collect_ticker_context")
+    render_comparison_section = _main("render_comparison_section")
+
+    if not all([fetch_daily, fetch_intraday, collect_ticker_context, render_comparison_section]):
+        st.error(
+            "⚠️ 主模組元件解析失敗 — 請 reboot Streamlit"
+            if lang_zh else
+            "⚠️ Main module components not resolved — please reboot Streamlit"
+        )
+        return
+
     spinner_text = (
-        f"正在平行抓取 {len(locked)} 檔個股的 4 維度評估資料..."
+        f"正在抓取 {len(locked)} 檔個股資料(daily / intraday / 4 維度)..."
         if lang_zh else
-        f"Fetching 4-dimension evaluation data for {len(locked)} tickers in parallel..."
+        f"Fetching data for {len(locked)} tickers (daily / intraday / 4-dim)..."
     )
     with st.spinner(spinner_text):
-        comparison_data = _fetch_comparison_data(locked)
+        # Step 1: batch fetch daily + intraday (single yfinance call each)
+        try:
+            daily_data = fetch_daily(list(locked), "1y", "1d")
+        except Exception as exc:
+            st.error(f"Daily data fetch failed: {exc}")
+            return
 
-    if not comparison_data:
+        try:
+            intraday_data = fetch_intraday(list(locked))
+        except Exception:
+            intraday_data = None  # intraday is optional
+
+        # Step 2: compute 4-dim eval scores from SHARED daily_data (v1.12.0b)
+        # No re-fetch — uses the multi-ticker DataFrame we already have.
+        # This eliminates the yfinance race conditions that caused 2454/2308/etc fails.
+        eval_scores_dict = _compute_eval_scores_from_shared(daily_data, list(locked))
+
+        # Step 3: build bundles via collect_ticker_context
+        bundles_with_eval = []
+        failed_tickers = []
+        for ticker in locked:
+            try:
+                bundle = collect_ticker_context(daily_data, intraday_data, ticker, news_limit=8)
+                if bundle is None:
+                    failed_tickers.append(ticker)
+                    continue
+                # v1.12.0: attach eval scores to the bundle
+                if ticker in eval_scores_dict:
+                    bundle["eval_scores"] = eval_scores_dict[ticker]
+                bundles_with_eval.append(bundle)
+            except Exception:
+                failed_tickers.append(ticker)
+
+    # Failure notice
+    if failed_tickers:
         msg = (
-            "⚠️ 所有 ticker 的資料抓取都失敗 — 請檢查 ticker 是否正確"
+            f"⚠️ 部分 ticker 抓取失敗:{', '.join(failed_tickers)}"
             if lang_zh else
-            "⚠️ Failed to fetch data for all tickers — please check ticker symbols"
+            f"⚠️ Some tickers failed to fetch: {', '.join(failed_tickers)}"
+        )
+        st.warning(msg)
+
+    if not bundles_with_eval:
+        msg = (
+            "⚠️ 所有 ticker 都抓取失敗 — 請檢查 ticker 是否正確"
+            if lang_zh else
+            "⚠️ All tickers failed — please check the ticker symbols"
         )
         st.error(msg)
         return
 
-    if len(comparison_data) < len(locked):
-        failed = [t for t in locked if t not in comparison_data]
+    if len(bundles_with_eval) < 2:
+        ticker_str = bundles_with_eval[0]["ticker"]
         msg = (
-            f"⚠️ 部分 ticker 抓取失敗:{', '.join(failed)}"
+            f"⚠️ 只有 1 檔成功抓取({ticker_str}),需要至少 2 檔才能對比"
             if lang_zh else
-            f"⚠️ Some tickers failed to fetch: {', '.join(failed)}"
+            f"⚠️ Only 1 ticker fetched ({ticker_str}). Need at least 2 to compare"
         )
         st.warning(msg)
+        return
 
-    # Layer 2 render
-    _render_comparison_overview(comparison_data, lang_zh)
+    # === Step 4: PROMINENT 4-dim hero section (v1.12.0a) ===
+    # Render the 4-dimension comparison BEFORE delegating to Comparison Arena.
+    # This way the 4-dim view is hero-positioned, not buried in Top Picks.
+    _render_four_dim_hero(bundles_with_eval, eval_scores_dict, lang_zh)
+
+    # === Step 5: DELEGATE to main file's existing Comparison Arena ===
+    # render_comparison_section handles:
+    #   - Winner card
+    #   - Opportunity radar
+    #   - 3-tile hero (strongest / best 1Y / best news)
+    #   - Comparison overview cards (now with 4-dim chip strip per v1.12.0)
+    #   - Comparison focus detail
+    valid_tickers = [b["ticker"] for b in bundles_with_eval]
+
+    # We need to push eval_scores INTO the bundles that render_comparison_section
+    # will re-build via collect_ticker_context. Approach: monkey-patch by
+    # storing eval_scores in session_state for retrieval inside main file's
+    # build_comparison_digest_items, OR pre-populate a session_state key.
+    # SIMPLEST: render_comparison_section re-creates bundles, so we use a
+    # session-state side-channel.
+    st.session_state["_comparison_eval_scores_side_channel"] = eval_scores_dict
+
+    try:
+        render_comparison_section(daily_data, intraday_data, valid_tickers)
+    except Exception as exc:
+        st.error(
+            f"Comparison Arena 渲染失敗:{exc}"
+            if lang_zh else
+            f"Comparison Arena render failed: {exc}"
+        )
+        return
+    finally:
+        # Clean up side channel
+        st.session_state.pop("_comparison_eval_scores_side_channel", None)
 
     # Tomorrow note
     tomorrow_msg = (
         "🚧 Layer 3「深入工作台」明天上線,可點某一檔進完整工作台看新聞 / 評估卡 / 警示層"
         if lang_zh else
-        "🚧 Layer 3 (deep-dive workspace tabs) coming tomorrow — click into each ticker for full workspace"
+        "🚧 Layer 3 (deep-dive workspace tabs) coming tomorrow"
     )
     render_html_block(
         f'<div style="font-size:12px;color:#98a2b8;font-style:italic;margin-top:18px;'

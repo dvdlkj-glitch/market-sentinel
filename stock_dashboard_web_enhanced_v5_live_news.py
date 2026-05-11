@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.11.0
+Version : v1.12.0d
 Updated : 2026-05-11
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,286 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.0d (2026-05-11)  [Force visible button icons + bigger 4-dim chip fonts]
+
+  - User reported after v1.12.0c with inspect screenshot:
+    "只要滑鼠過去白色就會消失看得到 X 的圖案，清空全部 Ticker 也是一樣"
+    Translation: hovering shows the X icon (dark bg, white icon visible);
+    not hovering shows white-on-white invisible button.
+
+  - ROOT CAUSE (confirmed via user's inspect screenshot):
+    Streamlit's default light theme on Streamlit Cloud renders secondary
+    buttons with white background AND white text/icon by default. The
+    icon only becomes visible on hover (when bg switches to dark).
+    This is a Streamlit theme bug, not our code. Affects:
+      * All :material/close: icon buttons in remove-ticker chips
+      * The 🗑 clear-all ticker button
+
+  Fix 1 — Force visible content in remove + clear-all buttons (Bug 1):
+    Scoped CSS targeting the specific button keys via [data-testid] or
+    class injection. The CSS sets:
+      - button text color → dark
+      - button SVG fill/stroke → dark
+      - button background → semi-transparent so hover still gives feedback
+    Scope is LIMITED to the stock_comparison_dashboard module — we don't
+    affect global Streamlit buttons.
+
+  Fix 2 — Bigger 4-dim mini chip fonts in Top Picks cards (Bug 2):
+    User confirmed Top Picks DOES show 4-dim chips, but they were too small:
+      .compare-digest-eval-strip-title:  11px → 13px
+      .eval-dim-mini:                    11px → 14px
+      .eval-dim-mini-score:              12px → 15px
+      .eval-dim-mini padding:            3px 8px → 5px 11px
+    Also bump the strip label to use color #c2cdde (brighter than #98a2b8)
+    so it stands out more in the card.
+
+v1.12.0c (2026-05-11)  [Bug 2 fix: ticker chip remove buttons (Option D)]
+
+  - User picked Option D for the persistent "✕ 移除" button readability issue:
+    "D. 上面三選一並存 — chip + icon 按鈕 + 清空全部"
+    Translation: keep HTML chip + add Material icon close button per ticker
+    + add a "clear all" button below.
+
+  Implementation:
+    * HTML chip (existing from v1.12.0a) — proper green-outline + dark text
+    * NEW: Per-ticker Material icon close button using
+        st.button("", icon=":material/close:", key=...)
+      Streamlit 1.34+ supports the icon parameter. The empty label + icon
+      produces a compact icon-only button that doesn't suffer the text
+      visibility issue.
+    * NEW: "🗑 清空全部" reset button below all chips. Single click clears
+      st.session_state["_comparison_setup_tickers"] AND
+      st.session_state["_comparison_locked_tickers"] for a clean restart.
+    * Graceful fallback: if the icon parameter is unsupported in the user's
+      Streamlit version, the try/except falls back to plain "✕" text.
+
+  Why all three:
+    - HTML chip: gives clear visual feedback of which tickers are selected
+    - Icon close button: lets user remove individual ticker without restart
+    - Clear-all: handles the case where user wants a fresh start (common
+      when comparing 2-3 names then wanting to compare a different set)
+
+v1.12.0b (2026-05-11)  [Hotfix: 4-dim hero now uses shared daily_data — no race conditions]
+
+  - User reported after v1.12.0a:
+    1. ✅ Ticker chips now visible (green outline + dark text — Bug 2 from
+       previous report)
+    2. ❌ 4-dim hero only shows 1/3 tickers ("僅 1 檔可評") even though
+       Comparison Arena shows all 3 — same ticker fetch issue we keep hitting
+    3. ❌ "✕ 移除" button still has Streamlit theme conflict (white-on-white)
+
+  Root cause of #2:
+    v1.12.0a's _fetch_eval_scores_parallel calls fetch_daily_data([ticker])
+    INDEPENDENTLY per-ticker via ThreadPool. This re-fetches data that the
+    main flow already has in daily_data. The independent re-fetch is subject
+    to all the yfinance flakiness we've been fighting (2454 / 2308 / etc).
+
+    Fix: Don't re-fetch. Instead, RE-USE the already-fetched daily_data
+    (multi-ticker batch DataFrame from main flow) and slice per-ticker via
+    get_series. This means:
+      - 1 yfinance call total for the whole comparison (already done)
+      - 0 race conditions, 0 retries, 0 cache poisoning
+      - 4-dim hero data MATCHES Comparison Arena data exactly
+
+  Fix details:
+    * New helper: _build_daily_df_from_shared_data(daily_data, ticker, get_series)
+      Same logic as before but operates on already-fetched DataFrame.
+    * _fetch_eval_scores_parallel renamed → _compute_eval_scores_from_shared
+      Now takes daily_data + get_series as args. ThreadPool still used to
+      parallelize the SCORE COMPUTATION (technical/value/growth/chip)
+      across tickers — yfinance.info for value/growth fetch is the only
+      remaining external call, and it's per-ticker (~0.3s each).
+    * _render_four_dim_hero signature unchanged — caller passes scores dict.
+
+  Note about Bug 2 (✕ button readability):
+    NOT fixed in this hotfix — awaiting user pick of approach A/B/C/D.
+    Will fix in next patch.
+
+v1.12.0a (2026-05-11)  [Hotfix: 4-dim chip strip prominence + ticker chip readability]
+
+  - User reported after v1.12.0:
+    1. ✅ MAJOR WIN: Comparison Arena delegation works, all 3 tickers
+       (2308 / 2454 / 0050) fetched successfully — fetch bug FIXED
+    2. ❌ 4-dim chip strip missing (or buried) — user saw only the
+       compare-shell hero (智慧比較 / 勝出卡 / 目前領先者 / 最接近的對手
+       / 鏡頭調整 / 催化優勢), no 4-dim chips visible in screenshot
+    3. ❌ Selected ticker chips show invisible white text on white bg
+       (Streamlit button theme conflict — 2308.TW / 2454.TW / 0050.TW
+       are barely visible in the chips)
+
+  Fix 1 — 4-dim chip strip visibility:
+    The 4-dim chips DO render inside render_comparison_overview_cards
+    (Top Picks section) — but that's BELOW the compare-shell hero,
+    requiring scroll. User likely didn't scroll down to see it.
+    NEW: Add a PROMINENT 4-dim summary section IN THE STOCK COMPARISON
+    DASHBOARD ITSELF, rendered BEFORE delegating to render_comparison_section.
+    This way the 4-dim comparison is hero-positioned, not buried.
+
+  Fix 2 — Ticker chip readability:
+    Streamlit st.button uses theme colors that result in white text on
+    white background. v1.12.0 used "❌ 2308.TW" as button label which
+    made the ticker invisible.
+    NEW: Render the ticker as an HTML chip (full control of colors),
+    then put a separate small "✕ 移除" button below for the remove action.
+    The ticker name is now ALWAYS readable (dark contrast text on green-tinted
+    bg with green border).
+
+v1.12.0 (2026-05-11)  [Comparison Dashboard refactor — reuse existing Comparison Arena + add 4-dim layer]
+
+  - User feedback after v1.11.0b:
+    "還是有問題，是否可以參考原本的 Dashboard 比較的功能然後再帶入這
+     4 個維度的資訊對比"
+    Translation: still has issues; please reference the EXISTING comparison
+    feature in the dashboard (Comparison Arena with winner card + opportunity
+    radar + 3-tile hero) and integrate the 4-dimension data into it.
+
+  - Also still seeing fetch failures for some tickers (0050.TW + 2308.TW
+    failed in test). Multi-cause hypothesis:
+      * 0050.TW is an ETF, yfinance batch behaves differently
+      * 2308.TW is a known yfinance flake (similar to 2454)
+      * fetch_daily_data is @st.cache_data(ttl=1800) — failures get cached
+
+  - This release does BOTH refactor + fetch fix:
+
+  PART 1 — Refactor to reuse Comparison Arena:
+    * Stock Comparison dashboard now calls the main file's existing
+      render_comparison_section() (line 27645) directly
+    * That brings:
+        - 🏆 Winner card (existing, gorgeous)
+        - 🎯 Opportunity radar (existing)
+        - 3-tile hero: strongest pro setup / best 1Y return / best news pulse
+        - Comparison overview cards (digest_items)
+        - Focus detail
+    * Visual now consistent with rest of dashboard (no separate look)
+
+  PART 2 — Add 4-dimension layer:
+    * NEW: render_comparison_overview_cards in main file gets a 4-dim chip
+      strip appended to each card (tech/value/growth/chip mini bars)
+    * 4-dim "winner" added as a 4th hero tile when scores are available
+      ("📊 4 維度綜合最強" / "📊 Best 4-Dim Composite")
+    * Eval card scores attached to digest_items["eval_scores"]
+
+  PART 3 — Fetch robustness:
+    * Switched from custom _build_daily_df_for_ticker to using main file's
+      fetch_daily_data with the FULL batch of selected tickers
+    * Cache key is now (sorted_tickers_tuple, period, interval) which means
+      one cache entry for the entire comparison
+    * Retry: if any ticker's data is missing from the batch, do a second
+      individual fetch with verify=False
+    * ETF handling: ETFs (e.g. 0050.TW) detected and fetched separately
+      since yfinance batch sometimes drops them
+
+  PART 4 — Critical: stock_comparison_dashboard.py becomes a THIN wrapper:
+    * Layer 1 (ticker setup) stays the same — selection UI
+    * Layer 2 — instead of custom render, delegates to render_comparison_section
+    * Eval card scores fetched in parallel (ThreadPool, max_workers=5)
+    * Then attached to bundles via bundle["eval_scores"] before passing to
+      render_comparison_section()
+
+  TESTING:
+    8 smoke tests cover: full flow, ETF handling, retry, digest_items with
+    eval_scores attached, 4-dim hero tile generation, graceful partial data.
+
+v1.11.0b (2026-05-11)  [Comparison fetch reliability + bigger fonts]
+
+  - User reported after v1.11.0a:
+    1. Bug — when comparing 2317 + 2454, 2454.TW fetch failed
+       (verdict "僅 1 檔,無對比"). 2330+2317 worked fine.
+    2. UX — fonts in the comparison table feel too small
+
+  Fix 1 — fetch reliability:
+    Root cause analysis:
+      * v1.11.0a's _build_daily_df_for_ticker called
+          fetch_daily_data(["^TWII", ticker], "1y", "1d")
+        The intent was "batch the index call with the ticker call so the
+        cache is shared." But this is misguided:
+          (a) fetch_daily_data is @st.cache_data(ttl=1800) — every distinct
+              list key creates a separate cache entry, so adding ^TWII doesn't
+              actually share cache; it just creates 2x cache entries (one
+              per ticker).
+          (b) yfinance's batch API behaves differently for batch vs single,
+              and some tickers (e.g. 2454.TW) fail silently in batch mode
+              while working fine in single mode. This appears to be a
+              yfinance quirk with certain low-volume sessions or split-adjust
+              edge cases.
+          (c) If batch fails on day N, the failure is cached for 30 min
+              (ttl=1800) — so retries are useless.
+
+      Fix:
+        * Drop the "^TWII batch" hack — call fetch_daily_data([ticker], ...)
+          with just the single ticker
+        * Add 1-retry with 0.6s pause if first call returns empty
+          (handles yfinance's transient hiccups)
+        * If still empty after retry, return None gracefully
+          (the comparison still works for other tickers)
+
+  Fix 2 — bigger fonts in comparison table:
+    * Ranking score: 24px → 28px
+    * Ranking ticker name: 15px → 17px
+    * Comparison table cells: 13px → 15px
+    * Comparison table headers: 12px → 14px
+    * Insights items: 13px → 14px
+    * Verdict line: gets H3-equivalent emphasis
+    * Mobile breakpoint adjusted accordingly
+
+  Testing:
+    9 smoke tests still pass + new test cases for retry behavior.
+
+v1.11.0a (2026-05-11)  [Hotfix: comparison dashboard usability + UX consistency]
+
+  - User reported 3 issues after pushing v1.10.0:
+    1. ❌ "Dashboard 選項這個對比的 Dashboard 沒有 emoji"
+       → Missing emoji on the "個股對比與建議" mode option (other modes
+         have 🏆/🎯/⚡/📈)
+    2. ❌ "自己輸入 Ticker 和 + 加入不平行"
+       → "Enter ticker" input + "Add" button visually misaligned
+    3. 🐛 "所有 ticker 的資料抓取都失敗"  (CRITICAL)
+       → ALL fetches failing; no ranking displayed
+
+  - User also issued a project-wide rule:
+       "以後在我整個 Dashboard 開發,只要需要展開或收起都必須只能用這種按鈕式
+        的展開和收起,Default 都是 Off,使用這自己展開"
+     Translation: ALL future expand/collapse mechanisms must use the
+     st.toggle pattern (default OFF) rather than st.expander.
+     Applied per option B (recommended): convert NEW features only,
+     leave legacy expanders for future migration when touched.
+
+  Fix 1 — emoji on mode option:
+    * Added "Stock Comparison": "📊" to _mode_label emoji_map at line ~11733
+    * Now displays "📊 個股對比與建議" in the dashboard mode selector
+
+  Fix 2 — input + button alignment:
+    * Moved the input label to a separate markdown line ABOVE the row
+    * text_input now uses label_visibility="collapsed"
+    * Both controls in st.columns([4, 1]) and now vertically align
+
+  Fix 3 — fetch bug (CRITICAL):
+    * Root cause: in stock_comparison_dashboard.py, called
+        fetch_daily(ticker)
+      but main file's signature is
+        fetch_daily_data(tickers: list[str], period: str, interval: str)
+      AND it returns a multi-ticker DataFrame (yfinance batch),
+      not a single-ticker OHLCV frame.
+    * Fix: introduced _build_daily_df_for_ticker() helper that:
+        - Calls fetch_daily_data(["^TWII", ticker], "1y", "1d")
+          (batched with TAIEX to share the yfinance call)
+        - Uses main file's get_series() to extract Open/High/Low/Close/Volume
+        - Concatenates into the format _fetch_eval_card_data expects
+        - Returns None if <30 rows (graceful fail)
+
+  Toggle migration:
+    * "📋 從 Watchlist 加入" expander → st.toggle (default OFF)
+    * "🔗 從供應鏈組群加入" expander → st.toggle (default OFF)
+    * Same pattern as v1.10.30 evaluation card toggle:
+        - When OFF: show hint text in italic gray
+        - When ON: show the actual multi-select / picker
+        - Toggle key is unique per section
+    * Future expand/collapse in new features WILL follow this pattern.
+
+  Testing: 9 smoke tests still pass + 1 new test for the new
+  _build_daily_df_for_ticker helper (verifies it handles multi-ticker
+  yfinance DataFrame structure).
 
 v1.11.0 (2026-05-11)  [NEW: Stock Comparison & Recommendation Dashboard]
 
@@ -11730,6 +12010,7 @@ def render_top_dashboard_selectors() -> None:
                 "Active ETF Lab":     "🎯",
                 "Supply Chain Lab":   "⚡",
                 "Taiwan Futures Lab": "📈",
+                "Stock Comparison":   "📊",
             }
             return f"{emoji_map.get(value, '•')}  {base}"
         selected_mode = st.selectbox(
@@ -25516,6 +25797,60 @@ def inject_comparison_digest_css():
                 justify-content: flex-start;
             }
         }
+        /* v1.12.0: 4-dimension mini chip strip inside compare-digest cards */
+        .compare-digest-eval-strip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 12px 0 10px 0;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.028);
+            border-radius: 10px;
+            border: 1px solid rgba(96, 140, 200, 0.14);
+            flex-wrap: wrap;
+        }
+        .compare-digest-eval-strip-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #c2cdde;
+            letter-spacing: 0.03em;
+            margin-right: 4px;
+        }
+        .eval-dim-mini {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 11px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .eval-dim-mini-label {
+            opacity: 0.85;
+        }
+        .eval-dim-mini-score {
+            font-family: 'SF Mono', Menlo, monospace;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        .eval-dim-mini-good {
+            background: rgba(82, 196, 138, 0.18);
+            color: #6dc28a;
+        }
+        .eval-dim-mini-mid {
+            background: rgba(199, 178, 108, 0.20);
+            color: #d4be7b;
+        }
+        .eval-dim-mini-poor {
+            background: rgba(232, 103, 103, 0.20);
+            color: #e98787;
+        }
+        .eval-dim-mini-na {
+            background: rgba(108, 118, 134, 0.20);
+            color: #98a2b8;
+            font-style: italic;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -25572,11 +25907,15 @@ def _comparison_digest_thesis(item: dict) -> str:
 
 def build_comparison_digest_items(bundles: list[dict], lens_meta: dict | None = None) -> list[dict]:
     digest_items: list[dict] = []
+    # v1.12.0: Stock Comparison dashboard may set this side channel
+    side_channel_scores = st.session_state.get("_comparison_eval_scores_side_channel", {})
     for bundle in bundles:
         analysis = bundle["analysis"]
         intraday = bundle["intraday"]
         brief = build_decision_brief(analysis, intraday, bundle.get("news_items", []))
         lens_fields = compute_lens_winner_fields(bundle, lens_meta)
+        # v1.12.0: try bundle first, then side channel
+        eval_scores = bundle.get("eval_scores") or side_channel_scores.get(bundle["ticker"])
         item = {
             "bundle": bundle,
             "ticker": bundle["ticker"],
@@ -25590,6 +25929,9 @@ def build_comparison_digest_items(bundles: list[dict], lens_meta: dict | None = 
             "one_year_return": analysis.get("one_year_return", pd.NA),
             "intraday_change": intraday.get("change_pct", pd.NA),
             "intraday_available": bool(intraday.get("available")),
+            # v1.12.0: pass through eval_card 4-dim scores if attached upstream
+            # (from Stock Comparison dashboard, which fetches eval_card in parallel)
+            "eval_scores": eval_scores,
         }
         item["thesis"] = _comparison_digest_thesis(item)
         digest_items.append(item)
@@ -25628,6 +25970,43 @@ def render_comparison_overview_cards(digest_items: list[dict]):
         if idx == 0:
             card_classes += " is-spotlight"
         rank_badge = "Top 1" if idx == 0 else f"#{int(item['rank']):02d}"
+
+        # v1.12.0: build 4-dimension chip strip if eval_scores present
+        eval_strip_html = ""
+        eval_scores = item.get("eval_scores")
+        if eval_scores:
+            dim_labels_zh = {"tech": "技", "value": "價", "growth": "成", "chip": "籌"}
+            dim_labels_en = {"tech": "T", "value": "V", "growth": "G", "chip": "C"}
+            dim_labels = dim_labels_zh if lang_zh else dim_labels_en
+            chip_items = []
+            for dim_key in ("tech", "value", "growth", "chip"):
+                dim_data = eval_scores.get(dim_key)
+                if dim_data is None:
+                    chip_items.append(
+                        f'<span class="eval-dim-mini eval-dim-mini-na">'
+                        f'<span class="eval-dim-mini-label">{escape(dim_labels[dim_key])}</span>'
+                        f'<span class="eval-dim-mini-score">—</span></span>'
+                    )
+                    continue
+                score = dim_data.get("overall_score", 0)
+                if score >= 7:
+                    cls = "eval-dim-mini-good"
+                elif score >= 4:
+                    cls = "eval-dim-mini-mid"
+                else:
+                    cls = "eval-dim-mini-poor"
+                chip_items.append(
+                    f'<span class="eval-dim-mini {cls}">'
+                    f'<span class="eval-dim-mini-label">{escape(dim_labels[dim_key])}</span>'
+                    f'<span class="eval-dim-mini-score">{score:.1f}</span></span>'
+                )
+            eval_strip_html = (
+                '<div class="compare-digest-eval-strip">'
+                f'<span class="compare-digest-eval-strip-title">{"4 維度評估" if lang_zh else "4-Dim Eval"}</span>'
+                + "".join(chip_items)
+                + '</div>'
+            )
+
         cards_html.append(
             "".join(
                 [
@@ -25640,6 +26019,7 @@ def render_comparison_overview_cards(digest_items: list[dict]):
                     f'<div class="compare-digest-name">{escape(display_ticker_label(item["ticker"]))}</div>',
                     f'<div class="compare-digest-price">{format_price(analysis.get("last_price", pd.NA))}</div>',
                     f'<div class="compare-digest-thesis">{escape(item["thesis"])}</div>',
+                    eval_strip_html,
                     '<div class="compare-digest-metrics">',
                     f'<div class="compare-digest-metric"><div class="compare-digest-metric-label">{t("lens_score")}</div><div class="compare-digest-metric-value">{item["lens_score"]:+d}</div></div>',
                     f'<div class="compare-digest-metric"><div class="compare-digest-metric-label">{t("trend_1y")}</div><div class="compare-digest-metric-value">{format_percent(item["one_year_return"])}</div></div>',
