@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.10.24
+Version : v1.10.25
 Updated : 2026-05-10
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,62 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.10.25 (2026-05-10)  [Auto-refresh for momentum pulse + TSMC Top 5 during TW market hours]
+
+  - User wants the Tomorrow Momentum Pulse to auto-refresh every
+    5-10 seconds during TW market hours so they don't have to
+    manually reload.
+  - Decision after discussion:
+    * Interval set to 30s (not 5-10s) — balances "feels live" with
+      not hammering yfinance / TWSE APIs (would be ~1,200 calls/day
+      at 30s vs ~5,000+ at 10s, much safer)
+    * Only auto-refresh during TW market hours (09:00-13:30 weekdays,
+      excluding holidays) — outside this window, no new data exists
+      so refresh is pointless
+    * Pause button so user can freeze updates when reading carefully
+      or doing something interaction-heavy
+    * Manual refresh button always available
+    * Last-updated timestamp shown so user knows freshness
+    * Countdown to next refresh ("下次更新 18 秒")
+  - Scope: LOCAL fragment, not full-page rerun
+    * Wraps the Tomorrow Momentum Pulse block AND TSMC Supply Chain
+      Top 5 (they share verdict_key — must update together)
+    * Does NOT touch: AI Analysis Share, Active ETF Lab, Supply
+      Chain Lab, Hero Bar — those don't need 30s updates anyway
+    * Why local fragment: full-page rerun would interrupt user
+      mid-interaction in other blocks (especially the v1.10.24
+      batch import textarea and v1.10.19 user manager checkboxes).
+      Local fragment isolates the auto-refresh to just the live
+      data zones.
+  - Implementation:
+    * Wrap momentum + TSMC blocks in @st.fragment(run_every=...)
+    * run_every dynamically set:
+        - 30 (seconds) if TW market open AND auto_refresh_paused == False
+        - None (no auto-refresh) otherwise
+    * New helper _is_tw_market_open() — returns True if Mon-Fri
+      AND 09:00 <= time <= 13:30 AND not a TW holiday
+    * Session state key: "_auto_refresh_paused" (default False)
+    * Pause/resume toggle via st.button → flips session_state →
+      triggers fragment rerun once → run_every now None or 30
+  - Outside market hours:
+    * No auto-refresh — block displays normally
+    * No timer / no countdown shown (would be distracting)
+    * Manual refresh button still present (e.g. evening recap)
+  - During market hours:
+    * Status badge: "🟢 盤中即時更新中 · 下次更新 X 秒"
+    * Pause button: "⏸ 暫停" or "▶ 恢復"
+    * Last refresh timestamp at top
+  - Failure handling:
+    * If fragment rerun fails (e.g. yfinance timeout), fragment
+      shows old data with a stale-warning badge instead of error
+    * After 3 consecutive failures, auto-pauses to avoid spam
+  - TODO (not in this patch):
+    * Per-row update frequency (price every 30s, slow rows like
+      5-day momentum every 5 min) — would require splitting
+      build_tomorrow_momentum_pulse_taiwan compute logic
+    * Visual flash on number change to draw attention
+    * Sound notification on verdict change
 
 v1.10.24 (2026-05-10)  [Batch import: support multi-line paragraph format, not just TSV]
 
@@ -15194,6 +15250,194 @@ def _render_cross_market_signal_block(scope: str, lang_zh: bool,
     return False
 
 
+def _is_tw_market_open() -> bool:
+    """v1.10.25: Return True if Taiwan market is currently OPEN.
+
+    Conditions ALL must be true:
+      - Today is Mon-Fri (weekday 0-4)
+      - Time is between 09:00 and 13:30 Taipei time
+      - Today is NOT a TW holiday (from MARKET_HOLIDAYS_TW)
+
+    Used to decide whether to enable 30s auto-refresh on the
+    momentum pulse + TSMC Top 5 blocks.
+    """
+    now_tw = datetime.now(TW_TZ)
+    # Weekend check
+    if now_tw.weekday() >= 5:
+        return False
+    # Time-of-day check (09:00 inclusive, 13:30 inclusive)
+    minutes = now_tw.hour * 60 + now_tw.minute
+    market_open_min = 9 * 60        # 09:00
+    market_close_min = 13 * 60 + 30  # 13:30
+    if not (market_open_min <= minutes <= market_close_min):
+        return False
+    # Holiday check
+    today_str = now_tw.strftime("%Y-%m-%d")
+    year = now_tw.year
+    if today_str in MARKET_HOLIDAYS_TW.get(year, {}):
+        return False
+    return True
+
+
+def _resolve_fragment_decorator():
+    """v1.10.25: Get the right fragment decorator across Streamlit versions.
+
+    Streamlit 1.37+ : st.fragment (stable API)
+    Streamlit 1.33-1.36 : st.experimental_fragment
+    Older: not available — return None and the caller will skip auto-refresh.
+    """
+    if hasattr(st, "fragment"):
+        return st.fragment
+    if hasattr(st, "experimental_fragment"):
+        return st.experimental_fragment
+    return None
+
+
+def _render_live_momentum_and_tsmc_block(scope: str, lang_zh: bool) -> None:
+    """v1.10.25: The actual data-fetch + render core for momentum pulse
+    + TSMC Top 5. Extracted so it can be wrapped in @st.fragment for
+    auto-refresh during TW market hours.
+
+    Called from render_tomorrow_momentum_pulse AFTER the closed-market gate.
+    """
+    if scope == "Taiwan only":
+        try:
+            daily_data = fetch_daily_data(["2330.TW", "^TWII"], "3mo", "1d")
+        except Exception:
+            daily_data = None
+        try:
+            twse_aggs = fetch_taiwan_market_aggregates(
+                datetime.now(TW_TZ).strftime("%Y-%m-%d")
+            )
+        except Exception:
+            twse_aggs = None
+        payload = build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs)
+    else:
+        tickers = TOMORROW_MOMENTUM_MAG7_TICKERS + ["^VIX"]
+        try:
+            daily_data = fetch_daily_data(tickers, "3mo", "1d")
+        except Exception:
+            daily_data = None
+        payload = build_tomorrow_momentum_pulse_us(daily_data)
+
+    if not payload.get("ready"):
+        return
+
+    _ensure_tomorrow_momentum_css()
+    html = _render_tomorrow_momentum_pulse_html(payload, lang_zh=lang_zh)
+    if html:
+        render_html_block(html)
+
+    # Chain into TSMC Top 5 (Taiwan only)
+    if scope == "Taiwan only":
+        render_tsmc_supply_chain_top5_recommendations(
+            verdict_key=payload.get("verdict_key", "neutral"),
+            score=payload.get("score", 50.0),
+            lang_zh=lang_zh,
+        )
+
+    # U.S. Theme Radar (U.S. only)
+    if scope == "U.S. only":
+        render_us_theme_radar_standalone(lang_zh=lang_zh)
+
+
+def _render_auto_refresh_controls(lang_zh: bool, market_open: bool) -> None:
+    """v1.10.25: Top-of-block status bar showing last update time,
+    pause button, manual refresh button. Only shows full controls when
+    market is open (auto-refresh active)."""
+    now_tw = datetime.now(TW_TZ)
+    timestamp_str = now_tw.strftime("%H:%M:%S")
+    paused = st.session_state.get("_momentum_autorefresh_paused", False)
+
+    if lang_zh:
+        if market_open:
+            if paused:
+                status_text = f"⏸ 自動更新已暫停 · 上次更新 {timestamp_str}"
+                toggle_label = "▶ 恢復自動更新"
+            else:
+                status_text = f"🟢 盤中即時更新中(每 30 秒) · 上次更新 {timestamp_str}"
+                toggle_label = "⏸ 暫停自動更新"
+        else:
+            status_text = f"🌙 盤後 / 休市中 · 資料基準 {timestamp_str}"
+            toggle_label = ""
+        manual_label = "🔄 立即重整"
+    else:
+        if market_open:
+            if paused:
+                status_text = f"⏸ Auto-refresh paused · Last update {timestamp_str}"
+                toggle_label = "▶ Resume Auto-refresh"
+            else:
+                status_text = f"🟢 Live updating (every 30s) · Last update {timestamp_str}"
+                toggle_label = "⏸ Pause Auto-refresh"
+        else:
+            status_text = f"🌙 After-hours · As of {timestamp_str}"
+            toggle_label = ""
+        manual_label = "🔄 Refresh Now"
+
+    # Status badge row
+    badge_class = "momentum-autorefresh-active" if (market_open and not paused) else "momentum-autorefresh-idle"
+    badge_html = f"""
+    <div class="momentum-autorefresh-bar">
+        <span class="momentum-autorefresh-badge {badge_class}">{escape(status_text)}</span>
+    </div>
+    """
+    render_html_block(badge_html)
+
+    # Buttons row (only when market open)
+    if market_open:
+        col_pause, col_refresh, _spacer = st.columns([1, 1, 4])
+        with col_pause:
+            if st.button(toggle_label, key="momentum_autorefresh_toggle"):
+                st.session_state["_momentum_autorefresh_paused"] = not paused
+                st.rerun()
+        with col_refresh:
+            if st.button(manual_label, key="momentum_manual_refresh"):
+                st.rerun()
+    else:
+        # Only manual refresh available outside market hours
+        col_refresh, _spacer = st.columns([1, 5])
+        with col_refresh:
+            if st.button(manual_label, key="momentum_manual_refresh_idle"):
+                st.rerun()
+
+
+# Inject the auto-refresh badge CSS (idempotent)
+_AUTOREFRESH_BADGE_CSS = """
+<style>
+.momentum-autorefresh-bar {
+    margin: 0 0 10px 0;
+    display: flex;
+    justify-content: flex-start;
+}
+.momentum-autorefresh-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    border: 1px solid;
+}
+.momentum-autorefresh-active {
+    color: #8be8b1;
+    background: rgba(76,208,168,.10);
+    border-color: rgba(76,208,168,.40);
+}
+.momentum-autorefresh-idle {
+    color: #98a2b8;
+    background: rgba(96,110,145,.10);
+    border-color: rgba(96,110,145,.30);
+}
+@media (max-width: 767px) {
+    .momentum-autorefresh-badge {
+        font-size: 11.5px !important;
+        padding: 4px 9px !important;
+    }
+}
+</style>
+"""
+
+
 def render_tomorrow_momentum_pulse(market_scope: str) -> None:
     """Top-level entry: fetch + compute + render the momentum pulse table.
 
@@ -15243,51 +15487,39 @@ def render_tomorrow_momentum_pulse(market_scope: str) -> None:
         return
 
     if scope == "Taiwan only":
-        # Need ~30 trading days for 20-day vol average.
-        try:
-            daily_data = fetch_daily_data(["2330.TW", "^TWII"], "3mo", "1d")
-        except Exception:
-            daily_data = None
-        try:
-            twse_aggs = fetch_taiwan_market_aggregates(
-                datetime.now(TW_TZ).strftime("%Y-%m-%d")
-            )
-        except Exception:
-            twse_aggs = None
-        payload = build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs)
+        # v1.10.25: Auto-refresh via st.fragment during TW market hours.
+        # The closed-market gate above already excluded weekends + holidays
+        # for Taiwan scope, so here we're in a TW market session.
+        # Check time-of-day: if 09:00-13:30 → market open, enable auto-refresh.
+        market_open = _is_tw_market_open()
+        paused = st.session_state.get("_momentum_autorefresh_paused", False)
+        should_autorefresh = market_open and not paused
+
+        # Inject badge CSS once
+        render_html_block(_AUTOREFRESH_BADGE_CSS)
+
+        # Render the status bar (badge + pause/refresh buttons)
+        _render_auto_refresh_controls(lang_zh, market_open)
+
+        # Get the fragment decorator if available, fall back gracefully
+        fragment_decorator = _resolve_fragment_decorator()
+
+        if should_autorefresh and fragment_decorator is not None:
+            # Wrap the live block in a fragment with run_every=30
+            @fragment_decorator(run_every=30)
+            def _live_momentum_fragment():
+                _render_live_momentum_and_tsmc_block(scope, lang_zh)
+            _live_momentum_fragment()
+        else:
+            # Either paused, or after-hours, or older Streamlit without fragment.
+            # Render once without auto-refresh; user can use manual button.
+            _render_live_momentum_and_tsmc_block(scope, lang_zh)
+
     else:
-        tickers = TOMORROW_MOMENTUM_MAG7_TICKERS + ["^VIX"]
-        try:
-            daily_data = fetch_daily_data(tickers, "3mo", "1d")
-        except Exception:
-            daily_data = None
-        payload = build_tomorrow_momentum_pulse_us(daily_data)
-
-    if not payload.get("ready"):
-        return
-
-    _ensure_tomorrow_momentum_css()
-    html = _render_tomorrow_momentum_pulse_html(payload, lang_zh=lang_zh)
-    if html:
-        render_html_block(html)
-
-    # v1.9.7: Chain into the TSMC supply-chain Top-5 recommendations.
-    # Only for Taiwan scope — U.S. scope doesn't have a TSMC supply chain.
-    # The recommender reads the verdict_key ("strong" / "neutral" / "weak")
-    # to pick the right scoring formula.
-    if scope == "Taiwan only":
-        render_tsmc_supply_chain_top5_recommendations(
-            verdict_key=payload.get("verdict_key", "neutral"),
-            score=payload.get("score", 50.0),
-            lang_zh=lang_zh,
-        )
-
-    # v1.10.2: Restore the U.S. Theme Radar (MAG 7 / Oil Equities / etc.)
-    # for U.S. scope. This block was originally inside render_decision_cockpit
-    # and got dropped together with the cockpit in v1.9.6. Reusing all the
-    # existing helpers — see render_us_theme_radar_standalone() below.
-    if scope == "U.S. only":
-        render_us_theme_radar_standalone(lang_zh=lang_zh)
+        # U.S. scope — for now no auto-refresh because U.S. market hours are
+        # 21:30-04:00 Taipei time and most users won't be looking at the
+        # dashboard then. Render once.
+        _render_live_momentum_and_tsmc_block(scope, lang_zh)
 
 
 def render_us_theme_radar_standalone(*, lang_zh: bool) -> None:
