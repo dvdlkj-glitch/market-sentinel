@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1c
+Version : v1.12.1d
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,43 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1d (2026-05-12)  [BFI82U row parser - based on ACTUAL TWSE row structure]
+
+  - User ran prefetch v3.1 from Taiwan IP, screenshot showed actual TWSE
+    BFI82U row structure. We FINALLY have ground truth:
+
+      row[01]  '自營商(自行買賣)'           net = -4,752,893,016
+      row[02]  '自營商(避險)'               net = -15,911,256,041
+      row[03]  '投信'                       net = 38,444,831,896
+      row[04]  '外資及陸資(不含外資自營商)'  net = -30,493,779,941
+      row[05]  '外資自營商'                 net = 0
+      row[06]  '合計'                       net = -12,713,097,102
+
+  KEY INSIGHTS we were WRONG about:
+    1. 自營商 has NO "合計" / aggregate row! We must SUM 自行買賣 + 避險.
+    2. There is NO standalone "外資及陸資" aggregate row! Real "外資合計"
+       must SUM 外資及陸資(不含外資自營商) + 外資自營商.
+    3. The "合計" row at the bottom is the GRAND TOTAL (all 5 rows summed),
+       not the foreign subtotal.
+
+  FIX:
+    Replace the strict row matcher with a clean per-subcategory matcher:
+      - Track 4 distinct sub-fields: dealer_self, dealer_hedge,
+        foreign_main (= 外資及陸資 不含外資自營商), foreign_dealer
+      - SUM at the end to produce dealer_value + foreign_value
+      - 投信 still single line, unchanged
+      - "合計" row is explicitly skipped
+
+  Verification (from user's screenshot):
+    dealer_value = -4,752 + -15,911 = -20,664 (≈ -207 億元 in 億 NTD)
+    foreign_value = -30,493 + 0 = -30,493 (≈ -305 億元)
+    trust_value = +384 億元 (already worked from v1.12.1b)
+    Grand total: -207 + 384 + -305 = -128 億 → matches row[06] -12,713
+                 (sanity check: -207 - 305 = -512 + 384 = -128 ✓)
+
+  Tests: 8 smoke tests covering the actual real-world row strings + all
+  combinations of missing rows.
 
 v1.12.1c (2026-05-12)  [CRITICAL fix: v1.12.1b broke ALL TWSE indicators]
 
@@ -13565,11 +13602,26 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
                         }
                 except Exception:
                     pass
-                # Pick out the 3 investor types from the rows.
-                foreign_value: float | None = None
-                trust_value: float | None = None
-                dealer_value: float | None = None
-                seen_dealer = False  # only take the first 自營商 row (aggregate)
+                # v1.12.1d: REAL row parser based on actual TWSE BFI82U dump.
+                # Actual TWSE row structure observed (2026-05-12):
+                #   row[01]  '自營商(自行買賣)'           → dealer sub-row
+                #   row[02]  '自營商(避險)'               → dealer sub-row
+                #   row[03]  '投信'                       → trust single
+                #   row[04]  '外資及陸資(不含外資自營商)' → foreign main
+                #   row[05]  '外資自營商'                 → foreign sub-row
+                #   row[06]  '合計'                       → grand total (skip)
+                #
+                # CRITICAL MATCHER ORDER: row[04] string contains '外資自營商'
+                # as a substring (inside the parenthetical), so we must check
+                # for the row[04] pattern '外資及陸資' BEFORE the plain '外資自營商'.
+                #
+                # NO standalone aggregate row for 自營商 or 外資 exists.
+                # We MUST sum the sub-rows ourselves.
+                dealer_self: float | None = None    # 自營商(自行買賣)
+                dealer_hedge: float | None = None   # 自營商(避險)
+                trust_value: float | None = None    # 投信
+                foreign_main: float | None = None   # 外資及陸資(不含外資自營商)
+                foreign_sub: float | None = None    # 外資自營商
                 for row in rows:
                     investor = str(row[0] or "").strip() if row else ""
                     if not investor:
@@ -13579,43 +13631,60 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
                         net_val = float(net_str) / 1_0000_0000  # 元 -> 億
                     except (ValueError, IndexError):
                         continue
-                    # v1.12.1b: more forgiving 自營商 matcher.
-                    # Match anything that "starts with 自營商" (ignoring spaces)
-                    # but EXCLUDE sub-rows like "自營商(自行買賣)" / "自營商(避險)".
-                    # Take the first match — this is the aggregate 自營商合計.
+                    # Normalize: strip both ASCII + full-width spaces
                     investor_norm = investor.replace(" ", "").replace("　", "")
-                    if not seen_dealer and investor_norm.startswith("自營商"):
-                        # Exclude sub-categories — the AGGREGATE row is either:
-                        #   "自營商" alone, OR "自營商(合計)", OR "自營商合計"
-                        # Sub-categories are:
-                        #   "自營商(自行買賣)", "自營商(避險)", "自營商自行買賣", etc.
-                        is_sub = any(
-                            kw in investor_norm
-                            for kw in ("自行買賣", "避險", "自買")
-                        )
-                        if not is_sub:
-                            dealer_value = net_val
-                            seen_dealer = True
-                            continue
-                    # 投信 — already lenient, kept.
-                    if "投信" in investor:
+                    # Skip the grand-total row explicitly
+                    if investor_norm == "合計" or investor_norm == "總計":
+                        continue
+                    # === 自營商 sub-rows ===
+                    # Note: check sub-rows BEFORE generic 自營商 match.
+                    if "自營商" in investor_norm and ("自行買賣" in investor_norm or "自買" in investor_norm):
+                        dealer_self = net_val
+                        continue
+                    if "自營商" in investor_norm and "避險" in investor_norm:
+                        dealer_hedge = net_val
+                        continue
+                    # === 外資及陸資 main row ===
+                    # CRITICAL: must check BEFORE plain '外資自營商' because
+                    # row[04] ='外資及陸資(不含外資自營商)' contains '外資自營商'
+                    # as a substring inside the parens.
+                    if "外資及陸資" in investor_norm or (
+                        "外資" in investor_norm and "陸資" in investor_norm
+                    ):
+                        foreign_main = net_val
+                        continue
+                    # === 外資自營商 (foreign dealer sub-row, standalone) ===
+                    # Now safe to match: '外資及陸資' was handled above.
+                    if investor_norm == "外資自營商" or (
+                        "外資自營商" in investor_norm and "陸資" not in investor_norm
+                    ):
+                        foreign_sub = net_val
+                        continue
+                    # === 投信 ===
+                    if "投信" in investor_norm:
                         trust_value = net_val
                         continue
-                    # v1.12.1b: more forgiving 外資 matcher.
-                    # Accept "外資及陸資" (aggregate), "外資及陸資合計", etc.
-                    # Exclude sub-rows: 外資自營商, 自買, 避險, (不含外資自營商).
-                    if "外資" in investor and (
-                        "陸資" in investor or "外國" in investor
-                    ):
-                        is_sub = any(
-                            kw in investor_norm
-                            for kw in (
-                                "自營商", "自買", "避險", "不含",
-                            )
-                        )
-                        if not is_sub:
-                            foreign_value = net_val
-                            continue
+                    # === Fallback aggregate 自營商 row (in case TWSE adds one) ===
+                    # Only matches plain "自營商" or "自營商合計" (no sub-keywords),
+                    # which we'd then prefer over our sum.
+                    if investor_norm.startswith("自營商"):
+                        # No sub-keyword matched above → this is some unexpected
+                        # aggregate. Stash it as a sentinel.
+                        # (Currently TWSE doesn't emit this, but we're defensive.)
+                        if dealer_self is None and dealer_hedge is None:
+                            dealer_self = net_val  # treat as the "everything" row
+                        continue
+                # === Aggregate sub-rows into final values ===
+                # 自營商合計 = 自行買賣 + 避險
+                if dealer_self is not None or dealer_hedge is not None:
+                    dealer_value = (dealer_self or 0.0) + (dealer_hedge or 0.0)
+                else:
+                    dealer_value = None
+                # 外資合計 = 外資及陸資(不含外資自營商) + 外資自營商
+                if foreign_main is not None or foreign_sub is not None:
+                    foreign_value = (foreign_main or 0.0) + (foreign_sub or 0.0)
+                else:
+                    foreign_value = None
                 # If we got at least one value for this day, count it as a successful probe.
                 if any(v is not None for v in (foreign_value, trust_value, dealer_value)):
                     if d_index == 0:

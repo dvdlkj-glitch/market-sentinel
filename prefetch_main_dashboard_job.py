@@ -2,9 +2,16 @@
 """
 Main Dashboard Daily Prefetch Job
 ==================================
+Version : v3.1 (2026-05-12)
+Updated : 2026-05-12  — more visible BFI82U dump markers for screenshot-friendly debug
+
 Runs daily via GitHub Actions (.github/workflows/prefetch-daily.yml).
-Fetches snapshot data for both Taiwan-only and U.S.-only market scopes,
-serializes to JSON, and writes to Supabase main_dashboard_snapshot table.
+ALSO runs manually from a Taiwan IP (Windows / Mac local) when GitHub
+Actions runner is blocked by TWSE (403 Forbidden).
+
+Fetches snapshot data for one or both market scopes (Taiwan-only and
+U.S.-only), serializes to JSON, and writes to Supabase main_dashboard_snapshot
+table.
 
 Reuses the dashboard's own functions by importing the module directly.
 This is intentional -- we want byte-for-byte the same data the live
@@ -16,9 +23,24 @@ Environment variables required:
 
 Optional:
     DASHBOARD_MODULE_PATH       — defaults to ./stock_dashboard_web_enhanced_v5_live_news.py
+
+CLI args:
+    --scope "Taiwan only"     Only fetch+upsert Taiwan snapshot. Faster (~30s) and
+                               required when running from a Taiwan IP because the
+                               U.S.-only scope doesn't need TWSE (uses yfinance).
+    --scope "U.S. only"       Only fetch+upsert U.S. snapshot.
+    --scope "all"             Default — fetch both (matches previous behavior).
+    --dry-run                  Build payloads but skip Supabase upsert (testing).
+
+Exit codes:
+    0  All scopes succeeded
+    1  Missing env vars (SUPABASE_URL or _KEY)
+    2  Dashboard module load failed
+    3  One or more scopes had failures (e.g. TWSE 403)
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -113,6 +135,79 @@ class _NullCtx:
 
 
 # ---------------------------------------------------------------------------
+# v2: TWSE per-card health probe
+# ---------------------------------------------------------------------------
+def _probe_tw_market_aggregates(mod) -> dict:
+    """v2: explicitly fetch the TWSE market aggregates and log success/failure
+    per-card. This catches the GitHub-Actions-blocked-by-TWSE case clearly
+    so it shows up in the log instead of being silently swallowed downstream.
+
+    v3 (2026-05-12): Also dumps raw BFI82U row strings so user can see
+    exactly what TWSE returned. This is critical because some investor
+    column variants (外資, 自營商) aren't matching our row parser.
+
+    Returns the aggregates dict (whether or not it was successful).
+    """
+    log("  Probing TWSE market aggregates (台股交易量 / 外資 / 投信 / 自營商)...")
+    try:
+        today_tw = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        aggs = mod.fetch_taiwan_market_aggregates(today_tw)
+        # Health check each field
+        fields_ok = {
+            "turnover (台股交易量)": aggs.get("turnover_value") is not None,
+            "foreign  (外資合計)":     aggs.get("foreign_net") is not None,
+            "trust    (投信買賣超)":   aggs.get("trust_net") is not None,
+            "dealer   (自營商買賣超)": aggs.get("dealer_net") is not None,
+        }
+        ok_count = sum(1 for v in fields_ok.values() if v)
+        for field, ok in fields_ok.items():
+            sym = "✓" if ok else "✗"
+            log(f"    {sym} {field}")
+        # Surface the source so user can see if we're on cache / disk / seed
+        stale = aggs.get("stale", False)
+        stale_source = aggs.get("stale_source", "")
+        err = aggs.get("error", "") or ""
+        if stale:
+            log(f"    ⚠️  Marked stale, source={stale_source}, error={err[:100]}")
+        log(f"    Summary: {ok_count}/4 TWSE indicators fetched OK")
+
+        # v3.1: DIAGNOSTIC — dump raw BFI82U rows with VERY visible markers
+        # so user can easily find + screenshot the rows for matcher debug.
+        try:
+            import streamlit as st  # already stubbed in _patch_streamlit_for_cli
+            debug = st.session_state.get("_bfi82u_last_payload_debug")
+            log("")
+            log("    ##############################################################")
+            log("    #   BFI82U RAW ROW DUMP - SCREENSHOT THIS SECTION FOR CLAUDE")
+            log("    ##############################################################")
+            if debug and debug.get("rows"):
+                log(f"    # date_probed = {debug.get('date_probed', '?')}")
+                log(f"    # row_count   = {len(debug['rows'])}")
+                log("    # ------------------------------------------------------------")
+                for idx, r in enumerate(debug["rows"], start=1):
+                    investor = r.get("investor", "?")
+                    net = r.get("net", "?")
+                    # repr() reveals any hidden whitespace / full-width chars
+                    investor_repr = repr(investor)
+                    log(f"    # row[{idx:02d}]  investor = {investor_repr}")
+                    log(f"    #          net      = {net}")
+                log("    # ------------------------------------------------------------")
+            else:
+                log("    #   NO BFI82U DEBUG ROWS AVAILABLE")
+                log("    #   (likely walked back to a previous day with cache,")
+                log("    #    or the cache_data wrapper served a cached result)")
+            log("    ##############################################################")
+            log("")
+        except Exception as exc:
+            log(f"    (BFI82U dump failed: {type(exc).__name__}: {exc})")
+
+        return aggs
+    except Exception as exc:
+        log(f"    ✗ TWSE probe crashed: {type(exc).__name__}: {exc}")
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Snapshot builders
 # ---------------------------------------------------------------------------
 def build_snapshot_for_scope(mod, market_scope: str) -> dict:
@@ -131,6 +226,10 @@ def build_snapshot_for_scope(mod, market_scope: str) -> dict:
         "fetch_metadata": {"errors": []},
     }
     started = datetime.now(timezone.utc)
+
+    # ---- v2: Probe TWSE FIRST for Taiwan scope so log shows TWSE status early ----
+    if market_scope == "Taiwan only":
+        _probe_tw_market_aggregates(mod)
 
     # ---- 1. Global market indicator ----
     try:
@@ -155,7 +254,29 @@ def build_snapshot_for_scope(mod, market_scope: str) -> dict:
             market_scope=market_scope,
         )
         payload["global_indicator_payload"] = _sanitize_for_json(indicator)
-        log(f"  ✓ Global indicator built ({len(indicator.get('cards', []))} cards)")
+
+        # v2: per-card detail for the indicator
+        cards = indicator.get("cards", []) or []
+        pending_count = sum(1 for c in cards if c.get("is_pending"))
+        disconnected_count = sum(1 for c in cards if c.get("is_disconnected"))
+        ok_count = len(cards) - pending_count - disconnected_count
+        log(f"  ✓ Global indicator built ({len(cards)} cards: "
+            f"{ok_count} OK, {pending_count} pending, {disconnected_count} disconnected)")
+        # Per-card status (helpful when GitHub Actions partially fails)
+        for c in cards:
+            label = c.get("label", "?")
+            ticker = c.get("ticker", "?")
+            if c.get("is_disconnected"):
+                sym = "⊘"
+                status = "disconnected"
+            elif c.get("is_pending"):
+                sym = "⚠"
+                status = "pending"
+            else:
+                sym = "✓"
+                price = c.get("last_price")
+                status = f"price={price}" if price is not None else "ok"
+            log(f"    {sym} {label} ({ticker}): {status}")
     except Exception as exc:
         log(f"  ✗ Global indicator failed: {exc}")
         payload["fetch_metadata"]["errors"].append(
@@ -319,16 +440,37 @@ def upsert_snapshot(payload: dict) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Main Dashboard Daily Prefetch Job (v2)"
+    )
+    parser.add_argument(
+        "--scope",
+        choices=["Taiwan only", "U.S. only", "all"],
+        default="all",
+        help='Which scope(s) to prefetch. Default "all" runs both. '
+             'Use "Taiwan only" when running locally from a Taiwan IP '
+             'because GitHub Actions is being blocked by TWSE 403.',
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build payloads but skip Supabase upsert (testing only)",
+    )
+    args = parser.parse_args()
+
     log("=" * 60)
-    log("Main Dashboard Prefetch Job — start")
+    log(f"Main Dashboard Prefetch Job v2 — start (scope={args.scope}, dry_run={args.dry_run})")
     log("=" * 60)
 
-    if not SUPABASE_URL:
-        log("✗ SUPABASE_URL env var missing")
-        return 1
-    if not SUPABASE_KEY:
-        log("✗ SUPABASE_SERVICE_ROLE_KEY env var missing")
-        return 1
+    if not args.dry_run:
+        if not SUPABASE_URL:
+            log("✗ SUPABASE_URL env var missing")
+            return 1
+        if not SUPABASE_KEY:
+            log("✗ SUPABASE_SERVICE_ROLE_KEY env var missing")
+            return 1
+    else:
+        log("⚠ DRY-RUN mode: Supabase upsert will be SKIPPED.")
 
     try:
         mod = load_dashboard_module()
@@ -337,11 +479,24 @@ def main() -> int:
         log(traceback.format_exc())
         return 2
 
-    scopes = ["Taiwan only", "U.S. only"]
+    # Decide scopes from CLI
+    if args.scope == "all":
+        scopes = ["Taiwan only", "U.S. only"]
+    else:
+        scopes = [args.scope]
+    log(f"Running scopes: {scopes}")
+
     failures = 0
     for scope in scopes:
         try:
             snapshot = build_snapshot_for_scope(mod, scope)
+            if args.dry_run:
+                log(f"⚠ DRY-RUN: skipping upsert for {scope}")
+                # Summarize what would be written
+                gi = snapshot.get("global_indicator_payload") or {}
+                n_cards = len(gi.get("cards", []) or [])
+                log(f"    Would write {n_cards} cards for {scope}")
+                continue
             ok = upsert_snapshot(snapshot)
             if ok:
                 log(f"✓ Wrote snapshot for {scope}")
