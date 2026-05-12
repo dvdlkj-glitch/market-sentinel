@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1
+Version : v1.12.1b
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,99 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1b (2026-05-12)  [BFI82U row matching + diagnostic log + bigger trend chips]
+
+  - User v1.12.1a result revealed a HIDDEN BUG that was masked by v1.12.1's
+    fake seed values:
+       投信買賣超 +125 億  ← TWSE BFI82U row matched 投信 keyword (OK)
+       台股交易量 11,705 億  ← FMTQIK works (OK)
+       外資合計 → 資料準備中 ← BFI82U row 外資 NOT matched (BUG)
+       自營商買賣超 → 資料準備中 ← BFI82U row 自營商 NOT matched (BUG)
+    Conclusion: BFI82U endpoint is fine, but our row parser is too strict
+    on the investor column name. TWSE likely changed something like adding
+    parentheses or whitespace to the row labels.
+
+  Fix 1 — BFI82U row matcher liberalized (line ~13468):
+    Old logic:
+      自營商: investor.startswith("自營商") AND "(" not in investor
+      外資:  "外資" in investor AND "陸資" in investor AND "(" not in investor
+    New logic (v1.12.1b — more forgiving):
+      自營商: investor.replace(空白)startswith "自營商"
+              AND NOT contains 自行買賣 / 避險 / 自買
+              → matches "自營商", "自營商(合計)", "自營商合計", " 自營商 ", etc.
+      外資:  "外資" in investor AND ("陸資" in investor OR "外國" in investor)
+              AND NOT 自營商, NOT 自買, NOT 避險, NOT (不含)
+              → matches "外資及陸資", "外資及陸資合計", etc.
+    投信 already lenient, no change.
+
+  Fix 2 — Diagnostic log:
+    A new st.session_state key "_bfi82u_last_payload_debug" stores the
+    raw investor strings + net values for the most recent BFI82U fetch.
+    A small toggle/expander in the main dashboard (under 台灣市場指標)
+    lets user view this for debugging when something doesn't match.
+    Toggle key: _bfi82u_debug_show, default OFF (no clutter).
+
+  Fix 3 — Indicator state chip enlarged for readability:
+    Old:  font-size: 10px;  padding: 5px 8px;  font-weight: 800
+    New:  font-size: 13px;  padding: 6px 11px; font-weight: 700
+    Applies to ALL global indicator state chips (上升趨勢, 拉回/分歧,
+    下降趨勢 etc).
+
+  Tests: 6 smoke tests covering:
+    - 自營商 row matching: 合計 / 括弧版 / 子類排除
+    - 外資 row matching: 含子類排除
+    - 投信 仍 work
+    - 診斷 dict 結構正確
+    - Indicator chip CSS 大小 verified
+
+v1.12.1a (2026-05-12)  [TW market UI honesty layer — disconnect chip + stale chip + L4 None]
+
+  - User picked "C2" — show "--" + 「資料連線異常」chip when all fallbacks
+    failed, instead of falsely showing fabricated values. This is the
+    HONEST data display:
+      L1/fresh  → real numbers, no chip
+      L2/L3     → real numbers (cached) + amber 📅 stale chip
+      L4/empty  → "--" + red ⚠️ disconnect chip
+
+  Changes (3 layers — data / render / styling):
+
+  1) Data layer — _TW_MARKET_SEED_VALUE:
+     v1.12.1 had seed numbers (3500 turnover, -50 foreign, etc) which could
+     mislead users into thinking those were real data. v1.12.1a sets EVERY
+     numeric field to None so the UI renders "--" rather than fake numbers.
+     stale=True + stale_source="seed_value_L4" are still set so the render
+     layer knows to show the disconnect chip.
+
+  2) Render layer — turnover + 3 institutional cards (line 13874 + 13943):
+     Both card paths now compute:
+        is_stale_from_fallback = tw_aggregates.get("stale")
+        stale_source = tw_aggregates.get("stale_source")
+        is_disconnected = (value is None and stale_source == "seed_value_L4")
+     The card dict gets is_stale + is_disconnected + stale_source flags
+     for the renderer to act on.
+
+  3) UI render — _format_card_value + _format_card_footer:
+     * Disconnected (L4): "--" + red "⚠️ TWSE API 連線失敗,系統正自動重試"
+       chip. No data date shown because there is no real data.
+     * Stale (L2/L3): real numbers + amber "📅 資料日期 YYYY-MM-DD (舊資料)"
+       chip. User sees the date and knows it's not current.
+     * Fresh (L1): real numbers, no chip overlay.
+
+  i18n keys (EN + ZH):
+     "global_market_tw_data_stale": "stale" / "舊資料"
+     "global_market_data_disconnected": "Data disconnected" / "資料連線異常"
+     "global_market_data_disconnected_hint":
+        "TWSE API unreachable — retrying" / "TWSE API 連線失敗,系統正自動重試"
+
+  CSS classes added:
+     .global-indicator-disconnected — large red "--" placeholder
+     .global-indicator-disconnected-chip — red ⚠️ pill (rgba(232,103,103,*))
+     .global-indicator-stale-chip — amber 📅 pill (rgba(245,158,11,*))
+     .global-indicator-stale-icon / .stale-text / .stale-tag — chip parts
+
+  Tests: 8 smoke tests verifying L4 None, flag propagation, render
+  paths, i18n keys, CSS classes, color semantics, both languages.
 
 v1.12.1 (2026-05-12)  [Taiwan market summary persistent fallback — never "資料準備中"]
 
@@ -9551,6 +9644,9 @@ TRANSLATIONS["English"].update({
     "global_market_tw_dealer": "Dealer Net",
     "global_market_tw_data_pending": "Data pending",
     "global_market_tw_as_of": "As of {date}",
+    "global_market_tw_data_stale": "stale",
+    "global_market_data_disconnected": "Data disconnected",
+    "global_market_data_disconnected_hint": "TWSE API unreachable — retrying",
     "global_market_prev_day_close": "Prev close",
     "global_market_prev2_day_close": "2 days ago",
 })
@@ -9580,6 +9676,9 @@ TRANSLATIONS["繁體中文"].update({
     "global_market_tw_dealer": "自營商買賣超",
     "global_market_tw_data_pending": "資料準備中",
     "global_market_tw_as_of": "資料日期 {date}",
+    "global_market_tw_data_stale": "舊資料",
+    "global_market_data_disconnected": "資料連線異常",
+    "global_market_data_disconnected_hint": "TWSE API 連線失敗,系統正自動重試",
     "global_market_prev_day_close": "前一日",
     "global_market_prev2_day_close": "前兩日",
 })
@@ -13409,6 +13508,26 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
             try:
                 payload = _twse_request_json(url)
                 rows = payload.get("data") or []
+                # v1.12.1b: Save raw rows for diagnostic toggle so user can
+                # inspect TWSE's actual investor column values when matching
+                # fails. We only keep the latest fetch (overwrites each call).
+                try:
+                    debug_rows = []
+                    for r in rows:
+                        if r and len(r) >= 4:
+                            debug_rows.append({
+                                "investor": str(r[0] or "").strip(),
+                                "buy": str(r[1] if len(r) > 1 else ""),
+                                "sell": str(r[2] if len(r) > 2 else ""),
+                                "net": str(r[3] if len(r) > 3 else ""),
+                            })
+                    st.session_state["_bfi82u_last_payload_debug"] = {
+                        "date_probed": yyyymmdd,
+                        "row_count": len(rows),
+                        "rows": debug_rows,
+                    }
+                except Exception:
+                    pass
                 # Pick out the 3 investor types from the rows.
                 foreign_value: float | None = None
                 trust_value: float | None = None
@@ -13423,21 +13542,41 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
                         net_val = float(net_str) / 1_0000_0000  # 元 -> 億
                     except (ValueError, IndexError):
                         continue
-                    # 自營商 first (since it appears before 投信 + 外資 in the response).
-                    # The very first 自營商 row IS the aggregate (自營商合計);
-                    # subsequent 自營商(自行買賣) / 自營商(避險) are sub-totals
-                    # that sum to the first one. We take only the first.
-                    if not seen_dealer and investor.startswith("自營商") and "(" not in investor and "（" not in investor:
-                        dealer_value = net_val
-                        seen_dealer = True
-                        continue
+                    # v1.12.1b: more forgiving 自營商 matcher.
+                    # Match anything that "starts with 自營商" (ignoring spaces)
+                    # but EXCLUDE sub-rows like "自營商(自行買賣)" / "自營商(避險)".
+                    # Take the first match — this is the aggregate 自營商合計.
+                    investor_norm = investor.replace(" ", "").replace("　", "")
+                    if not seen_dealer and investor_norm.startswith("自營商"):
+                        # Exclude sub-categories — the AGGREGATE row is either:
+                        #   "自營商" alone, OR "自營商(合計)", OR "自營商合計"
+                        # Sub-categories are:
+                        #   "自營商(自行買賣)", "自營商(避險)", "自營商自行買賣", etc.
+                        is_sub = any(
+                            kw in investor_norm
+                            for kw in ("自行買賣", "避險", "自買")
+                        )
+                        if not is_sub:
+                            dealer_value = net_val
+                            seen_dealer = True
+                            continue
+                    # 投信 — already lenient, kept.
                     if "投信" in investor:
                         trust_value = net_val
                         continue
-                    if "外資" in investor and "陸資" in investor and "外資自營商" not in investor:
-                        # Pick the main "外資及陸資" line, not the sub-line
-                        # "外資及陸資(不含外資自營商)" or "外資自營商".
-                        if "(" not in investor and "（" not in investor:
+                    # v1.12.1b: more forgiving 外資 matcher.
+                    # Accept "外資及陸資" (aggregate), "外資及陸資合計", etc.
+                    # Exclude sub-rows: 外資自營商, 自買, 避險, (不含外資自營商).
+                    if "外資" in investor and (
+                        "陸資" in investor or "外國" in investor
+                    ):
+                        is_sub = any(
+                            kw in investor_norm
+                            for kw in (
+                                "自營商", "自買", "避險", "不含",
+                            )
+                        )
+                        if not is_sub:
                             foreign_value = net_val
                             continue
                 # If we got at least one value for this day, count it as a successful probe.
@@ -13484,28 +13623,30 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
 
 _TW_MARKET_CACHE_FILE = "/tmp/dashboard_tw_market_cache.json"
 
-# L4: seed value — sensible defaults representing a typical trading day.
-# Updated 2026-05-11 (last known good values from user's verified session).
-# These are sensible-shape placeholders, not promised-accurate numbers.
+# L4: seed value — ALL FIELDS NONE (v1.12.1a per user choice "C2").
+# Previously v1.12.1 had fake numbers (3500.0 turnover etc.) which would
+# mislead users into thinking those were real values. We now return None
+# for all fields and let the UI render "--" + a "資料連線異常" disconnect
+# chip so the user can clearly see the data layer failed.
 _TW_MARKET_SEED_VALUE: dict = {
-    "turnover_value": 3500.0,   # 億 NTD (~ NT$3,500 億 is typical recent)
-    "turnover_d1": 3400.0,
-    "turnover_d2": 3300.0,
-    "turnover_change_pct": 2.9,
-    "foreign_net": -50.0,       # 億 NTD (sign matters; mild outflow seed)
-    "foreign_net_d1": -30.0,
-    "foreign_net_d2": 20.0,
-    "trust_net": 15.0,
-    "trust_net_d1": 12.0,
-    "trust_net_d2": 18.0,
-    "dealer_net": 5.0,
-    "dealer_net_d1": 8.0,
-    "dealer_net_d2": -3.0,
-    "data_date": "2026-05-11",
-    "data_date_d1": "2026-05-08",
-    "data_date_d2": "2026-05-07",
+    "turnover_value": None,
+    "turnover_d1": None,
+    "turnover_d2": None,
+    "turnover_change_pct": None,
+    "foreign_net": None,
+    "foreign_net_d1": None,
+    "foreign_net_d2": None,
+    "trust_net": None,
+    "trust_net_d1": None,
+    "trust_net_d2": None,
+    "dealer_net": None,
+    "dealer_net_d1": None,
+    "dealer_net_d2": None,
+    "data_date": None,
+    "data_date_d1": None,
+    "data_date_d2": None,
     "is_today": False,
-    "error": None,
+    "error": "all_fallbacks_failed",
     "stale": True,
     "stale_source": "seed_value_L4",
 }
@@ -13877,7 +14018,16 @@ def build_global_market_indicator(
             value = tw_aggregates.get("turnover_value")
             change_pct = tw_aggregates.get("turnover_change_pct")
             data_date = tw_aggregates.get("data_date")
+            # v1.12.1a: stale + disconnect flags from the persistent fallback wrapper.
+            is_stale = bool(tw_aggregates.get("stale", False))
+            stale_source = tw_aggregates.get("stale_source")
+            # is_disconnected: all fallbacks failed (L4 seed_value, all-None).
+            is_disconnected = (value is None and stale_source == "seed_value_L4")
             if value is None:
+                # Card structure still rendered, but with "--" placeholder values.
+                # is_pending=False so the card doesn't render the legacy "資料準備中"
+                # treatment; instead is_disconnected flag triggers a "資料連線異常"
+                # red chip overlay (added in card-render CSS).
                 cards.append({
                     "ticker": ticker,
                     "label": t(item["label_key"]),
@@ -13886,9 +14036,12 @@ def build_global_market_indicator(
                     "recent_return": float("nan"),
                     "last_price_d1": float("nan"),
                     "last_price_d2": float("nan"),
-                    "state": t("global_market_pullback"),
-                    "trend_emoji": "↔️",
-                    "is_pending": True,
+                    "state": t("global_market_data_disconnected") if is_disconnected else t("global_market_pullback"),
+                    "trend_emoji": "⚠️" if is_disconnected else "↔️",
+                    "is_pending": False,
+                    "is_disconnected": is_disconnected,
+                    "is_stale": is_stale,
+                    "stale_source": stale_source,
                     "data_date": data_date,
                 })
             else:
@@ -13912,6 +14065,8 @@ def build_global_market_indicator(
                     "state": state,
                     "trend_emoji": _trend_emoji_for_state(state),
                     "is_pending": False,
+                    "is_stale": is_stale,
+                    "stale_source": stale_source,
                     "data_date": data_date,
                 })
             continue
@@ -13933,6 +14088,12 @@ def build_global_market_indicator(
             value = tw_aggregates.get(v_key)
             data_date = tw_aggregates.get("data_date")
             is_today = bool(tw_aggregates.get("is_today"))
+            # v1.12.1a: stale + disconnect flags from persistent fallback wrapper
+            is_stale_from_fallback = bool(tw_aggregates.get("stale", False))
+            stale_source = tw_aggregates.get("stale_source")
+            is_disconnected = (value is None and stale_source == "seed_value_L4")
+            # Final is_stale: combine "not today" (existing logic) + fallback layer
+            is_stale = (not is_today) or is_stale_from_fallback
             if value is None:
                 cards.append({
                     "ticker": ticker,
@@ -13942,11 +14103,13 @@ def build_global_market_indicator(
                     "recent_return": float("nan"),
                     "last_price_d1": float("nan"),
                     "last_price_d2": float("nan"),
-                    "state": t("global_market_pullback"),
-                    "trend_emoji": "↔️",
-                    "is_pending": True,
+                    "state": t("global_market_data_disconnected") if is_disconnected else t("global_market_pullback"),
+                    "trend_emoji": "⚠️" if is_disconnected else "↔️",
+                    "is_pending": False,
+                    "is_disconnected": is_disconnected,
                     "data_date": data_date,
-                    "is_stale": not is_today,
+                    "is_stale": is_stale,
+                    "stale_source": stale_source,
                 })
             else:
                 if value >= 0:
@@ -13972,7 +14135,8 @@ def build_global_market_indicator(
                     "trend_emoji": trend_emoji,
                     "is_pending": False,
                     "data_date": data_date,
-                    "is_stale": not is_today,
+                    "is_stale": is_stale,
+                    "stale_source": stale_source,
                 })
             continue
 
@@ -14052,6 +14216,11 @@ def render_global_market_indicator(indicator: dict):
         return
 
     def _format_card_value(card: dict) -> str:
+        # v1.12.1a: is_disconnected (all-fallbacks-failed L4 seed) → show "--"
+        # with a "資料連線異常" chip via _format_card_footer. Keep is_pending
+        # path for legacy callers (e.g. TAIFEX cards which may still set it).
+        if card.get("is_disconnected"):
+            return '<span class="global-indicator-disconnected">--</span>'
         if card.get("is_pending"):
             return f'<span class="global-indicator-pending">{escape(t("global_market_tw_data_pending"))}</span>'
         # v1.6.0: IX0126.TW special handling removed -- 台指期 cards retired,
@@ -14086,7 +14255,29 @@ def render_global_market_indicator(indicator: dict):
         return format_price(value)
 
     def _format_card_footer(card: dict) -> str:
+        # v1.12.1a: disconnect chip ALWAYS visible when all fallbacks failed.
+        # Trumps the stale-date label since there's no date to show.
+        if card.get("is_disconnected"):
+            return (
+                f'<div class="global-indicator-disconnected-chip">'
+                f'⚠️ {escape(t("global_market_data_disconnected_hint"))}'
+                f'</div>'
+            )
         data_date = card.get("data_date")
+        # v1.12.1a: stale chip — data exists but is from L2/L3 fallback layer
+        # (not today). Different from is_disconnected because we DO have data.
+        stale_source = card.get("stale_source")
+        if data_date and card.get("is_stale") and stale_source in ("L2_session", "L3_disk"):
+            return (
+                f'<div class="global-indicator-stale-chip">'
+                f'<span class="global-indicator-stale-icon">📅</span> '
+                f'<span class="global-indicator-stale-text">'
+                f'{escape(t("global_market_tw_as_of", date=data_date))} '
+                f'<span class="global-indicator-stale-tag">'
+                f'({escape(t("global_market_tw_data_stale"))})</span>'
+                f'</span>'
+                f'</div>'
+            )
         if data_date and card.get("is_stale"):
             return (
                 f'<div class="global-indicator-stale-date">'
@@ -14220,6 +14411,39 @@ def render_global_market_indicator(indicator: dict):
     ).strip()
 
     render_html_block(shell_html)
+
+    # v1.12.1b: BFI82U diagnostic toggle — lets user inspect TWSE's actual
+    # investor column values when something doesn't match. Default OFF.
+    debug_data = st.session_state.get("_bfi82u_last_payload_debug")
+    if debug_data and debug_data.get("rows"):
+        lang_zh = (get_language() == "zh_TW")
+        toggle_label = (
+            "🔍 BFI82U 三大法人原始資料(診斷用)"
+            if lang_zh else
+            "🔍 BFI82U raw rows (debug)"
+        )
+        if st.toggle(toggle_label, key="_bfi82u_debug_show", value=False):
+            st.caption(
+                f"探測日期: {debug_data.get('date_probed', '?')} · "
+                f"回傳 {debug_data.get('row_count', 0)} 行"
+                if lang_zh else
+                f"Probed: {debug_data.get('date_probed', '?')} · "
+                f"{debug_data.get('row_count', 0)} rows"
+            )
+            # Render as a compact table for easy screenshot/inspection
+            rows_for_display = []
+            for r in debug_data["rows"]:
+                investor_str = str(r.get("investor", ""))
+                net_str = str(r.get("net", ""))
+                rows_for_display.append({
+                    "投資人 (investor)" if lang_zh else "Investor": investor_str,
+                    "買賣超 (淨額,元)" if lang_zh else "Net (NTD)": net_str,
+                })
+            st.dataframe(
+                pd.DataFrame(rows_for_display),
+                hide_index=True,
+                use_container_width=True,
+            )
 
 
 # ============================================================================
@@ -22122,6 +22346,53 @@ def inject_css():
             color: rgba(255,255,255,0.38);
             margin-top: 0.4rem;
             text-align: right;
+        }
+
+        /* v1.12.1a: disconnect (L4 fallback) + stale chip styling */
+        .global-indicator-disconnected {
+            color: rgba(232,103,103,0.85);
+            font-size: 1.6rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+        .global-indicator-disconnected-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 0.5rem;
+            padding: 4px 10px;
+            background: rgba(232,103,103,0.14);
+            border: 1px solid rgba(232,103,103,0.35);
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: #e98787;
+            line-height: 1.4;
+        }
+        .global-indicator-stale-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 0.5rem;
+            padding: 3px 9px;
+            background: rgba(245,158,11,0.12);
+            border: 1px solid rgba(245,158,11,0.35);
+            border-radius: 10px;
+            font-size: 0.7rem;
+            color: rgba(245,200,100,0.92);
+            line-height: 1.4;
+        }
+        .global-indicator-stale-icon {
+            font-size: 0.78rem;
+            opacity: 0.85;
+        }
+        .global-indicator-stale-text {
+            font-weight: 500;
+        }
+        .global-indicator-stale-tag {
+            opacity: 0.75;
+            margin-left: 2px;
+            font-size: 0.68rem;
         }
 
         /* v1.5.4 additions: D-1 / D-2 history block + emoji-led chip */
@@ -41062,14 +41333,15 @@ def inject_localization_overrides():
         .global-indicator-state-chip {
             display: inline-flex;
             align-items: center;
-            padding: 5px 8px;
+            padding: 6px 11px;
             border-radius: 999px;
-            font-size: 10px;
-            font-weight: 800;
-            color: rgba(248, 241, 229, 0.82);
-            border: 1px solid rgba(244, 197, 106, 0.16);
-            background: rgba(255,255,255,.04);
+            font-size: 13px;
+            font-weight: 700;
+            color: rgba(248, 241, 229, 0.92);
+            border: 1px solid rgba(244, 197, 106, 0.22);
+            background: rgba(255,255,255,.05);
             text-align: right;
+            letter-spacing: 0.02em;
         }
         .global-indicator-value {
             font-size: 22px;
