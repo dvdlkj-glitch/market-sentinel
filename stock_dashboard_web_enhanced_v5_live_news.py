@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1b
+Version : v1.12.1c
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -244,6 +244,38 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1c (2026-05-12)  [CRITICAL fix: v1.12.1b broke ALL TWSE indicators]
+
+  - User reported after v1.12.1b push:
+    ALL 4 indicators (台股交易量 / 外資 / 投信 / 自營) showed
+    "資料連線異常" (red disconnect chip). Even台股交易量 and 投信 which
+    were WORKING in v1.12.1a started failing.
+
+  ROOT CAUSE — Streamlit cache violation:
+    v1.12.1b added this code inside _fetch_taiwan_market_aggregates_raw:
+        st.session_state["_bfi82u_last_payload_debug"] = {...}
+    BUT that function is decorated with @st.cache_data(ttl=1800).
+    Streamlit's @st.cache_data does NOT allow access to st.session_state
+    inside the cached function — it raises a UserHashError / silent
+    cache miss, causing the entire fetch to be treated as a failure.
+    Result: _raw returns broken dict → wrapper's _is_aggregates_dict_useful
+    returns False → cascade falls through L2 (empty) / L3 (empty) / L4 (None).
+    → All 4 cards show "資料連線異常".
+
+  FIX — write diagnostic OUTSIDE the cached function:
+    The _raw fetcher now stores debug rows as a key in the RETURNED dict
+    (result["_debug_rows"] = [...]). The OUTER wrapper
+    fetch_taiwan_market_aggregates extracts that key and writes to
+    st.session_state — which IS allowed (wrapper is not cached).
+    The debug_rows key is stripped from the result dict before normal use
+    so it doesn't pollute downstream logic.
+
+  Tests: 4 smoke tests verify:
+    - _raw no longer touches st.session_state (cache-safe)
+    - Wrapper extracts _debug_rows + writes to session_state
+    - _debug_rows is stripped from final result
+    - Diagnostic toggle still has data to display
 
 v1.12.1b (2026-05-12)  [BFI82U row matching + diagnostic log + bigger trend chips]
 
@@ -13508,9 +13540,12 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
             try:
                 payload = _twse_request_json(url)
                 rows = payload.get("data") or []
-                # v1.12.1b: Save raw rows for diagnostic toggle so user can
-                # inspect TWSE's actual investor column values when matching
-                # fails. We only keep the latest fetch (overwrites each call).
+                # v1.12.1c: CRITICAL FIX — v1.12.1b accidentally wrote to
+                # st.session_state INSIDE this @st.cache_data-decorated
+                # function, which is forbidden and broke the entire fetch.
+                # Now we stash debug rows in the RESULT dict; the outer
+                # wrapper fetch_taiwan_market_aggregates() will extract them
+                # and write to session_state (allowed since wrapper isn't cached).
                 try:
                     debug_rows = []
                     for r in rows:
@@ -13521,11 +13556,13 @@ def _fetch_taiwan_market_aggregates_raw(_cache_key: str) -> dict:
                                 "sell": str(r[2] if len(r) > 2 else ""),
                                 "net": str(r[3] if len(r) > 3 else ""),
                             })
-                    st.session_state["_bfi82u_last_payload_debug"] = {
-                        "date_probed": yyyymmdd,
-                        "row_count": len(rows),
-                        "rows": debug_rows,
-                    }
+                    # Only store the FIRST successful day's rows (most recent).
+                    if "_debug_rows" not in result:
+                        result["_debug_rows"] = {
+                            "date_probed": yyyymmdd,
+                            "row_count": len(rows),
+                            "rows": debug_rows,
+                        }
                 except Exception:
                     pass
                 # Pick out the 3 investor types from the rows.
@@ -13733,6 +13770,17 @@ def fetch_taiwan_market_aggregates(_cache_key: str) -> dict:
         result = _fetch_taiwan_market_aggregates_raw(_cache_key)
     except Exception as exc:
         result = {"error": f"raw_fetch_exception: {type(exc).__name__}"}
+
+    # v1.12.1c: Extract diagnostic _debug_rows that _raw stashed in the
+    # result dict (since _raw can't write session_state directly while cached).
+    # This must run OUTSIDE the cache function — wrapper isn't cached.
+    if isinstance(result, dict) and "_debug_rows" in result:
+        try:
+            st.session_state["_bfi82u_last_payload_debug"] = result["_debug_rows"]
+        except Exception:
+            pass
+        # Strip from result so downstream logic doesn't see it
+        result = {k: v for k, v in result.items() if k != "_debug_rows"}
 
     # Path A: SUCCESS — store to L2 + L3, return fresh
     if _is_aggregates_dict_useful(result):
