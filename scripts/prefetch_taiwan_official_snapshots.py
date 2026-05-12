@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+# v1.12.1d (2026-05-12): Ensure repo root is in sys.path so subsidiary
+# modules (ai_analysis_dashboard, stock_comparison_dashboard, etc.) that
+# the dashboard imports at top-level can be resolved when running this
+# script from the scripts/ subfolder. Without this, the dashboard's
+# `from ai_analysis_dashboard import ...` raises ModuleNotFoundError.
+import sys as _sys
+from pathlib import Path as _Path
+_REPO_ROOT = _Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_REPO_ROOT))
+
 import argparse
 import contextlib
 import importlib.util
