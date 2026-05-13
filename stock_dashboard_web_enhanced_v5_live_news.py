@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.6
+Version : v1.12.7
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,36 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.7 (2026-05-12)  [Hero Bar: commercial copywriting for the 5 button hints]
+
+  User request: rewrite the 5 button hints with light commercial-marketing
+  copywriting — short, hook-y, conversational. Goal: get users curious
+  enough to click and discover each feature, without being too long.
+
+  Changes — pure text in _experience_level_options() (zh + en):
+
+    Button        Old hint              New hint (v1 style)
+    ─────────────────────────────────────────────────────────────
+    AI 分析分享   論點驗證              AI 幫你看門道
+    總覽          今日焦點與動能        一眼看懂今天怎麼動
+    投資規劃      規劃你的進場          進場前先想清楚
+    股票比較      多檔對照分析          PK 一下誰最強
+    股票研究      單檔深度挖掘          挖掘獨家深度
+
+    English equivalents:
+    AI Analysis   Thesis tracking       AI cracks the playbook
+    Overview      Today's focal & momentum  Today's market at a glance
+    Investment    Plan your entries     Think before you enter
+    Stock Compare Multi-stock comp.     Find the strongest pick
+    Stock Research Single-stock deep dive  Dig deeper, find the edge
+
+  Tone: casual / approachable / hook-y. "看門道" / "PK" / "想清楚" =
+  natural Mandarin idioms that imply value without being formal.
+  Length kept to 5-9 zh chars so the captions don't wrap on mobile.
+
+  Zero functional change. Tests: smoke pass verifies new hint strings
+  present and old ones gone.
 
 v1.12.6 (2026-05-12)  [Hero Bar: NEW "總覽" button + state-gated focal/momentum hooks]
 
@@ -12693,18 +12723,18 @@ def _experience_level_options(lang_zh: bool) -> list[dict]:
     """
     if lang_zh:
         return [
-            {"key": "beginner",     "emoji": "🤖", "label": "AI 分析分享", "hint": "論點驗證"},
-            {"key": "overview",     "emoji": "🏠", "label": "總覽",         "hint": "今日焦點與動能"},
-            {"key": "intermediate", "emoji": "📋", "label": "投資規劃",     "hint": "規劃你的進場"},
-            {"key": "advanced",     "emoji": "🔄", "label": "股票比較",     "hint": "多檔對照分析"},
-            {"key": "expert",       "emoji": "🔬", "label": "股票研究",     "hint": "單檔深度挖掘"},
+            {"key": "beginner",     "emoji": "🤖", "label": "AI 分析分享", "hint": "AI 幫你看門道"},
+            {"key": "overview",     "emoji": "🏠", "label": "總覽",         "hint": "一眼看懂今天怎麼動"},
+            {"key": "intermediate", "emoji": "📋", "label": "投資規劃",     "hint": "進場前先想清楚"},
+            {"key": "advanced",     "emoji": "🔄", "label": "股票比較",     "hint": "PK 一下誰最強"},
+            {"key": "expert",       "emoji": "🔬", "label": "股票研究",     "hint": "挖掘獨家深度"},
         ]
     return [
-        {"key": "beginner",     "emoji": "🤖", "label": "AI Analysis",     "hint": "Thesis tracking"},
-        {"key": "overview",     "emoji": "🏠", "label": "Overview",        "hint": "Today's focal & momentum"},
-        {"key": "intermediate", "emoji": "📋", "label": "Investment Plan", "hint": "Plan your entries"},
-        {"key": "advanced",     "emoji": "🔄", "label": "Stock Compare",   "hint": "Multi-stock comparison"},
-        {"key": "expert",       "emoji": "🔬", "label": "Stock Research",  "hint": "Single-stock deep dive"},
+        {"key": "beginner",     "emoji": "🤖", "label": "AI Analysis",     "hint": "AI cracks the playbook"},
+        {"key": "overview",     "emoji": "🏠", "label": "Overview",        "hint": "Today's market at a glance"},
+        {"key": "intermediate", "emoji": "📋", "label": "Investment Plan", "hint": "Think before you enter"},
+        {"key": "advanced",     "emoji": "🔄", "label": "Stock Compare",   "hint": "Find the strongest pick"},
+        {"key": "expert",       "emoji": "🔬", "label": "Stock Research",  "hint": "Dig deeper, find the edge"},
     ]
 
 
