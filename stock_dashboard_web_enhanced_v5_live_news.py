@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1e
+Version : v1.12.1f
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -47,7 +47,9 @@ US THEME RADAR (v1.7.x), shown ONLY in U.S. only mode (replaces Q1-Q5):
   - ⚡ Energy (Div.) — NEE, ENPH, CEG, FSLR, PLUG                  (5 ticks) [v1.12.1e]
   - 💾 DRAM/Memory   — MU, WDC, SNDK                              (3 ticks)
   - 🏢 Data Center   — DLR, EQIX, VRT, NVT, ETN, MOD, AVGO, ANET  (8 ticks)
-  Total: 28 tickers, each card shows ALL its tickers sorted by today's % move.
+  - 🔆 Si Photonics  — MRVL, COHR, LITE, GFS, GLW, CRDO, POET     (7 ticks) [v1.12.1f]
+  Total: 35 tickers across 6 themes; each card shows ALL its tickers sorted
+  by today's % move. Grid is 3-column (desktop) → 3+3 balanced layout.
   v1.8.2: Each row is a clickable anchor (?radar_jump=<TICKER>) that lands
   the user inside that ticker's workspace. See _consume_us_radar_jump_query().
   v1.8.3: Each theme card carries a Catalyst Engine chip strip
@@ -244,6 +246,46 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1f (2026-05-12)  [US theme radar: NEW theme "Silicon Photonics / CPO"]
+
+  - User requested adding a NEW theme to the US-only theme radar covering
+    Silicon Photonics and Co-Packaged Optics (CPO) — a major growth driver
+    powered by AI infrastructure (800G/1.6T networking, optical I/O on chip).
+
+  - Theme spans 7 tickers covering the full stack:
+      MRVL = Marvell Technology       — networking SoC + DSP for optics
+      COHR = Coherent (formerly II-VI) — laser components for CPO
+      LITE = Lumentum                  — optical components / laser diodes
+      GFS  = GlobalFoundries           — RF + photonics foundry
+      GLW  = Corning                   — optical fiber + glass substrates
+      CRDO = Credo Technology          — Active Electrical Cables (AEC) + DSP
+      POET = POET Technologies         — pure-play silicon photonics IC design
+
+  - Grid layout impact:
+      * 5 themes (v1.12.1e) → 3+2 row arrangement (one row half-empty)
+      * 6 themes (v1.12.1f) → 3+3 balanced row arrangement
+      * Existing CSS `.us-radar-grid` uses `repeat(3, minmax(0, 1fr))`
+        which automatically handles 6 themes; no CSS change needed.
+      * Media queries (tablet 2-col, phone 1-col) also handle 6 themes
+        gracefully — 6 themes stack as 3 rows of 2 / 6 rows of 1.
+
+  - Total US-radar ticker count: 28 → 35.
+
+  - No structural code change beyond the dict append + docstring update.
+    All downstream code iterates US_THEME_GROUPS so a new theme is
+    automatically picked up by:
+      * all_us_theme_tickers()           — flat list for prefetch
+      * build_us_theme_radar()           — render bundle
+      * build_us_theme_catalysts()       — catalyst engine per theme
+      * us_theme_label()                 — i18n label lookup
+
+  Tests: 5 smoke tests verifying:
+    - 6 themes present
+    - silicon_photonics has exactly 7 tickers
+    - No duplicate tickers across themes
+    - Total ticker count = 35
+    - Docstring updated
 
 v1.12.1e (2026-05-12)  [US theme radar: Materials → Energy (Diversified)]
 
@@ -34267,6 +34309,13 @@ US_THEME_GROUPS = [
         "label_zh": "資料中心",
         "label_en": "Data Center",
         "tickers": ["DLR", "EQIX", "VRT", "NVT", "ETN", "MOD", "AVGO", "ANET"],
+    },
+    {
+        "key": "silicon_photonics",
+        "emoji": "🔆",
+        "label_zh": "矽光子 / CPO",
+        "label_en": "Silicon Photonics / CPO",
+        "tickers": ["MRVL", "COHR", "LITE", "GFS", "GLW", "CRDO", "POET"],
     },
 ]
 
