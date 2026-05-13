@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1h
+Version : v1.12.2a
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,96 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.2a (2026-05-12)  [Focal Points: non-silent fallback + debug probe]
+
+  User reported: 進去看不到今日重點的 table 後 reboot Streamlit.
+  Root cause unclear (could be: data missing from snapshot, gate failing,
+  or unrelated render bug). Changed v1.12.2's silent-hide fallback to
+  ALWAYS-render-frame-with-placeholder so:
+    - Block visibility is decoupled from data availability
+    - User can SEE the block even with empty data → discovers feature
+    - Easier to debug: no block visible = gate issue (mode/scope wrong);
+      block visible with "資料準備中" = data issue (snapshot stale/empty)
+
+  Changes (render_today_focal_points only):
+    1. Removed `if not data: return` silent-hide branch
+    2. Always renders block frame; columns show
+       "(資料準備中,稍後再試)" placeholder when their list is empty
+    3. NEW: Optional URL debug probe `?debug_focal=1`
+       - Shows snapshot_row keys, cockpit_q3 type/keys, etfs/chains counts
+       - Self-cleans after one render (pops query param)
+       - Anyone can trigger it from URL bar to inspect the data pipe
+
+  No other code changes. Data builders, prefetch script, Supabase
+  schema, render order all UNCHANGED.
+
+  Tests: 4 smoke tests (data present → renders cards; data missing →
+  renders placeholders; debug flag → shows debug info; debug flag pops).
+
+v1.12.2 (2026-05-12)  [NEW: Today Focal Points block — Top 3 ETF + Top 3 chain]
+
+  User request: 主動式 ETF + 供應鏈 High Light on entry, so the subscription
+  user immediately sees "what's worth looking at today" — drives engagement
+  ("先看什麼,繼續使用這個 service" entry-point flow).
+
+  New block: 🎯 Today's Focal Points
+    - 2 columns side-by-side: 🔥 Active ETF Top 3  |  📌 Supply Chain Top 3
+    - Each card shows: rank, ticker/title, % move, company/chain name,
+      volume/breadth chip, signal/rank chip
+    - Click card -> jump to Active ETF Lab or Supply Chain Lab with
+      ticker / chain group preselected (via ?focal_jump=etf:00982A etc.)
+    - Bottom CTA -> [→ 完整 ETF Lab] / [→ 完整供應鏈 Lab]
+    - Mobile: stacks vertically; tablet: stacks; desktop: side-by-side
+
+  Implementation:
+    NEW FUNCTIONS (added before render_tomorrow_momentum_pulse):
+      _build_today_focal_points_data(snapshot_row)
+        - Pure data extractor from snapshot['cockpit_q3_payload']
+        - Returns None if no usable data (drives fallback B)
+      _focal_card_etf_html(item, rank, lang_zh) -> HTML
+      _focal_card_chain_html(item, rank, lang_zh) -> HTML
+      _inject_focal_points_css() -> CSS injection (once per session)
+      render_today_focal_points(snapshot_row) -> top-level render
+      _consume_focal_jump_query() -> URL param handler for clicks
+
+    NEW INSERTION SITE (in generate_dashboard, AFTER market indicator,
+    BEFORE momentum pulse):
+      if dashboard_mode == "General Market" and scope == "Taiwan only":
+          render_today_focal_points(snapshot_row)
+
+    NEW CONSUMER CALL (alongside _consume_us_radar_jump_query):
+      _consume_focal_jump_query()
+
+  Data pipeline: Reuses EXISTING prefetch builder output. The daily
+  prefetch job already calls build_home_news_active_etf_spotlight +
+  build_home_news_supply_chain_rankings into cockpit_q3_payload (since
+  v1.7.x). This block just READS that data — zero changes to data
+  pipeline / Supabase schema / prefetch script.
+
+  Fallback B (silently hide on missing data):
+    - No snapshot_row -> hide
+    - No cockpit_q3_payload -> hide
+    - Both etfs and chains empty -> hide
+    - One side empty, other has data -> show only the side with data
+      (showing "no data" placeholder in the empty side)
+
+  Scope gate: ONLY renders for:
+    - dashboard_mode == "General Market"
+    - market_scope == "Taiwan only"
+    Other Labs (Active ETF Lab, Supply Chain Lab, etc.) already have
+    their own focal-point UIs. U.S. only mode has the theme radar.
+
+  Tests: 9 smoke tests covering:
+    - Helper extracts data correctly from valid snapshot
+    - Helper returns None for missing/corrupt snapshot
+    - HTML contains expected elements (rank, ticker, move, chips, CTA)
+    - CSS class names match what the HTML uses
+    - Jump consumer recognizes etf:/chain:/lab: prefixes
+    - Jump consumer validates ticker against active-ETF universe
+    - Jump consumer validates chain title against SUPPLY_CHAIN_FOCUS_CONFIGS
+    - No regression in render_tomorrow_momentum_pulse (still callable)
+    - No regression in v1.12.1h indicator/momentum order
 
 v1.12.1h (2026-05-12)  [Layout: 「台灣市場指標」hoisted above 「明日動能脈搏」]
 
@@ -16772,6 +16862,567 @@ _AUTOREFRESH_BADGE_CSS = """
 }
 </style>
 """
+
+
+# =============================================================================
+# v1.12.2 (2026-05-12): Today Focal Points Block
+# =============================================================================
+# A small "Today's Focal Points" block that surfaces Top 3 Active ETFs +
+# Top 3 Supply Chain groups so subscription users entering the main
+# dashboard immediately see *what's worth looking at today*. The block
+# lives BETWEEN the macro indicator and the predictive momentum pulse
+# (macro → focal → predictive flow per user request 2026-05-12).
+#
+# DATA SOURCE: Reads exclusively from snapshot_row['cockpit_q3_payload']
+# which is populated by the daily prefetch job and contains:
+#   - top_movers   : list of {ticker, label, move, ...}
+#   - chain_rankings: list of {title, leader_name, leader_move, ...}
+#   - active_etfs  : list of {ticker, label, move, volume_ratio, ...}
+#
+# FALLBACK: If snapshot has no q3 payload (e.g. cold-start, prefetch
+# failed), the block returns None and renders nothing. We do NOT do
+# live fetch here because (a) it would block page render and (b) the
+# user can press the refresh button which lives in the freshness bar.
+#
+# SCOPE: Only renders for dashboard_mode == "General Market" AND
+# market_scope == "Taiwan only". US-only mode has its own theme radar
+# focal-point UI in the cockpit.
+# =============================================================================
+def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
+    """Extract focal-point data from the prefetched cockpit_q3_payload.
+
+    Returns a dict with two keys:
+      - 'etfs'  : list of up to 3 active-ETF dicts (ticker/label/move/...)
+      - 'chains': list of up to 3 supply-chain dicts (title/leader/move/...)
+    Returns None if data is missing or unusable so the renderer can
+    silently skip the block (no half-rendered placeholders).
+    """
+    if not isinstance(snapshot_row, dict):
+        return None
+    q3 = snapshot_row.get("cockpit_q3_payload")
+    if not isinstance(q3, dict):
+        return None
+    raw_etfs = q3.get("active_etfs") or []
+    raw_chains = q3.get("chain_rankings") or []
+    # Defensive type checks — corrupt snapshot shouldn't crash main render
+    if not isinstance(raw_etfs, list) and not isinstance(raw_chains, list):
+        return None
+    etfs = [item for item in raw_etfs[:3] if isinstance(item, dict)]
+    chains = [item for item in raw_chains[:3] if isinstance(item, dict)]
+    # Need at least one populated list to render — otherwise hide entirely
+    if not etfs and not chains:
+        return None
+    return {"etfs": etfs, "chains": chains}
+
+
+def _focal_card_etf_html(item: dict, rank: int, lang_zh: bool) -> str:
+    """Render one ETF card row (compact ranked card)."""
+    ticker = str(item.get("ticker", "") or "").strip()
+    label = str(item.get("label", "") or "").strip()
+    # Strip the "TICKER " prefix from the label if present (label is like
+    # "00982A 元大 ESG..."), since we display ticker separately.
+    display_name = label
+    if ticker and label.upper().startswith(ticker.upper()):
+        display_name = label[len(ticker):].strip()
+        # Strip leading punctuation
+        for sep in ("·", "-", ":", " "):
+            if display_name.startswith(sep):
+                display_name = display_name[len(sep):].strip()
+    try:
+        move = float(item.get("move"))
+        if move >= 0:
+            move_str = f"+{move:.2f}%"
+            move_class = "focal-move-pos"
+        else:
+            move_str = f"{move:.2f}%"
+            move_class = "focal-move-neg"
+    except (TypeError, ValueError):
+        move_str = "—"
+        move_class = "focal-move-neutral"
+    try:
+        vol_ratio = float(item.get("volume_ratio"))
+        if vol_ratio > 1.5:
+            vol_chip = f"放量 {vol_ratio:.1f}x" if lang_zh else f"Volume {vol_ratio:.1f}x"
+        elif vol_ratio < 0.5:
+            vol_chip = f"量縮 {vol_ratio:.1f}x" if lang_zh else f"Light vol {vol_ratio:.1f}x"
+        else:
+            vol_chip = ""
+    except (TypeError, ValueError):
+        vol_chip = ""
+    signal = str(item.get("signal", "") or "").strip().upper()
+    signal_zh = {"BUY": "做多", "SELL": "做空", "HOLD": "中性"}.get(signal, "")
+    signal_chip = signal_zh if (lang_zh and signal_zh) else signal
+    chips = []
+    if vol_chip:
+        chips.append(f'<span class="focal-chip">{escape(vol_chip)}</span>')
+    if signal_chip:
+        chips.append(f'<span class="focal-chip">{escape(signal_chip)}</span>')
+    chips_html = "".join(chips)
+    # Use existing radar_jump-style URL pattern to keep architecture consistent.
+    # Decode-side: _consume_focal_jump_query (added below).
+    href = f"?focal_jump=etf:{escape(ticker)}"
+    return (
+        f'<a class="focal-card-row" href="{href}" target="_self" '
+        f'title="{escape(display_name)}">'
+        f'<span class="focal-rank">{rank}</span>'
+        f'<span class="focal-card-body">'
+        f'  <span class="focal-card-headline">'
+        f'    <span class="focal-ticker">{escape(ticker)}</span>'
+        f'    <span class="focal-move {move_class}">{move_str}</span>'
+        f'  </span>'
+        f'  <span class="focal-card-name">{escape(display_name)}</span>'
+        f'  <span class="focal-card-chips">{chips_html}</span>'
+        f'</span>'
+        f'</a>'
+    )
+
+
+def _focal_card_chain_html(item: dict, rank: int, lang_zh: bool) -> str:
+    """Render one supply-chain card row (compact ranked card)."""
+    title = str(item.get("title", "") or "—").strip()
+    leader = str(item.get("leader_name", "") or "").strip()
+    try:
+        leader_move = float(item.get("leader_move"))
+        if leader_move >= 0:
+            leader_move_str = f"+{leader_move:.2f}%"
+            move_class = "focal-move-pos"
+        else:
+            leader_move_str = f"{leader_move:.2f}%"
+            move_class = "focal-move-neg"
+    except (TypeError, ValueError):
+        leader_move_str = "—"
+        move_class = "focal-move-neutral"
+    try:
+        rising = int(item.get("rising_count", 0) or 0)
+        total = int(item.get("ticker_count", 0) or 0)
+    except (TypeError, ValueError):
+        rising = 0
+        total = 0
+    breadth_chip = ""
+    if total > 0:
+        breadth_chip = (
+            f"{rising}/{total} 強勢" if lang_zh
+            else f"{rising}/{total} rising"
+        )
+    rank_chip = (
+        f"Top {item.get('rank', rank)}"
+    )
+    chips = []
+    if breadth_chip:
+        chips.append(f'<span class="focal-chip">{escape(breadth_chip)}</span>')
+    chips.append(f'<span class="focal-chip">{escape(rank_chip)}</span>')
+    chips_html = "".join(chips)
+    # Use the chain title as the jump key — _consume_focal_jump_query will
+    # validate it against SUPPLY_CHAIN_FOCUS_CONFIGS keys before applying.
+    href = f"?focal_jump=chain:{escape(title)}"
+    return (
+        f'<a class="focal-card-row" href="{href}" target="_self" '
+        f'title="{escape(title)}">'
+        f'<span class="focal-rank">{rank}</span>'
+        f'<span class="focal-card-body">'
+        f'  <span class="focal-card-headline">'
+        f'    <span class="focal-ticker">{escape(title)}</span>'
+        f'    <span class="focal-move {move_class}">{leader_move_str}</span>'
+        f'  </span>'
+        f'  <span class="focal-card-name">'
+        f'    {escape("龍頭" if lang_zh else "Leader")}: {escape(leader)}'
+        f'  </span>'
+        f'  <span class="focal-card-chips">{chips_html}</span>'
+        f'</span>'
+        f'</a>'
+    )
+
+
+def _inject_focal_points_css() -> None:
+    """Inject CSS for the focal-points block once per session."""
+    if st.session_state.get("_focal_points_css_injected"):
+        return
+    st.session_state["_focal_points_css_injected"] = True
+    st.markdown(
+        """
+        <style>
+        .focal-block {
+            background: linear-gradient(160deg, rgba(15,28,52,0.55) 0%, rgba(8,14,28,0.35) 100%);
+            border: 1px solid rgba(94,234,212,0.22);
+            border-radius: 14px;
+            padding: 1rem 1.15rem 0.95rem 1.15rem;
+            margin-top: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        .focal-block-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 0.85rem;
+            gap: 0.85rem;
+        }
+        .focal-block-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.02em;
+        }
+        .focal-block-subtitle {
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.5);
+            font-weight: 400;
+        }
+        .focal-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.85rem;
+        }
+        .focal-col {
+            background: rgba(8,14,28,0.45);
+            border: 1px solid rgba(94,234,212,0.12);
+            border-radius: 10px;
+            padding: 0.7rem 0.75rem 0.55rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.55rem;
+        }
+        .focal-col-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            font-size: 0.82rem;
+            color: rgba(255,255,255,0.8);
+            font-weight: 600;
+            padding-bottom: 0.25rem;
+            border-bottom: 1px dashed rgba(94,234,212,0.15);
+        }
+        .focal-col-cta {
+            font-size: 0.72rem;
+            color: rgba(94,234,212,0.85);
+            text-decoration: none;
+            transition: color 0.18s;
+        }
+        .focal-col-cta:hover { color: #5eead4; }
+        .focal-card-row {
+            display: flex;
+            gap: 0.55rem;
+            align-items: stretch;
+            padding: 0.5rem 0.55rem;
+            background: rgba(15,28,52,0.4);
+            border: 1px solid transparent;
+            border-radius: 8px;
+            text-decoration: none;
+            color: inherit;
+            transition: background 0.18s, border-color 0.18s, transform 0.18s;
+        }
+        .focal-card-row:hover {
+            background: rgba(15,28,52,0.7);
+            border-color: rgba(94,234,212,0.35);
+            transform: translateX(2px);
+        }
+        .focal-rank {
+            display: inline-flex;
+            align-items: flex-start;
+            justify-content: center;
+            min-width: 18px;
+            color: rgba(94,234,212,0.6);
+            font-size: 0.82rem;
+            font-weight: 700;
+            padding-top: 1px;
+        }
+        .focal-card-body {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            flex: 1;
+            min-width: 0;
+        }
+        .focal-card-headline {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+        .focal-ticker {
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 0.88rem;
+            font-weight: 700;
+            color: #fff;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .focal-move {
+            font-size: 0.85rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .focal-move-pos { color: #34d399; }
+        .focal-move-neg { color: #f87171; }
+        .focal-move-neutral { color: rgba(255,255,255,0.55); }
+        .focal-card-name {
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.55);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .focal-card-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin-top: 0.1rem;
+        }
+        .focal-chip {
+            display: inline-block;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            background: rgba(94,234,212,0.08);
+            border: 1px solid rgba(94,234,212,0.15);
+            color: rgba(255,255,255,0.7);
+            font-size: 0.66rem;
+            white-space: nowrap;
+        }
+        /* Tablet: stack 2 cols vertically */
+        @media (max-width: 980px) {
+            .focal-grid { grid-template-columns: 1fr; gap: 0.7rem; }
+            .focal-block { padding: 0.85rem 0.95rem; }
+        }
+        /* Phone: tighter spacing */
+        @media (max-width: 480px) {
+            .focal-block { padding: 0.7rem 0.75rem; }
+            .focal-block-title { font-size: 0.98rem; }
+            .focal-card-row { padding: 0.4rem 0.45rem; }
+            .focal-ticker { font-size: 0.82rem; }
+            .focal-move { font-size: 0.8rem; }
+            .focal-card-name { font-size: 0.7rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_today_focal_points(snapshot_row: dict | None) -> None:
+    """Render the Today Focal Points block (Top 3 ETF + Top 3 supply chain).
+
+    v1.12.2a (2026-05-12): Changed fallback behavior — instead of silent
+    hide, now ALWAYS renders the block frame and shows a "(資料準備中)"
+    placeholder when data is missing. This way:
+      - Subscription users discover the feature exists
+      - When tomorrow's prefetch populates data, it lights up automatically
+      - Debug is easier: if you don't see the block at all, the issue is
+        gate (mode/scope), not data
+
+    Optional URL probe: append ?debug_focal=1 to see the raw payload
+    that's being read. Removes itself after one render.
+    """
+    lang_zh = st.session_state.get("dashboard_language", "繁體中文") == "繁體中文"
+
+    # v1.12.2a: Debug probe — type ?debug_focal=1 in URL to see snapshot keys
+    try:
+        debug_flag = _query_param_first("debug_focal")
+    except Exception:
+        debug_flag = ""
+    if debug_flag:
+        st.info(
+            f"🔍 **Focal Debug**\n\n"
+            f"- snapshot_row is dict: `{isinstance(snapshot_row, dict)}`\n"
+            f"- snapshot_row keys: `{list(snapshot_row.keys()) if isinstance(snapshot_row, dict) else 'N/A'}`\n"
+            f"- cockpit_q3_payload type: `{type(snapshot_row.get('cockpit_q3_payload')).__name__ if isinstance(snapshot_row, dict) else 'N/A'}`\n"
+            f"- cockpit_q3_payload keys: `{list(snapshot_row['cockpit_q3_payload'].keys()) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
+            f"- active_etfs count: `{len(snapshot_row['cockpit_q3_payload'].get('active_etfs') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
+            f"- chain_rankings count: `{len(snapshot_row['cockpit_q3_payload'].get('chain_rankings') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
+        )
+        # Pop debug param so it doesn't persist
+        try:
+            qp = st.query_params
+            if "debug_focal" in qp:
+                del qp["debug_focal"]
+        except Exception:
+            pass
+
+    data = _build_today_focal_points_data(snapshot_row)
+    etfs = data["etfs"] if data else []
+    chains = data["chains"] if data else []
+
+    _inject_focal_points_css()
+
+    snapshot_date = ""
+    if isinstance(snapshot_row, dict):
+        snapshot_date = str(snapshot_row.get("snapshot_date") or "").strip()
+
+    # Header
+    title_zh = "今日重點 · Today's Focal Points"
+    title_en = "Today's Focal Points"
+    subtitle = ""
+    if snapshot_date:
+        subtitle = (
+            f"資料日期 {snapshot_date}" if lang_zh
+            else f"Data date {snapshot_date}"
+        )
+
+    # ETF column
+    etf_title_zh = "🔥 主動式 ETF Top 3"
+    etf_title_en = "🔥 Active ETF Top 3"
+    chain_title_zh = "📌 供應鏈 Top 3"
+    chain_title_en = "📌 Supply Chain Top 3"
+    cta_etf = "→ 完整 ETF Lab" if lang_zh else "→ Full ETF Lab"
+    cta_chain = "→ 完整供應鏈 Lab" if lang_zh else "→ Full Supply Chain Lab"
+
+    etf_rows = (
+        "".join(
+            _focal_card_etf_html(item, idx + 1, lang_zh)
+            for idx, item in enumerate(etfs)
+        )
+        if etfs
+        else f'<div class="focal-card-name" style="opacity:0.5;padding:0.6rem 0.5rem;">'
+             f'{escape("(資料準備中,稍後再試)" if lang_zh else "(Data pending, try later)")}'
+             f'</div>'
+    )
+    chain_rows = (
+        "".join(
+            _focal_card_chain_html(item, idx + 1, lang_zh)
+            for idx, item in enumerate(chains)
+        )
+        if chains
+        else f'<div class="focal-card-name" style="opacity:0.5;padding:0.6rem 0.5rem;">'
+             f'{escape("(資料準備中,稍後再試)" if lang_zh else "(Data pending, try later)")}'
+             f'</div>'
+    )
+
+    html = (
+        f'<div class="focal-block">'
+        f'  <div class="focal-block-header">'
+        f'    <span class="focal-block-title">'
+        f'      {escape(title_zh if lang_zh else title_en)}'
+        f'    </span>'
+        f'    <span class="focal-block-subtitle">{escape(subtitle)}</span>'
+        f'  </div>'
+        f'  <div class="focal-grid">'
+        f'    <div class="focal-col">'
+        f'      <div class="focal-col-header">'
+        f'        <span>{escape(etf_title_zh if lang_zh else etf_title_en)}</span>'
+        f'        <a class="focal-col-cta" href="?focal_jump=lab:etf" target="_self">'
+        f'          {escape(cta_etf)}</a>'
+        f'      </div>'
+        f'      {etf_rows}'
+        f'    </div>'
+        f'    <div class="focal-col">'
+        f'      <div class="focal-col-header">'
+        f'        <span>{escape(chain_title_zh if lang_zh else chain_title_en)}</span>'
+        f'        <a class="focal-col-cta" href="?focal_jump=lab:chain" target="_self">'
+        f'          {escape(cta_chain)}</a>'
+        f'      </div>'
+        f'      {chain_rows}'
+        f'    </div>'
+        f'  </div>'
+        f'</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _consume_focal_jump_query() -> None:
+    """v1.12.2: Handle ?focal_jump=... URL params clicked from focal points.
+
+    Supported targets:
+      - ?focal_jump=etf:00982A     -> Active ETF Lab, ticker selected
+      - ?focal_jump=chain:ABF 載板  -> Supply Chain Lab, group selected
+      - ?focal_jump=lab:etf        -> Active ETF Lab (no ticker preselect)
+      - ?focal_jump=lab:chain      -> Supply Chain Lab (no group preselect)
+
+    Silently no-ops if param missing/invalid.
+    Always pops the param at the end so the consumer doesn't re-fire on
+    subsequent reruns.
+    """
+    raw = _query_param_first("focal_jump")
+    if not raw:
+        return
+
+    target = str(raw).strip()
+
+    def _pop_param() -> None:
+        try:
+            qp = st.query_params
+            if "focal_jump" in qp:
+                del qp["focal_jump"]
+            return
+        except Exception:
+            pass
+        try:
+            params = st.experimental_get_query_params()
+            if "focal_jump" in params:
+                params.pop("focal_jump", None)
+                st.experimental_set_query_params(**params)
+        except Exception:
+            pass
+
+    if not target or ":" not in target:
+        _pop_param()
+        return
+
+    kind, _, value = target.partition(":")
+    kind = kind.strip().lower()
+    value = value.strip()
+
+    # Lab-only jumps: just switch mode, no preselection
+    if kind == "lab":
+        if value == "etf":
+            st.session_state["dashboard_mode"] = "Active ETF Lab"
+        elif value == "chain":
+            st.session_state["dashboard_mode"] = "Supply Chain Lab"
+        _pop_param()
+        try:
+            st.rerun()
+        except Exception:
+            pass
+        return
+
+    # ETF ticker jump
+    if kind == "etf" and value:
+        ticker = value.upper().strip()
+        # Validate against active-ETF universe before applying
+        try:
+            valid = set(filter_active_etf_tickers(build_active_etf_quick_picks()))
+        except Exception:
+            valid = set()
+        if ticker in valid:
+            st.session_state["dashboard_mode"] = "Active ETF Lab"
+            # Pre-select this ETF if the lab supports it via session_state.
+            # Add to dashboard_active_etf_tickers list (existing key).
+            existing = list(st.session_state.get("dashboard_active_etf_tickers", []) or [])
+            if ticker not in existing:
+                existing.insert(0, ticker)
+            st.session_state["dashboard_active_etf_tickers"] = existing[:8]
+        _pop_param()
+        try:
+            st.rerun()
+        except Exception:
+            pass
+        return
+
+    # Supply-chain group jump
+    if kind == "chain" and value:
+        # Find a config_key whose label matches the title (best-effort).
+        # We validate by checking SUPPLY_CHAIN_FOCUS_CONFIGS labels.
+        target_title = value.strip()
+        matched_key = None
+        try:
+            for cfg_key in SUPPLY_CHAIN_FOCUS_CONFIGS.keys():
+                lbl = supply_chain_group_label(cfg_key) or ""
+                if lbl.strip() == target_title:
+                    matched_key = cfg_key
+                    break
+        except Exception:
+            matched_key = None
+        if matched_key:
+            st.session_state["dashboard_mode"] = "Supply Chain Lab"
+            # Preselect the matched supply-chain group if the lab supports it
+            st.session_state["dashboard_supply_chain_focus_key"] = matched_key
+        _pop_param()
+        try:
+            st.rerun()
+        except Exception:
+            pass
+        return
+
+    _pop_param()
 
 
 def render_tomorrow_momentum_pulse(market_scope: str) -> None:
@@ -46617,6 +47268,12 @@ def generate_dashboard():
     # watchlist) so the next radar click starts a fresh sequence.
     _consume_us_radar_clear_query()
 
+    # v1.12.2: Handle ?focal_jump=... clicks from Today Focal Points cards.
+    # Switches dashboard_mode + (optionally) pre-selects ticker / chain
+    # group before the rest of generate_dashboard runs, so the user lands
+    # in the target Lab on the SAME page render (no second click needed).
+    _consume_focal_jump_query()
+
     inject_css()
     inject_premium_overrides()
     inject_localization_overrides()
@@ -47022,6 +47679,19 @@ def generate_dashboard():
             market_scope=scope_for_indicator,
         )
         render_global_market_indicator(global_indicator)
+
+    # v1.12.2 (2026-05-12): Today Focal Points block.
+    # Renders Top 3 active ETFs + Top 3 supply chain rankings as a focal
+    # entry point so users see *what's worth looking at today* immediately
+    # after the macro indicator. Click handlers (?focal_jump=...) jump
+    # them directly into the relevant Lab mode for deeper analysis.
+    # Gated to: General Market mode + Taiwan only scope.
+    # Fallback: silently hides if snapshot has no cockpit_q3_payload.
+    if (
+        dashboard_mode == "General Market"
+        and st.session_state.get("dashboard_market_scope", "Taiwan only") == "Taiwan only"
+    ):
+        render_today_focal_points(snapshot_row)
 
     # v1.9.5: Tomorrow Momentum Pulse — compact 5-row table that estimates
     # next-session strength from the previous close.
