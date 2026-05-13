@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1g
+Version : v1.12.1h
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,46 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1h (2026-05-12)  [Layout: 「台灣市場指標」hoisted above 「明日動能脈搏」]
+
+  - User request: 把基準廣度放在明日動能脈搏的前面,這樣看見大盤訊息然後
+    接下來看明日動能脈搏的邏輯性會比較順.
+  - Rationale: macro → predictive reading flow.
+      OLD: Hero Bar  →  明日動能脈搏  →  freshness bar  →  📊 台灣市場指標
+      NEW: Hero Bar  →  freshness bar  →  📊 台灣市場指標  →  明日動能脈搏
+
+  Implementation:
+    The entire indicator block (scope_for_indicator + force_live +
+    snapshot_row load + render_snapshot_freshness_bar +
+    render_global_market_indicator with both snapshot-first and
+    live-fallback paths) was HOISTED from line ~47100 to ~line 46946
+    (right before the momentum pulse block, after the early-return gates).
+    The original location is marked with a comment placeholder so future
+    devs can trace the move.
+
+  Audit verified BEFORE the move:
+    - period / interval / lens_meta are set at line ~46808 (before both
+      blocks) → indicator's live-fallback path can still read them ✓
+    - snapshot_row is self-contained (defined + consumed in the hoisted
+      block only) → safe to move ✓
+    - render_tomorrow_momentum_pulse internally chains to
+      render_tsmc_supply_chain_top5_recommendations → TSMC Top 5 still
+      sits with the momentum pulse (correct, since it's a momentum
+      sub-flow, not a market-indicator one) ✓
+    - No state set by momentum pulse is read by indicator → safe to
+      reverse the order ✓
+    - force_live = st.session_state.pop(...) is now consumed earlier in
+      page render, but since it's a one-shot user-action flag this is
+      actually preferred (no chance momentum pulse rebuilds before
+      force_live is consumed)
+
+  No functional change to any block — only the visual order on the page.
+  All 35 US theme tickers / 4 TWSE indicators / momentum pulse /
+  TSMC Top 5 still work exactly as before.
+
+  Tests: 6 smoke tests verifying order, single occurrence of indicator
+  call sites, no orphan references, all 4 render functions still present.
 
 v1.12.1g (2026-05-12)  [US theme radar: add company name under ticker]
 
@@ -46938,11 +46978,56 @@ def generate_dashboard():
         render_ai_analysis_share_dashboard()
         return
 
+    # v1.12.1h (2026-05-12): MOVED 「台灣市場指標」block to BEFORE
+    # 「明日動能脈搏」per user request. Rationale: read big-picture market
+    # state first (macro), then look at the next-day prediction (predictive)
+    # — natural macro→predictive reading flow. This block was previously
+    # at line ~47100 (after momentum pulse); the entire snapshot fetch +
+    # freshness bar + indicator render block has been hoisted up here.
+    #
+    # v1.6.0: SNAPSHOT-FIRST PATH
+    # Try to render from the daily-prefetched Supabase snapshot. When the
+    # snapshot exists, the page paints in <500ms (no yfinance/TWSE calls).
+    # The user-facing "🔄 抓今天最新" button forces a live refetch when
+    # they want fresh numbers; we detect that via the
+    # _force_live_main_dashboard session_state flag.
+    scope_for_indicator = st.session_state.get(
+        "dashboard_market_scope", "Taiwan only"
+    )
+    force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
+    snapshot_row = None
+    if not force_live:
+        snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
+
+    # Always render the freshness bar so the user knows what data
+    # they're looking at and can refresh.
+    render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
+
+    if snapshot_row and snapshot_row.get("global_indicator_payload"):
+        # Snapshot path: render directly from the stored payload.
+        render_global_market_indicator(snapshot_row["global_indicator_payload"])
+    else:
+        # Live path (snapshot missing OR user pressed refresh).
+        global_reference_data = fetch_global_reference_data(period, interval)
+        scope_indices = get_indices_for_scope(scope_for_indicator)
+        live_quote_tickers = tuple(
+            item["ticker"] for item in scope_indices
+            if not item["ticker"].startswith("__")
+        )
+        global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
+        global_indicator = build_global_market_indicator(
+            global_reference_data,
+            lens_meta=lens_meta,
+            live_quotes=global_reference_quotes,
+            market_scope=scope_for_indicator,
+        )
+        render_global_market_indicator(global_indicator)
+
     # v1.9.5: Tomorrow Momentum Pulse — compact 5-row table that estimates
-    # next-session strength from the previous close. Lives ABOVE the
-    # snapshot freshness bar so it's the first analytical block users
-    # see when they enter the main Dashboard. Gated to General Market
-    # mode only (per v1.9.4 — focused modes don't show analysis blocks).
+    # next-session strength from the previous close.
+    # v1.12.1h: This block now lives AFTER the market indicator (was before
+    # in v1.9.5–v1.12.1g). Gated to General Market mode only (per v1.9.4 —
+    # focused modes don't show analysis blocks).
     if dashboard_mode == "General Market":
         _momentum_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
         render_tomorrow_momentum_pulse(_momentum_scope)
@@ -47090,48 +47175,13 @@ def generate_dashboard():
     _empty_tickers_state = not dashboard_tickers
     _data_error_state = bool(dashboard_tickers) and (daily_data is None or daily_data.empty)
 
-    # v1.9.2: Common header — runs unconditionally. Even when the user
-    # has an empty Active ETF / Supply Chain watchlist, this still
-    # renders so they see the global indicator context while picking
-    # tickers.
-    #
-    # v1.6.0: SNAPSHOT-FIRST PATH
-    # Try to render from the daily-prefetched Supabase snapshot. When the
-    # snapshot exists, the page paints in <500ms (no yfinance/TWSE calls).
-    # The user-facing "🔄 抓今天最新" button forces a live refetch when
-    # they want fresh numbers; we detect that via the
-    # _force_live_main_dashboard session_state flag.
-    scope_for_indicator = st.session_state.get(
-        "dashboard_market_scope", "Taiwan only"
-    )
-    force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
-    snapshot_row = None
-    if not force_live:
-        snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
-
-    # Always render the freshness bar so the user knows what data
-    # they're looking at and can refresh.
-    render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
-
-    if snapshot_row and snapshot_row.get("global_indicator_payload"):
-        # Snapshot path: render directly from the stored payload.
-        render_global_market_indicator(snapshot_row["global_indicator_payload"])
-    else:
-        # Live path (snapshot missing OR user pressed refresh).
-        global_reference_data = fetch_global_reference_data(period, interval)
-        scope_indices = get_indices_for_scope(scope_for_indicator)
-        live_quote_tickers = tuple(
-            item["ticker"] for item in scope_indices
-            if not item["ticker"].startswith("__")
-        )
-        global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
-        global_indicator = build_global_market_indicator(
-            global_reference_data,
-            lens_meta=lens_meta,
-            live_quotes=global_reference_quotes,
-            market_scope=scope_for_indicator,
-        )
-        render_global_market_indicator(global_indicator)
+    # v1.12.1h (2026-05-12): MOVED 「台灣市場指標」block + snapshot freshness
+    # bar to BEFORE the momentum pulse (see earlier in generate_dashboard,
+    # right after the early-return gates). This gives a macro→predictive
+    # reading flow: see the big-picture indicator first, then the
+    # next-session prediction. The original block lived here in v1.6.0–
+    # v1.12.1g; preserved as a comment marker so future devs know where
+    # it used to live and why the hoist happened.
 
     # v1.9.6: Decision Cockpit + Editor Analysis block + TAIEX volume
     # terrain were REMOVED per user request 2026-05-09: "今天的市場決策
