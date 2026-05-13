@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.2a
+Version : v1.12.6
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,307 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.6 (2026-05-12)  [Hero Bar: NEW "總覽" button + state-gated focal/momentum hooks]
+
+  User request: focal points + momentum pulse should show ONLY in a
+  dedicated "overview" state. When the user picks 投資規劃 / 股票比較 /
+  股票研究, those hooks hide and only the chosen feature's UI shows.
+
+  Implementation (additive, doesn't break existing flows):
+
+  1) NEW 5th button "🏠 總覽" (Overview):
+     - Internal key: "overview"
+     - Placed between AI 分析分享 and 投資規劃 (position 2 of 5)
+     - Hint: "今日焦點與動能" (Today's Focal & Momentum)
+     - English: "🏠 Overview / Today's focal & momentum"
+
+  2) Default experience_level changed:
+     - Was: falls back via _layout_to_experience_level(persisted_layout)
+       which resolved to "intermediate" or "advanced"
+     - Now: defaults to "overview" so subscription users see the
+       discovery hook on first visit (the whole product UX rationale
+       for v1.12.2 onward)
+
+  3) Render gate hardened — focal + momentum now require ALL THREE:
+       dashboard_mode == "General Market"
+       AND market_scope == "Taiwan only"
+       AND experience_level == "overview"
+     Previously only the first two were required, so the hooks rendered
+     under every General Market layout (including the user's chosen
+     feature page).
+
+  4) Layout dispatch short-circuited in overview state:
+     - render_general_market_dashboard_layout() is now SKIPPED when
+       experience_level == "overview". The Standard layout content
+       (which the legacy EXPERIENCE_LEVEL_TO_LAYOUT mapping would
+       otherwise display) is suppressed so the overview screen contains
+       only: hero bar + freshness + macro indicator + focal + momentum.
+
+  5) EXPERIENCE_LEVEL_TO_LAYOUT gained "overview" → "Standard" mapping,
+     but this only matters if anything downstream needs a layout_mode
+     value (legacy code paths). The early-return at point 4 ensures the
+     layout isn't actually rendered.
+
+  6) 4 → 5 columns in hero bar:
+     - st.columns(4, ...) hard-coded → st.columns(len(levels), ...)
+     - len(levels) = 5 now, will adapt to 4/6/N in future if options change
+
+  7) Click handlers unchanged for the 4 existing buttons:
+     - intermediate / advanced / expert still auto-jump to their tabs
+       (v1.12.5 behavior preserved)
+     - beginner still routes to AI Analysis full-page
+     - NEW: overview click — no auto-jump (overview IS the destination)
+
+  No data-pipeline changes. ACTIVE_ETF_METADATA, snapshot tables,
+  build_supply_chain_overview_rows, all untouched.
+
+  Tests: 8 smoke tests verifying:
+    - 5 keys present in options list (incl. new "overview")
+    - "總覽" / "Overview" label in zh + en
+    - EXPERIENCE_LEVEL_TO_LAYOUT contains "overview"
+    - Default for dashboard_experience_level is now "overview"
+    - Render gate _focal_show_hooks AND-checks experience_level
+    - Layout dispatch short-circuits when _focal_show_hooks=True
+    - st.columns uses len(levels), not hard-coded 4
+    - Old 4-button labels still gone (v1.12.5 preserved)
+
+v1.12.5 (2026-05-12)  [Hero Bar: experience-level buttons renamed to feature names]
+
+  User request: rename the 3 non-AI experience-level buttons from skill-tier
+  labels (初級 / 進階 / 資深) to feature-oriented labels:
+    - 「投資規劃」 (was 初級)    — does the 規劃 tab functionality
+    - 「股票比較」 (was 進階)    — does the 比較 tab functionality
+    - 「股票研究」 (was 資深)    — does the 工作台 tab functionality
+  AI 分析分享 button kept unchanged (handles its own dedicated dashboard mode).
+
+  Implementation (surgical / additive — no internal logic changed):
+
+  1) Label + hint + emoji updated in _experience_level_options() only:
+        intermediate: 📊 初級    → 📋 投資規劃 / 規劃你的進場
+        advanced:     🎯 進階    → 🔄 股票比較 / 多檔對照分析
+        expert:       🔬 資深    → 🔬 股票研究 / 單檔深度挖掘
+     English equivalents likewise: Intermediate → Investment Plan,
+     Advanced → Stock Compare, Expert → Stock Research.
+
+  2) Internal keys (beginner / intermediate / advanced / expert) UNCHANGED.
+     EXPERIENCE_LEVEL_TO_LAYOUT mapping untouched. Session-state migration
+     not required. All dispatch paths, AI-analysis-share routing, dashboard
+     mode gates, and downstream UI keep working exactly as before.
+
+  3) NEW auto-jump in the level-click handler:
+        intermediate click → dashboard_standard_general_section
+                              = layout_standard_compare_plan_tab
+                              (Standard layout's 比較 + 規劃 step)
+        advanced click     → dashboard_advanced_general_section
+                              = layout_compare_tab (Advanced's Compare)
+        expert click       → dashboard_expert_general_section
+                              = layout_ticker_desks_tab (Expert's 個股工作台)
+     Beginner click does NOT auto-jump (it goes to the full-page
+     AI Analysis dashboard, no sub-section to pick).
+
+     The auto-jump uses the existing double-write pattern
+     (state_key + state_key + "__selector") used elsewhere in the
+     codebase (lines 40702, 40711, 40830, 40837) so the lightweight
+     option selector reflects the new value on the same rerun.
+
+  No other text labels were touched (e.g. TRANSLATIONS dict's
+  "layout_mode_advanced" = "進階使用者" stays — that's a different concept,
+  the underlying layout-system tier label shown only in help docs).
+
+  Tests: 6 smoke tests verifying:
+    - 4 internal keys still present in options list
+    - New labels appear in zh + en options
+    - Old labels ("初級", "進階", "資深") removed from options list
+    - AI 分析分享 (beginner) label preserved
+    - Click handler sets auto-jump session_state keys for 3 levels
+    - Beginner key does NOT trigger auto-jump (no clobber of AI flow)
+
+v1.12.4 (2026-05-12)  [Focal Points: ETF Chinese names + colored score tier chips + vol fallback]
+
+  User request: 列出主動式 ETF 的檔名 + 代碼,score 5.0/2.0/1.0 用不同顏色標註,
+  沒 % 改用 ETF 交易量衡量.
+
+  Implementation (NO new data fetching — all from existing helpers):
+
+  1) ETF Chinese name display:
+     - Read from ACTIVE_ETF_METADATA[ticker+".TW"]["zh"] (e.g.
+       "主動統一台股增長") — the same source ETF Lab uses
+     - Card header now shows: "00981A 主動統一台股增長" instead of
+       just "00981A"
+     - Falls back to selector_label format if metadata missing
+
+  2) Score tier chips with color:
+     - score >= 4.0 → strong (green, .focal-score-strong)
+     - score 2.0-3.9 → mid (yellow, .focal-score-mid)
+     - score < 2.0 → weak (red, .focal-score-weak)
+     - Tier colors match momentum-pulse positive/neutral/negative tones
+
+  3) Volume status fallback when % unavailable:
+     - Reads analysis["volume_status"] from analyze_market_sentinel
+       (already computed in ETF Lab snapshot — no new code needed)
+     - Maps "Elevated" → 放量 (blue chip)
+            "Normal"   → 量持平 (gray chip)
+            "Light"    → 量縮 (muted chip)
+     - Only renders when daily move % is NaN/unavailable
+
+  4) Signal chip colored too:
+     - BUY → green tone
+     - SELL → red tone
+     - HOLD → yellow tone
+
+  Data flow (zero new fetches):
+    bundle.analysis.score       → score chip
+    bundle.analysis.volume_status → volume fallback chip
+    bundle.analysis.signal      → signal chip
+    ACTIVE_ETF_METADATA[...][zh] → display name
+    All already present in the existing prefetch / source-table pipeline.
+
+  Tests: 7 smoke tests verifying:
+    - display_name_zh field populated from ACTIVE_ETF_METADATA
+    - 3 tier CSS classes defined (.focal-score-strong/mid/weak)
+    - 3 vol CSS classes defined (.focal-vol-elevated/light/normal)
+    - 3 signal CSS classes defined (.focal-signal-buy/sell/hold)
+    - .focal-etf-name CSS class for inline name display
+    - Card HTML uses .focal-etf-name span next to ticker
+    - Volume status fallback only shows when has_move=False
+
+v1.12.3 (2026-05-12)  [Focal Points polish: real move %, momentum-style design, debug removed]
+
+  3-in-1 polish after v1.12.2f finally got ETF Top 3 showing.
+
+  1) Compute real daily move % from price_series:
+     ETF Lab snapshot doesn't carry a `daily_change` field, so v1.12.2c-f
+     showed "—" for every move. Now reads bundle.price_series (serialized
+     pd.Series in split / values / list form), takes last 2 values, and
+     computes (last - prev) / prev * 100. Handles all three serialization
+     shapes defensively.
+
+  2) Restyled to match 「明日動能脈搏」 (momentum pulse) design:
+     - Outer shell: linear-gradient(180deg, rgba(20,26,45,.92),
+       rgba(14,18,32,.92)) — same neutral slate as momentum
+     - Border: 1px solid rgba(96,110,145,0.35)
+     - Border-radius: 14px
+     - Title: 19px (was ~17px)
+     - Subtitle: 13.5px (was ~12.5px)
+     - Card row padding bumped 10px→12px
+     - Ticker font 15px (was 14px)
+     - Move font 15px tabular-nums (was 13.6px)
+     - Chip styling neutralized (was teal-tinted) — matches momentum
+     - Mobile breakpoints adjusted to 900px / 480px
+
+  3) Removed BFI82U 三大法人原始資料(診斷用) toggle from below the
+     market-indicator block. The parser was validated in v1.12.1d so
+     the runtime diagnostic toggle is no longer needed in production.
+     If TWSE schema breaks again, restore from git history.
+
+  Kept untouched:
+    - ?debug_focal=1 URL probe (still works, just URL-gated)
+    - Local file fallback in ETF helper (v1.12.2f)
+    - Supply chain helper (already worked)
+    - All data routing / pipelines
+
+  Tests: 5 smoke tests (move % computation works, momentum-pulse CSS
+  vars present, BFI82U toggle code removed, version bump, syntax).
+
+v1.12.2f (2026-05-12)  [Focal Points: ETF helper adds local-file fallback]
+
+  Root cause for v1.12.2c-e showing 0 ETFs: SUPABASE_URL is empty on
+  Streamlit Cloud (secret read failure). Supply chain Top 3 worked because
+  build_supply_chain_overview_rows() has a local-file fallback. ETF
+  helper didn't — it only tried Supabase. Added _load_local_active_etf_snapshot()
+  fallback. Now ETF Top 3 reads from .dashboard_cache/active_etf_lab_snapshots.json
+  when Supabase is unreachable. Tertiary cockpit_q3 fallback retained.
+
+  Also added SUPABASE_URL config check to debug probe so user can verify
+  whether Streamlit Cloud's secret is set correctly (proper fix requires
+  user to re-set the Streamlit Cloud Secret).
+
+v1.12.2e (2026-05-12)  [Focal Points: raw Supabase probe added to debug]
+
+  Added a direct raw-HTTP query to active_etf_snapshots table (no ticker
+  filter) so debug box reveals whether the table itself has rows, vs
+  whether helper lookup is failing. This probe is what revealed the
+  SUPABASE_URL=empty root cause (URL parsed as '/rest/v1/...' with no host).
+
+v1.12.2d (2026-05-12)  [Focal Points: per-ticker diagnostic trace]
+
+  Per-ticker trace lines in ?debug_focal=1 (snap_is_NoneType / status=X /
+  bundle_is_NoneType / OK score=X) for each of 6 active ETFs. Pinpoints
+  exactly which step each ticker fails at.
+
+v1.12.2c (2026-05-12)  [Focal Points: direct source-table reads — bypass cockpit middleware]
+
+  User insight: 「為什麼不利用我們原本的供應鏈/ETF Dashboard 的資訊
+  直接 mapping 這些資訊過來不就好嗎?」
+  i.e. Active ETF Lab + Supply Chain Lab each have their own Supabase
+  source-of-truth tables that get refreshed by their OWN GitHub Actions
+  workflows. The cockpit_q3_payload was a v1.7.x DERIVED middleware
+  layer — adding fragility (extra build step) and lag (must wait for
+  Daily Main Dashboard Prefetch AFTER source-table prefetches).
+
+  Fix: rewrote _build_today_focal_points_data() to read DIRECTLY from
+  the same Supabase tables that the Labs use.
+
+  New helpers:
+    _load_focal_supply_chains_from_lab(limit=3)
+      - Calls build_supply_chain_overview_rows(SUPPLY_CHAIN_FOCUS_ORDER)
+        which reads supply_chain_focus_snapshots table per config_key
+      - Returns Top N sorted by existing rank logic
+      - Same source the Supply Chain Lab 〈供應鏈概覽〉 view uses
+
+    _load_focal_active_etfs_from_lab(limit=3)
+      - For each ticker in ACTIVE_ETF_QUICK_PICK_SYMBOLS, calls
+        _load_supabase_active_etf_snapshot(ticker, allow_any_lens=True)
+      - Extracts score from snapshot["bundle"]["analysis"]["score"]
+        (verified via audit of bundle structure at lines 7307-7320 +
+        4598-4607)
+      - Sorts by score descending, takes Top N
+
+  Tertiary fallback PRESERVED: if BOTH direct reads return empty AND
+  snapshot_row has cockpit_q3_payload, fall back to the v1.12.2b cockpit
+  path. Ensures no regression vs previous version.
+
+  ETF card now shows score chip (when volume_ratio unavailable from
+  source table) — more meaningful than empty chip space.
+
+  Debug probe upgraded:
+    ?debug_focal=1 now shows BOTH direct-source counts AND cockpit-
+    fallback counts AND final merged tickers/titles, so user can see
+    exactly which path is providing data.
+
+  Tests: 6 smoke tests verifying:
+    - Both new helpers defined
+    - Direct-source path called BEFORE cockpit fallback
+    - Cockpit fallback still preserved (no regression)
+    - Score chip rendering for ETF when volume_ratio missing
+    - Debug probe shows new direct counts
+    - Version bump
+
+v1.12.2b (2026-05-12)  [Focal Points: snapshot recovery path]
+
+  User reported: ?debug_focal=1 showed `snapshot_row is dict: False` —
+  meaning the caller (generate_dashboard) passed a None to focal points.
+  Most likely cause: the indicator block took the LIVE-fetch branch
+  (force_live=True or transient snapshot load failure), leaving
+  snapshot_row=None for downstream code.
+
+  Two-stage fix:
+    1. RECOVERY PATH (now in render_today_focal_points top):
+       If caller's snapshot_row is None, try to load_main_dashboard_snapshot
+       ourselves. Focal points should use snapshot regardless of what the
+       indicator did. This decouples focal-block data fetch from the
+       indicator's force-live state.
+
+    2. ENRICHED DEBUG PROBE:
+       Added snapshot_row type and recovery-attempt status to the
+       ?debug_focal=1 output so we can distinguish:
+         - snapshot_row was None → recovery attempted → succeeded → cards
+         - snapshot_row was None → recovery attempted → still None →
+           Supabase connection issue (server/secrets/network)
+
+  This is a defensive addition — no other code change. Same Supabase
+  table, same key names, same builders.
 
 v1.12.2a (2026-05-12)  [Focal Points: non-silent fallback + debug probe]
 
@@ -12356,6 +12657,8 @@ def _inject_top_selector_bar_css() -> None:
 # ---------------------------------------------------------------------------
 EXPERIENCE_LEVEL_TO_LAYOUT = {
     "beginner": "Standard",
+    "overview": "Standard",      # v1.12.6: overview state — layout doesn't matter
+                                  # (focal/momentum hook UI takes over before layout dispatch)
     "intermediate": "Standard",
     "advanced": "Advanced",
     "expert": "Expert",
@@ -12363,26 +12666,45 @@ EXPERIENCE_LEVEL_TO_LAYOUT = {
 
 
 def _experience_level_options(lang_zh: bool) -> list[dict]:
-    """Return list of (key, emoji, label, hint) tuples for the 4 user levels.
+    """Return list of (key, emoji, label, hint) tuples for the user-level buttons.
 
     v1.9.9: The "beginner" key is preserved internally (no session-state
     migration needed) but its visual identity changed from "🌱 新手 /
     先看大方向" to "🤖 AI 分析分享 / 論點驗證". When this level is selected
     on General Market mode, the dispatch routes to
     render_ai_analysis_share_dashboard() instead of the standard layout.
+
+    v1.12.5 (2026-05-12): User-requested rename — the 3 non-beginner
+    levels now show feature-oriented labels ("投資規劃" / "股票比較" /
+    "股票研究") instead of skill-tier labels ("初級" / "進階" / "資深").
+    Internal keys (intermediate / advanced / expert) are unchanged, so
+    EXPERIENCE_LEVEL_TO_LAYOUT mapping, session_state persistence, and
+    every existing dispatch path keep working without migration.
+    The click handler additionally auto-jumps the layout's sub-section
+    selector to the matching tab (planning / compare / workspace).
+
+    v1.12.6 (2026-05-12): Added new "overview" key as the DEFAULT entry
+    point. Overview state shows focal points + momentum pulse only
+    (the subscription product's discovery hook), without rendering the
+    layout-mode dispatch. The 4 feature buttons (AI / 投資規劃 / 股票
+    比較 / 股票研究) hide focal+momentum and show their dedicated
+    function. Layout: 5 buttons total now, "總覽" sits in position 2
+    (right after AI 分析分享) to make it the natural "home" button.
     """
     if lang_zh:
         return [
             {"key": "beginner",     "emoji": "🤖", "label": "AI 分析分享", "hint": "論點驗證"},
-            {"key": "intermediate", "emoji": "📊", "label": "初級",        "hint": "看題材與焦點"},
-            {"key": "advanced",     "emoji": "🎯", "label": "進階",        "hint": "工具與比較"},
-            {"key": "expert",       "emoji": "🔬", "label": "資深",        "hint": "高密度研究"},
+            {"key": "overview",     "emoji": "🏠", "label": "總覽",         "hint": "今日焦點與動能"},
+            {"key": "intermediate", "emoji": "📋", "label": "投資規劃",     "hint": "規劃你的進場"},
+            {"key": "advanced",     "emoji": "🔄", "label": "股票比較",     "hint": "多檔對照分析"},
+            {"key": "expert",       "emoji": "🔬", "label": "股票研究",     "hint": "單檔深度挖掘"},
         ]
     return [
-        {"key": "beginner",     "emoji": "🤖", "label": "AI Analysis",   "hint": "Thesis tracking"},
-        {"key": "intermediate", "emoji": "📊", "label": "Intermediate",  "hint": "Themes & focus"},
-        {"key": "advanced",     "emoji": "🎯", "label": "Advanced",      "hint": "Tools & compare"},
-        {"key": "expert",       "emoji": "🔬", "label": "Expert",        "hint": "Dense research"},
+        {"key": "beginner",     "emoji": "🤖", "label": "AI Analysis",     "hint": "Thesis tracking"},
+        {"key": "overview",     "emoji": "🏠", "label": "Overview",        "hint": "Today's focal & momentum"},
+        {"key": "intermediate", "emoji": "📋", "label": "Investment Plan", "hint": "Plan your entries"},
+        {"key": "advanced",     "emoji": "🔄", "label": "Stock Compare",   "hint": "Multi-stock comparison"},
+        {"key": "expert",       "emoji": "🔬", "label": "Stock Research",  "hint": "Single-stock deep dive"},
     ]
 
 
@@ -12552,12 +12874,22 @@ def render_top_dashboard_selectors() -> None:
         unsafe_allow_html=True,
     )
     persisted_layout = st.session_state.get("dashboard_layout_mode", "Advanced")
+    # v1.12.6: Default to "overview" for new sessions so users see the
+    # focal-points + momentum-pulse hook on first visit. If the user has
+    # already been navigating, their explicit experience_level choice is
+    # preserved (via session_state). _layout_to_experience_level acts as
+    # a tertiary fallback only when neither is available.
     current_level = st.session_state.get(
         "dashboard_experience_level",
-        _layout_to_experience_level(persisted_layout),
+        "overview",
     )
+    # Backstop: if a stale session has a layout but no experience_level,
+    # still resolve through the legacy mapping.
+    if not current_level:
+        current_level = _layout_to_experience_level(persisted_layout) or "overview"
     levels = _experience_level_options(lang_zh)
-    btn_cols = st.columns(4, gap="small")
+    # v1.12.6: 5 buttons now (was 4). Columns auto-adapt to len(levels).
+    btn_cols = st.columns(len(levels), gap="small")
     for idx, level in enumerate(levels):
         with btn_cols[idx]:
             is_active = level["key"] == current_level
@@ -12578,6 +12910,23 @@ def render_top_dashboard_selectors() -> None:
             ):
                 st.session_state["dashboard_experience_level"] = level["key"]
                 st.session_state["dashboard_layout_mode"] = EXPERIENCE_LEVEL_TO_LAYOUT[level["key"]]
+                # v1.12.5: Auto-jump the layout's sub-section selector to the
+                # matching feature tab so the user lands DIRECTLY on the
+                # function the button name implies (投資規劃 → planning tab,
+                # 股票比較 → compare tab, 股票研究 → workspace tab). Beginner
+                # / AI Analysis routes to its own full-page mode so no jump
+                # needed there.
+                if level["key"] == "intermediate":
+                    # Standard layout → step navigator → jump to plan/compare tab
+                    st.session_state["dashboard_standard_general_section"] = "layout_standard_compare_plan_tab"
+                elif level["key"] == "advanced":
+                    # Advanced layout → lightweight selector → jump to compare
+                    st.session_state["dashboard_advanced_general_section"] = "layout_compare_tab"
+                    st.session_state["dashboard_advanced_general_section__selector"] = "layout_compare_tab"
+                elif level["key"] == "expert":
+                    # Expert layout → lightweight selector → jump to ticker desks (個股工作台)
+                    st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+                    st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
                 st.rerun()
             # Per-button hint caption below the button
             st.markdown(
@@ -14776,38 +15125,12 @@ def render_global_market_indicator(indicator: dict):
 
     render_html_block(shell_html)
 
-    # v1.12.1b: BFI82U diagnostic toggle — lets user inspect TWSE's actual
-    # investor column values when something doesn't match. Default OFF.
-    debug_data = st.session_state.get("_bfi82u_last_payload_debug")
-    if debug_data and debug_data.get("rows"):
-        lang_zh = (get_language() == "zh_TW")
-        toggle_label = (
-            "🔍 BFI82U 三大法人原始資料(診斷用)"
-            if lang_zh else
-            "🔍 BFI82U raw rows (debug)"
-        )
-        if st.toggle(toggle_label, key="_bfi82u_debug_show", value=False):
-            st.caption(
-                f"探測日期: {debug_data.get('date_probed', '?')} · "
-                f"回傳 {debug_data.get('row_count', 0)} 行"
-                if lang_zh else
-                f"Probed: {debug_data.get('date_probed', '?')} · "
-                f"{debug_data.get('row_count', 0)} rows"
-            )
-            # Render as a compact table for easy screenshot/inspection
-            rows_for_display = []
-            for r in debug_data["rows"]:
-                investor_str = str(r.get("investor", ""))
-                net_str = str(r.get("net", ""))
-                rows_for_display.append({
-                    "投資人 (investor)" if lang_zh else "Investor": investor_str,
-                    "買賣超 (淨額,元)" if lang_zh else "Net (NTD)": net_str,
-                })
-            st.dataframe(
-                pd.DataFrame(rows_for_display),
-                hide_index=True,
-                use_container_width=True,
-            )
+    # v1.12.3 (2026-05-12): BFI82U diagnostic toggle REMOVED per user request.
+    # The TWSE BFI82U row parser was verified in v1.12.1d (foreign / trust /
+    # dealer aggregates match TWSE's own daily figures), so the runtime
+    # debug probe is no longer needed in production. If a future TWSE
+    # schema change makes the parser break again, restore from git
+    # history (v1.12.1b ... v1.12.2f kept the toggle for that).
 
 
 # ============================================================================
@@ -16888,89 +17211,349 @@ _AUTOREFRESH_BADGE_CSS = """
 # market_scope == "Taiwan only". US-only mode has its own theme radar
 # focal-point UI in the cockpit.
 # =============================================================================
-def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
-    """Extract focal-point data from the prefetched cockpit_q3_payload.
+def _load_focal_supply_chains_from_lab(limit: int = 3) -> list[dict]:
+    """v1.12.2c: Load Top N supply chains directly from
+    supply_chain_focus_snapshots Supabase table (the table Supply Chain
+    Lab itself uses for its 〈供應鏈概覽〉 view).
 
-    Returns a dict with two keys:
-      - 'etfs'  : list of up to 3 active-ETF dicts (ticker/label/move/...)
-      - 'chains': list of up to 3 supply-chain dicts (title/leader/move/...)
-    Returns None if data is missing or unusable so the renderer can
-    silently skip the block (no half-rendered placeholders).
+    Returns a list of dicts compatible with the existing focal-points
+    card renderer (_focal_card_chain_html). Empty list on any failure.
+
+    Uses existing helper build_supply_chain_overview_rows() which
+    handles cache/refresh logic and returns rows sorted by rank.
     """
-    if not isinstance(snapshot_row, dict):
-        return None
-    q3 = snapshot_row.get("cockpit_q3_payload")
-    if not isinstance(q3, dict):
-        return None
-    raw_etfs = q3.get("active_etfs") or []
-    raw_chains = q3.get("chain_rankings") or []
-    # Defensive type checks — corrupt snapshot shouldn't crash main render
-    if not isinstance(raw_etfs, list) and not isinstance(raw_chains, list):
-        return None
-    etfs = [item for item in raw_etfs[:3] if isinstance(item, dict)]
-    chains = [item for item in raw_chains[:3] if isinstance(item, dict)]
-    # Need at least one populated list to render — otherwise hide entirely
+    try:
+        lens_meta = {
+            "period": DEFAULT_PERIOD,
+            "interval": DEFAULT_INTERVAL,
+            "title": DEFAULT_TREND_LENS,
+        }
+        rows = build_supply_chain_overview_rows(
+            list(SUPPLY_CHAIN_FOCUS_ORDER),
+            lens_meta=lens_meta,
+            force_refresh=False,
+        )
+    except Exception:
+        return []
+    if not isinstance(rows, list) or not rows:
+        return []
+    # Already sorted by rank in build_supply_chain_overview_rows.
+    output: list[dict] = []
+    for idx, row in enumerate(rows[:limit]):
+        if not isinstance(row, dict):
+            continue
+        output.append({
+            "title": str(row.get("title") or supply_chain_group_label(str(row.get("config_key", "") or "")) or "—"),
+            "config_key": str(row.get("config_key", "") or ""),
+            "leader_name": str(row.get("leader_name", "") or "—"),
+            "leader_move": row.get("leader_move"),
+            "rising_count": int(row.get("rising_count", 0) or 0),
+            "ticker_count": int(row.get("ticker_count", 0) or 0),
+            "foreign_net_total": row.get("foreign_net_total"),
+            "rank": int(row.get("rank", idx + 1) or (idx + 1)),
+        })
+    return output
+
+
+def _load_focal_active_etfs_from_lab(limit: int = 3) -> list[dict]:
+    """v1.12.2c: Load Top N active ETFs directly from
+    active_etf_snapshots Supabase table (the table Active ETF Lab itself
+    uses for its workspace + tracker views).
+
+    For each ticker in ACTIVE_ETF_QUICK_PICK_SYMBOLS, fetch its latest
+    Supabase snapshot, extract the bundle.analysis.score field, then
+    rank by score descending. Returns top N.
+
+    Returns list of dicts compatible with _focal_card_etf_html.
+    Empty list on any failure.
+
+    v1.12.2d: writes per-ticker diagnostic trace into session_state for
+    the ?debug_focal=1 probe to display.
+    """
+    candidates: list[dict] = []
+    # v1.12.2d: trace which step each ticker failed at, for debug display.
+    trace: list[str] = []
+    for ticker in ACTIVE_ETF_QUICK_PICK_SYMBOLS:
+        ticker_label = str(ticker).strip()
+        if not ticker_label:
+            trace.append(f"({ticker_label}): empty")
+            continue
+        # v1.12.2f: try Supabase FIRST, fall back to local file store
+        # if Supabase is unconfigured / empty / network failed. This is
+        # the same pattern that peek_supply_chain_focus_snapshot uses
+        # (Supabase first, local file fallback) — explains why Supply
+        # Chain Top 3 worked while ETF Top 3 didn't in v1.12.2c-e.
+        snap = None
+        source_path = "?"
+        try:
+            snap = _load_supabase_active_etf_snapshot(
+                ticker, lens_meta=None, allow_any_lens=True
+            )
+            if isinstance(snap, dict):
+                source_path = "supabase"
+        except Exception as exc:
+            trace.append(f"{ticker_label}: supabase_exc={type(exc).__name__}")
+            snap = None
+        if not isinstance(snap, dict):
+            # Supabase miss — try local file store fallback
+            try:
+                snap = _load_local_active_etf_snapshot(
+                    ticker, lens_meta=None, allow_any_lens=True
+                )
+                if isinstance(snap, dict):
+                    source_path = "local_file"
+            except Exception as exc:
+                trace.append(f"{ticker_label}: local_exc={type(exc).__name__}")
+                snap = None
+        if not isinstance(snap, dict):
+            trace.append(f"{ticker_label}: snap_is_{type(snap).__name__} (no supabase, no local)")
+            continue
+        snap_status = str(snap.get("status", "ready") or "ready")
+        if snap_status != "ready":
+            trace.append(f"{ticker_label}: status={snap_status} (src={source_path})")
+            continue
+        bundle = snap.get("bundle")
+        if not isinstance(bundle, dict):
+            trace.append(f"{ticker_label}: bundle_is_{type(bundle).__name__} (src={source_path})")
+            continue
+        analysis = bundle.get("analysis")
+        if not isinstance(analysis, dict):
+            trace.append(f"{ticker_label}: analysis_is_{type(analysis).__name__} (src={source_path})")
+            continue
+        score_raw = analysis.get("score")
+        try:
+            score = float(score_raw) if score_raw is not None else 0.0
+        except (TypeError, ValueError):
+            score = 0.0
+        if pd.isna(score):
+            score = 0.0
+        move_pct = pd.NA
+        try:
+            daily_change = bundle.get("daily_change")
+            if daily_change is None:
+                daily_change = bundle.get("latest_move")
+            if daily_change is not None:
+                move_pct = float(daily_change)
+        except (TypeError, ValueError):
+            move_pct = pd.NA
+        # v1.12.3: Compute daily move from price_series if not available
+        # directly. ETF Lab snapshot stores price_series as a serialized
+        # pd.Series; deserialize it and take (last - prev) / prev * 100.
+        if pd.isna(move_pct):
+            try:
+                price_payload = bundle.get("price_series")
+                if price_payload:
+                    # Try direct numerical access first (might be a list already)
+                    price_values = None
+                    if isinstance(price_payload, dict):
+                        # Common serialized form: {"index": [...], "data": [...]}
+                        if "data" in price_payload and isinstance(price_payload["data"], list):
+                            price_values = price_payload["data"]
+                        # split orient: {"columns":..., "index":..., "data":[[v]]}
+                        elif "values" in price_payload:
+                            price_values = price_payload["values"]
+                    elif isinstance(price_payload, list):
+                        price_values = price_payload
+                    if isinstance(price_values, list) and len(price_values) >= 2:
+                        last = price_values[-1]
+                        prev = price_values[-2]
+                        # Unwrap if nested (e.g. split orient stores as [[v], [v]])
+                        if isinstance(last, list) and last:
+                            last = last[0]
+                        if isinstance(prev, list) and prev:
+                            prev = prev[0]
+                        last_f = float(last) if last is not None else None
+                        prev_f = float(prev) if prev is not None else None
+                        if last_f is not None and prev_f is not None and prev_f != 0:
+                            move_pct = (last_f - prev_f) / prev_f * 100.0
+            except Exception:
+                pass
+        signal = str(analysis.get("signal", "HOLD") or "HOLD").upper()
+        trend = str(analysis.get("trend", "") or "")
+        news_pulse = analysis.get("news_pulse") if isinstance(analysis.get("news_pulse"), dict) else {}
+        # v1.12.4: Pull ETF Chinese display name from ACTIVE_ETF_METADATA
+        # (the same source the ETF Lab itself uses). Tickers are stored
+        # with .TW suffix in metadata (e.g. "00981A.TW"), so prepend it.
+        ticker_upper = str(ticker).upper().strip()
+        meta_key = ticker_upper if ticker_upper.endswith(".TW") else f"{ticker_upper}.TW"
+        meta = ACTIVE_ETF_METADATA.get(meta_key, {})
+        display_name_zh = str(meta.get("zh", "") or "").strip()
+        display_name_en = str(meta.get("en", "") or "").strip()
+        # v1.12.4: Volume status (Elevated / Normal / Light / N/A) from
+        # analyze_market_sentinel — fallback indicator when daily % is
+        # unavailable. Already lives in analysis dict; no new fetch needed.
+        volume_status = str(analysis.get("volume_status", "") or "").strip()
+        candidates.append({
+            "ticker": ticker_upper.replace(".TW", "").replace(".TWO", ""),
+            "label": active_etf_selector_label(ticker),
+            "display_name_zh": display_name_zh,
+            "display_name_en": display_name_en,
+            "move": move_pct,
+            "score": score,
+            "signal": signal,
+            "trend": trend,
+            "volume_ratio": pd.NA,
+            "volume_status": volume_status,
+            "news_label": str(news_pulse.get("label", "") or ""),
+            "news_score": _safe_float(news_pulse.get("score")),
+        })
+        trace.append(f"{ticker_label}: OK score={score:.1f} (src={source_path})")
+    # Sort by score descending
+    candidates.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
+    # v1.12.2d: stash diagnostic trace for debug probe
+    try:
+        st.session_state["_focal_etf_helper_trace"] = trace
+    except Exception:
+        pass
+    return candidates[:limit]
+
+
+def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
+    """v1.12.2c: Build focal-point data by reading DIRECTLY from the same
+    Supabase tables that Active ETF Lab and Supply Chain Lab use.
+
+    This bypasses the cockpit_q3_payload middleware layer (v1.7.x derived
+    data) and reads source-of-truth tables instead. Benefits:
+      - Stays in sync with Lab views (same source, same scoring)
+      - Doesn't depend on Daily Main Dashboard Prefetch having run after
+        Supply Chain / Active ETF prefetches (so timing-of-day immune)
+      - Resilient if cockpit middleware ever stops being maintained
+
+    snapshot_row is kept for backwards compat and as a tertiary fallback
+    (in case both direct lookups fail unexpectedly).
+
+    Returns dict with 'etfs' + 'chains', or None if no usable data.
+    """
+    chains = _load_focal_supply_chains_from_lab(limit=3)
+    etfs = _load_focal_active_etfs_from_lab(limit=3)
+
+    # TERTIARY FALLBACK: if BOTH direct reads returned empty AND we have
+    # a snapshot_row, try the v1.12.2b cockpit path as a last resort.
+    # This ensures we never regress relative to v1.12.2b.
+    if not chains and not etfs and isinstance(snapshot_row, dict):
+        q3 = snapshot_row.get("cockpit_q3_payload")
+        if isinstance(q3, dict):
+            raw_etfs = q3.get("active_etfs") or []
+            raw_chains = q3.get("chain_rankings") or []
+            etfs = [item for item in (raw_etfs or [])[:3] if isinstance(item, dict)]
+            chains = [item for item in (raw_chains or [])[:3] if isinstance(item, dict)]
+
     if not etfs and not chains:
         return None
     return {"etfs": etfs, "chains": chains}
 
 
 def _focal_card_etf_html(item: dict, rank: int, lang_zh: bool) -> str:
-    """Render one ETF card row (compact ranked card)."""
+    """Render one ETF card row (compact ranked card).
+
+    v1.12.4 (2026-05-12):
+      - Header line: ticker + ETF Chinese name (e.g. "00981A 主動統一台股增長")
+      - Score chip colored by tier (strong/mid/weak)
+      - When daily % unavailable, show volume_status chip as fallback indicator
+    """
     ticker = str(item.get("ticker", "") or "").strip()
-    label = str(item.get("label", "") or "").strip()
-    # Strip the "TICKER " prefix from the label if present (label is like
-    # "00982A 元大 ESG..."), since we display ticker separately.
-    display_name = label
-    if ticker and label.upper().startswith(ticker.upper()):
-        display_name = label[len(ticker):].strip()
-        # Strip leading punctuation
-        for sep in ("·", "-", ":", " "):
-            if display_name.startswith(sep):
-                display_name = display_name[len(sep):].strip()
+    # v1.12.4: Prefer the dedicated Chinese name from ACTIVE_ETF_METADATA;
+    # fall back to selector_label (strips ticker prefix).
+    if lang_zh:
+        display_name = str(item.get("display_name_zh", "") or "").strip()
+    else:
+        display_name = str(item.get("display_name_en", "") or "").strip()
+    if not display_name:
+        # Fallback: legacy label-extraction logic
+        label = str(item.get("label", "") or "").strip()
+        display_name = label
+        if ticker and label.upper().startswith(ticker.upper()):
+            display_name = label[len(ticker):].strip()
+            for sep in ("·", "-", ":", " "):
+                if display_name.startswith(sep):
+                    display_name = display_name[len(sep):].strip()
+
+    # Move %
     try:
         move = float(item.get("move"))
+        if pd.isna(move):
+            raise ValueError("nan")
         if move >= 0:
             move_str = f"+{move:.2f}%"
             move_class = "focal-move-pos"
         else:
             move_str = f"{move:.2f}%"
             move_class = "focal-move-neg"
+        has_move = True
     except (TypeError, ValueError):
         move_str = "—"
         move_class = "focal-move-neutral"
+        has_move = False
+
+    # Score with tier color (v1.12.4)
+    score_chip_html = ""
+    score = None
     try:
-        vol_ratio = float(item.get("volume_ratio"))
-        if vol_ratio > 1.5:
-            vol_chip = f"放量 {vol_ratio:.1f}x" if lang_zh else f"Volume {vol_ratio:.1f}x"
-        elif vol_ratio < 0.5:
-            vol_chip = f"量縮 {vol_ratio:.1f}x" if lang_zh else f"Light vol {vol_ratio:.1f}x"
-        else:
-            vol_chip = ""
+        score = float(item.get("score"))
+        if pd.isna(score):
+            score = None
     except (TypeError, ValueError):
-        vol_chip = ""
+        score = None
+    if score is not None:
+        # Tier mapping based on observed Lab tracker score range (0-10 typical)
+        if score >= 4.0:
+            score_tier = "focal-score-strong"
+        elif score >= 2.0:
+            score_tier = "focal-score-mid"
+        else:
+            score_tier = "focal-score-weak"
+        score_label = f"分數 {score:.1f}" if lang_zh else f"Score {score:.1f}"
+        score_chip_html = (
+            f'<span class="focal-chip {score_tier}">{escape(score_label)}</span>'
+        )
+
+    # Volume status chip — only when move% is unavailable (per user request)
+    vol_chip_html = ""
+    if not has_move:
+        vol_status = str(item.get("volume_status", "") or "").strip()
+        if vol_status:
+            vol_label_zh = {
+                "Elevated": "放量",
+                "Normal": "量持平",
+                "Light": "量縮",
+                "N/A": "",
+            }.get(vol_status, vol_status)
+            vol_class = {
+                "Elevated": "focal-vol-elevated",
+                "Light": "focal-vol-light",
+            }.get(vol_status, "focal-vol-normal")
+            vol_label = vol_label_zh if (lang_zh and vol_label_zh) else vol_status
+            if vol_label:
+                vol_chip_html = (
+                    f'<span class="focal-chip {vol_class}">{escape(vol_label)}</span>'
+                )
+
+    # Signal chip
     signal = str(item.get("signal", "") or "").strip().upper()
     signal_zh = {"BUY": "做多", "SELL": "做空", "HOLD": "中性"}.get(signal, "")
-    signal_chip = signal_zh if (lang_zh and signal_zh) else signal
-    chips = []
-    if vol_chip:
-        chips.append(f'<span class="focal-chip">{escape(vol_chip)}</span>')
-    if signal_chip:
-        chips.append(f'<span class="focal-chip">{escape(signal_chip)}</span>')
-    chips_html = "".join(chips)
-    # Use existing radar_jump-style URL pattern to keep architecture consistent.
-    # Decode-side: _consume_focal_jump_query (added below).
+    signal_label = signal_zh if (lang_zh and signal_zh) else signal
+    signal_class = {
+        "BUY": "focal-signal-buy",
+        "SELL": "focal-signal-sell",
+        "HOLD": "focal-signal-hold",
+    }.get(signal, "")
+    signal_chip_html = ""
+    if signal_label:
+        signal_chip_html = (
+            f'<span class="focal-chip {signal_class}">{escape(signal_label)}</span>'
+        )
+
+    chips_html = score_chip_html + vol_chip_html + signal_chip_html
     href = f"?focal_jump=etf:{escape(ticker)}"
     return (
         f'<a class="focal-card-row" href="{href}" target="_self" '
-        f'title="{escape(display_name)}">'
+        f'title="{escape(ticker)} {escape(display_name)}">'
         f'<span class="focal-rank">{rank}</span>'
         f'<span class="focal-card-body">'
         f'  <span class="focal-card-headline">'
-        f'    <span class="focal-ticker">{escape(ticker)}</span>'
+        f'    <span class="focal-ticker">{escape(ticker)} <span class="focal-etf-name">{escape(display_name)}</span></span>'
         f'    <span class="focal-move {move_class}">{move_str}</span>'
         f'  </span>'
-        f'  <span class="focal-card-name">{escape(display_name)}</span>'
         f'  <span class="focal-card-chips">{chips_html}</span>'
         f'</span>'
         f'</a>'
@@ -17034,102 +17617,117 @@ def _focal_card_chain_html(item: dict, rank: int, lang_zh: bool) -> str:
 
 
 def _inject_focal_points_css() -> None:
-    """Inject CSS for the focal-points block once per session."""
+    """Inject CSS for the focal-points block once per session.
+
+    v1.12.3 (2026-05-12): Restyled to match the 「明日動能脈搏」(momentum
+    pulse) block's visual language — larger fonts, neutral slate gradient
+    (vs the previous teal-tinted one), thicker rows. The two blocks
+    sit next to each other on the page, so visual consistency matters.
+    """
     if st.session_state.get("_focal_points_css_injected"):
         return
     st.session_state["_focal_points_css_injected"] = True
     st.markdown(
         """
         <style>
+        /* === Outer shell: matches momentum-pulse-shell === */
         .focal-block {
-            background: linear-gradient(160deg, rgba(15,28,52,0.55) 0%, rgba(8,14,28,0.35) 100%);
-            border: 1px solid rgba(94,234,212,0.22);
+            background: linear-gradient(180deg, rgba(20, 26, 45, 0.92), rgba(14, 18, 32, 0.92));
+            border: 1px solid rgba(96, 110, 145, 0.35);
             border-radius: 14px;
-            padding: 1rem 1.15rem 0.95rem 1.15rem;
-            margin-top: 0.85rem;
-            margin-bottom: 1rem;
+            padding: 16px 18px;
+            margin: 8px 0 14px 0;
+            color: #e9ecf3;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                         "PingFang TC", "Microsoft JhengHei", sans-serif;
         }
+        /* === Header — same hierarchy as momentum pulse === */
         .focal-block-header {
             display: flex;
             align-items: baseline;
             justify-content: space-between;
-            margin-bottom: 0.85rem;
-            gap: 0.85rem;
+            gap: 16px;
+            margin-bottom: 12px;
         }
         .focal-block-title {
-            font-size: 1.05rem;
+            font-size: 19px;
             font-weight: 700;
-            color: #fff;
-            letter-spacing: 0.02em;
+            color: #f4f6fb;
+            letter-spacing: 0.2px;
         }
         .focal-block-subtitle {
-            font-size: 0.78rem;
-            color: rgba(255,255,255,0.5);
+            font-size: 13.5px;
+            color: #98a2b8;
             font-weight: 400;
+            line-height: 1.4;
         }
+        /* === 2-column grid === */
         .focal-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 0.85rem;
+            gap: 12px;
         }
         .focal-col {
-            background: rgba(8,14,28,0.45);
-            border: 1px solid rgba(94,234,212,0.12);
-            border-radius: 10px;
-            padding: 0.7rem 0.75rem 0.55rem 0.75rem;
+            background: rgba(15, 19, 35, 0.55);
+            border: 1px solid rgba(96, 110, 145, 0.22);
+            border-radius: 12px;
+            padding: 12px 14px 10px 14px;
             display: flex;
             flex-direction: column;
-            gap: 0.55rem;
+            gap: 8px;
         }
         .focal-col-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 0.6rem;
-            font-size: 0.82rem;
-            color: rgba(255,255,255,0.8);
-            font-weight: 600;
-            padding-bottom: 0.25rem;
-            border-bottom: 1px dashed rgba(94,234,212,0.15);
+            gap: 10px;
+            font-size: 15px;
+            color: #d8dde9;
+            font-weight: 700;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(96, 110, 145, 0.25);
+            margin-bottom: 2px;
         }
         .focal-col-cta {
-            font-size: 0.72rem;
-            color: rgba(94,234,212,0.85);
+            font-size: 12.5px;
+            color: #7eb4ff;
             text-decoration: none;
+            font-weight: 500;
             transition: color 0.18s;
         }
-        .focal-col-cta:hover { color: #5eead4; }
+        .focal-col-cta:hover { color: #a6cdff; }
+        /* === Card rows === */
         .focal-card-row {
             display: flex;
-            gap: 0.55rem;
+            gap: 10px;
             align-items: stretch;
-            padding: 0.5rem 0.55rem;
-            background: rgba(15,28,52,0.4);
-            border: 1px solid transparent;
-            border-radius: 8px;
+            padding: 10px 12px;
+            background: rgba(20, 26, 45, 0.6);
+            border: 1px solid rgba(96, 110, 145, 0.18);
+            border-radius: 10px;
             text-decoration: none;
             color: inherit;
             transition: background 0.18s, border-color 0.18s, transform 0.18s;
         }
         .focal-card-row:hover {
-            background: rgba(15,28,52,0.7);
-            border-color: rgba(94,234,212,0.35);
+            background: rgba(28, 36, 60, 0.75);
+            border-color: rgba(120, 145, 200, 0.45);
             transform: translateX(2px);
         }
         .focal-rank {
             display: inline-flex;
             align-items: flex-start;
             justify-content: center;
-            min-width: 18px;
-            color: rgba(94,234,212,0.6);
-            font-size: 0.82rem;
+            min-width: 22px;
+            color: #98a2b8;
+            font-size: 14px;
             font-weight: 700;
-            padding-top: 1px;
+            padding-top: 2px;
         }
         .focal-card-body {
             display: flex;
             flex-direction: column;
-            gap: 0.2rem;
+            gap: 4px;
             flex: 1;
             min-width: 0;
         }
@@ -17137,28 +17735,29 @@ def _inject_focal_points_css() -> None:
             display: flex;
             align-items: baseline;
             justify-content: space-between;
-            gap: 0.5rem;
+            gap: 8px;
         }
         .focal-ticker {
             font-family: 'JetBrains Mono', 'Consolas', monospace;
-            font-size: 0.88rem;
+            font-size: 15px;
             font-weight: 700;
-            color: #fff;
+            color: #f4f6fb;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
         .focal-move {
-            font-size: 0.85rem;
+            font-size: 15px;
             font-weight: 700;
+            font-variant-numeric: tabular-nums;
             white-space: nowrap;
         }
-        .focal-move-pos { color: #34d399; }
-        .focal-move-neg { color: #f87171; }
-        .focal-move-neutral { color: rgba(255,255,255,0.55); }
+        .focal-move-pos { color: #6fd99a; }
+        .focal-move-neg { color: #f08894; }
+        .focal-move-neutral { color: #98a2b8; }
         .focal-card-name {
-            font-size: 0.72rem;
-            color: rgba(255,255,255,0.55);
+            font-size: 13px;
+            color: #b8c0d4;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -17166,32 +17765,97 @@ def _inject_focal_points_css() -> None:
         .focal-card-chips {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.25rem;
-            margin-top: 0.1rem;
+            gap: 4px;
+            margin-top: 2px;
         }
         .focal-chip {
             display: inline-block;
-            padding: 0.1rem 0.45rem;
+            padding: 2px 8px;
             border-radius: 999px;
-            background: rgba(94,234,212,0.08);
-            border: 1px solid rgba(94,234,212,0.15);
-            color: rgba(255,255,255,0.7);
-            font-size: 0.66rem;
+            background: rgba(96, 110, 145, 0.18);
+            border: 1px solid rgba(96, 110, 145, 0.32);
+            color: #c5cbdd;
+            font-size: 11.5px;
             white-space: nowrap;
         }
-        /* Tablet: stack 2 cols vertically */
-        @media (max-width: 980px) {
-            .focal-grid { grid-template-columns: 1fr; gap: 0.7rem; }
-            .focal-block { padding: 0.85rem 0.95rem; }
+        /* v1.12.4: Score chip tiers (matches momentum tone colors) */
+        .focal-score-strong {
+            background: rgba(76, 208, 168, 0.18);
+            border-color: rgba(111, 217, 154, 0.55);
+            color: #8be8b1;
+            font-weight: 600;
         }
-        /* Phone: tighter spacing */
+        .focal-score-mid {
+            background: rgba(220, 175, 60, 0.18);
+            border-color: rgba(230, 195, 95, 0.50);
+            color: #f4d68a;
+            font-weight: 600;
+        }
+        .focal-score-weak {
+            background: rgba(217, 102, 112, 0.16);
+            border-color: rgba(240, 136, 148, 0.45);
+            color: #f08894;
+            font-weight: 600;
+        }
+        /* v1.12.4: Volume status chips (fallback when % unavailable) */
+        .focal-vol-elevated {
+            background: rgba(91, 141, 239, 0.18);
+            border-color: rgba(126, 180, 255, 0.50);
+            color: #a6cdff;
+            font-weight: 600;
+        }
+        .focal-vol-light {
+            background: rgba(122, 132, 153, 0.16);
+            border-color: rgba(152, 162, 184, 0.40);
+            color: #98a2b8;
+        }
+        .focal-vol-normal {
+            background: rgba(96, 110, 145, 0.16);
+            border-color: rgba(120, 134, 165, 0.35);
+            color: #b8c0d4;
+        }
+        /* v1.12.4: Signal chip tones */
+        .focal-signal-buy {
+            background: rgba(76, 208, 168, 0.12);
+            border-color: rgba(111, 217, 154, 0.40);
+            color: #8be8b1;
+        }
+        .focal-signal-sell {
+            background: rgba(217, 102, 112, 0.12);
+            border-color: rgba(240, 136, 148, 0.40);
+            color: #f08894;
+        }
+        .focal-signal-hold {
+            background: rgba(220, 175, 60, 0.10);
+            border-color: rgba(230, 195, 95, 0.35);
+            color: #f4d68a;
+        }
+        /* v1.12.4: ETF Chinese name inline next to ticker */
+        .focal-etf-name {
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang TC",
+                         "Microsoft JhengHei", sans-serif;
+            font-size: 13.5px;
+            font-weight: 500;
+            color: #b8c0d4;
+            margin-left: 6px;
+        }
+        /* === Tablet: stack 2 cols vertically === */
+        @media (max-width: 900px) {
+            .focal-grid { grid-template-columns: 1fr; gap: 10px; }
+            .focal-block { padding: 14px 16px; }
+            .focal-block-title { font-size: 17.5px; }
+        }
+        /* === Phone === */
         @media (max-width: 480px) {
-            .focal-block { padding: 0.7rem 0.75rem; }
-            .focal-block-title { font-size: 0.98rem; }
-            .focal-card-row { padding: 0.4rem 0.45rem; }
-            .focal-ticker { font-size: 0.82rem; }
-            .focal-move { font-size: 0.8rem; }
-            .focal-card-name { font-size: 0.7rem; }
+            .focal-block { padding: 12px 14px; margin: 6px 0 10px 0; }
+            .focal-block-title { font-size: 16.5px; }
+            .focal-block-subtitle { font-size: 12.5px; }
+            .focal-col { padding: 10px 12px 8px 12px; }
+            .focal-card-row { padding: 8px 10px; }
+            .focal-ticker { font-size: 14px; }
+            .focal-move { font-size: 14px; }
+            .focal-card-name { font-size: 12.5px; }
+            .focal-chip { font-size: 11px; padding: 2px 7px; }
         }
         </style>
         """,
@@ -17202,33 +17866,129 @@ def _inject_focal_points_css() -> None:
 def render_today_focal_points(snapshot_row: dict | None) -> None:
     """Render the Today Focal Points block (Top 3 ETF + Top 3 supply chain).
 
-    v1.12.2a (2026-05-12): Changed fallback behavior — instead of silent
-    hide, now ALWAYS renders the block frame and shows a "(資料準備中)"
-    placeholder when data is missing. This way:
-      - Subscription users discover the feature exists
-      - When tomorrow's prefetch populates data, it lights up automatically
-      - Debug is easier: if you don't see the block at all, the issue is
-        gate (mode/scope), not data
+    v1.12.2b (2026-05-12): RECOVERY PATH — if caller passed snapshot_row=None
+    (e.g. caller went down the live-fetch branch for the global indicator),
+    we still try to fetch the snapshot ourselves, because focal points
+    SHOULD use snapshot regardless of what global indicator did. Without
+    this, force_live or transient errors would hide focal data even
+    though snapshot had it.
+
+    v1.12.2a: Always render frame; show "(資料準備中)" placeholder when
+    data missing instead of silent hide.
 
     Optional URL probe: append ?debug_focal=1 to see the raw payload
     that's being read. Removes itself after one render.
     """
     lang_zh = st.session_state.get("dashboard_language", "繁體中文") == "繁體中文"
 
-    # v1.12.2a: Debug probe — type ?debug_focal=1 in URL to see snapshot keys
+    # v1.12.2b: RECOVERY — if the caller's snapshot_row is None (because
+    # they took the live-fetch branch in render_global_market_indicator),
+    # try to load it independently here. Focal points should benefit from
+    # cached prefetch data even when the indicator was forced live.
+    recovery_attempted = False
+    recovery_succeeded = False
+    if not isinstance(snapshot_row, dict):
+        recovery_attempted = True
+        try:
+            scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
+            snapshot_row = load_main_dashboard_snapshot(scope)
+            recovery_succeeded = isinstance(snapshot_row, dict)
+        except Exception:
+            snapshot_row = None
+            recovery_succeeded = False
+
+    # v1.12.2c: Build data FIRST so debug probe can show what each helper
+    # returned (direct source-table reads vs cockpit fallback).
+    data = _build_today_focal_points_data(snapshot_row)
+    etfs = data["etfs"] if data else []
+    chains = data["chains"] if data else []
+
+    # v1.12.2a/c: Debug probe — type ?debug_focal=1 in URL to see what
+    # the helpers loaded. Now also shows v1.12.2c direct source-table results.
     try:
         debug_flag = _query_param_first("debug_focal")
     except Exception:
         debug_flag = ""
     if debug_flag:
+        recovery_note = (
+            f"\n- recovery: attempted={recovery_attempted}, succeeded={recovery_succeeded}"
+            if recovery_attempted else ""
+        )
+        # First peek what direct source-table helpers returned (separately
+        # from the merged output, to see which path won).
+        try:
+            direct_chains = _load_focal_supply_chains_from_lab(limit=3)
+        except Exception as exc:
+            direct_chains = f"ERROR: {exc}"
+        try:
+            direct_etfs = _load_focal_active_etfs_from_lab(limit=3)
+        except Exception as exc:
+            direct_etfs = f"ERROR: {exc}"
+        direct_chain_count = (
+            len(direct_chains) if isinstance(direct_chains, list) else direct_chains
+        )
+        direct_etf_count = (
+            len(direct_etfs) if isinstance(direct_etfs, list) else direct_etfs
+        )
+        # v1.12.2e: Raw probe — directly query Supabase active_etf_snapshots
+        # table without ticker filter to see what's actually IN the table.
+        raw_etf_table_probe = "(probe skipped)"
+        try:
+            from urllib.request import Request, urlopen
+            from urllib.parse import quote_plus as _qp
+            probe_path = (
+                f"{SUPABASE_URL}/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+                f"?select=ticker,as_of_date,status,fetched_at"
+                f"&order=fetched_at.desc&limit=10"
+            )
+            req = Request(
+                probe_path,
+                headers={
+                    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                    "Accept": "application/json",
+                },
+                method="GET",
+            )
+            with urlopen(req, timeout=6) as resp:
+                raw_data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(raw_data, list):
+                if not raw_data:
+                    raw_etf_table_probe = "EMPTY (table has 0 rows)"
+                else:
+                    summary_lines = [
+                        f"  - {r.get('ticker', '?')} | {r.get('as_of_date', '?')} | {r.get('status', '?')} | {r.get('fetched_at', '?')[:19]}"
+                        for r in raw_data
+                    ]
+                    raw_etf_table_probe = f"({len(raw_data)} rows)\n" + "\n".join(summary_lines)
+            else:
+                raw_etf_table_probe = f"NON-LIST response: {type(raw_data).__name__}"
+        except Exception as exc:
+            raw_etf_table_probe = f"PROBE FAILED: {type(exc).__name__}: {str(exc)[:100]}"
         st.info(
-            f"🔍 **Focal Debug**\n\n"
+            f"🔍 **Focal Debug (v1.12.2f)**\n\n"
+            f"**Supabase config check:**\n"
+            f"- SUPABASE_URL set: `{bool(SUPABASE_URL)}` (len={len(SUPABASE_URL)})\n"
+            f"- SUPABASE_SERVICE_ROLE_KEY set: `{bool(SUPABASE_SERVICE_ROLE_KEY)}` (len={len(SUPABASE_SERVICE_ROLE_KEY)})\n"
+            f"- _supabase_is_configured: `{_supabase_is_configured()}`\n"
+            f"- _supabase_service_is_configured: `{_supabase_service_is_configured()}`\n"
+            f"\n**Direct source-table reads:**\n"
+            f"- direct supply_chain rows: `{direct_chain_count}`\n"
+            f"- direct active_etf rows: `{direct_etf_count}`\n"
+            f"\n**ETF helper per-ticker trace:**\n"
+            f"```\n{chr(10).join(st.session_state.get('_focal_etf_helper_trace', ['(no trace)']))}\n```\n"
+            f"\n**RAW Supabase `active_etf_snapshots` table probe (latest 10 rows):**\n"
+            f"```\n{raw_etf_table_probe}\n```\n"
+            f"\n**Cockpit fallback (snapshot_row):**\n"
+            f"- snapshot_row type: `{type(snapshot_row).__name__}`\n"
             f"- snapshot_row is dict: `{isinstance(snapshot_row, dict)}`\n"
-            f"- snapshot_row keys: `{list(snapshot_row.keys()) if isinstance(snapshot_row, dict) else 'N/A'}`\n"
             f"- cockpit_q3_payload type: `{type(snapshot_row.get('cockpit_q3_payload')).__name__ if isinstance(snapshot_row, dict) else 'N/A'}`\n"
-            f"- cockpit_q3_payload keys: `{list(snapshot_row['cockpit_q3_payload'].keys()) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
-            f"- active_etfs count: `{len(snapshot_row['cockpit_q3_payload'].get('active_etfs') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
-            f"- chain_rankings count: `{len(snapshot_row['cockpit_q3_payload'].get('chain_rankings') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
+            f"- cockpit active_etfs count: `{len(snapshot_row['cockpit_q3_payload'].get('active_etfs') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
+            f"- cockpit chain_rankings count: `{len(snapshot_row['cockpit_q3_payload'].get('chain_rankings') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`"
+            f"{recovery_note}\n"
+            f"\n**Final merged output:**\n"
+            f"- etfs (Top {len(etfs)}): `{[e.get('ticker') for e in etfs if isinstance(e, dict)]}`\n"
+            f"- chains (Top {len(chains)}): `{[c.get('title') for c in chains if isinstance(c, dict)]}`"
         )
         # Pop debug param so it doesn't persist
         try:
@@ -17237,10 +17997,6 @@ def render_today_focal_points(snapshot_row: dict | None) -> None:
                 del qp["debug_focal"]
         except Exception:
             pass
-
-    data = _build_today_focal_points_data(snapshot_row)
-    etfs = data["etfs"] if data else []
-    chains = data["chains"] if data else []
 
     _inject_focal_points_css()
 
@@ -47680,25 +48436,29 @@ def generate_dashboard():
         )
         render_global_market_indicator(global_indicator)
 
-    # v1.12.2 (2026-05-12): Today Focal Points block.
-    # Renders Top 3 active ETFs + Top 3 supply chain rankings as a focal
-    # entry point so users see *what's worth looking at today* immediately
-    # after the macro indicator. Click handlers (?focal_jump=...) jump
-    # them directly into the relevant Lab mode for deeper analysis.
-    # Gated to: General Market mode + Taiwan only scope.
-    # Fallback: silently hides if snapshot has no cockpit_q3_payload.
-    if (
+    # v1.12.2 / v1.12.6: Today Focal Points + Momentum Pulse blocks.
+    # These 2 blocks form the discovery hook for subscription users —
+    # they show ONLY when the user is in the "總覽 / Overview" state.
+    # When the user picks 投資規劃 / 股票比較 / 股票研究 / AI 分析分享,
+    # the dedicated layout takes over and these hook blocks are hidden
+    # (so the screen doesn't compete with the chosen feature).
+    #
+    # Gates: General Market mode + Taiwan only scope + experience_level == "overview"
+    _focal_exp_level = st.session_state.get("dashboard_experience_level", "overview")
+    _focal_show_hooks = (
         dashboard_mode == "General Market"
         and st.session_state.get("dashboard_market_scope", "Taiwan only") == "Taiwan only"
-    ):
+        and _focal_exp_level == "overview"
+    )
+
+    if _focal_show_hooks:
+        # Today Focal Points (Top 3 ETF + Top 3 Supply Chain)
         render_today_focal_points(snapshot_row)
 
-    # v1.9.5: Tomorrow Momentum Pulse — compact 5-row table that estimates
-    # next-session strength from the previous close.
-    # v1.12.1h: This block now lives AFTER the market indicator (was before
-    # in v1.9.5–v1.12.1g). Gated to General Market mode only (per v1.9.4 —
-    # focused modes don't show analysis blocks).
-    if dashboard_mode == "General Market":
+    # v1.9.5 / v1.12.6: Tomorrow Momentum Pulse — same hook-only gate as focal.
+    # Was previously gated to General Market only; v1.12.6 narrowed to
+    # overview state so the hook doesn't fight with feature pages.
+    if _focal_show_hooks:
         _momentum_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
         render_tomorrow_momentum_pulse(_momentum_scope)
 
@@ -47898,12 +48658,19 @@ def generate_dashboard():
             layout_mode=layout_mode,
             supply_chain_keys=selected_supply_chain_groups,
         )
+    elif _focal_show_hooks:
+        # v1.12.6: Overview state (focal + momentum hook visible)
+        # — skip the layout dispatch. Showing Standard/Advanced/Expert
+        # layout content here would compete with the hook UI. The user
+        # picks 投資規劃 / 股票比較 / 股票研究 to enter the layout flow.
+        pass
     else:
         # v1.10.4: AI Analysis dispatch was promoted to early-return
         # at the top of generate_dashboard() (right after Taiwan Futures
         # Lab). General Market mode reaching this point means the user
         # is on Intermediate / Advanced / Expert level OR on U.S. scope
         # (Beginner + U.S. falls through to standard layout per v1.10.1).
+        # v1.12.6: Overview level is intercepted above (no layout render).
         render_general_market_dashboard_layout(
             daily_data,
             intraday_data,
