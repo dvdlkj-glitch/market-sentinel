@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.7
+Version : v1.12.8
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,43 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.8 (2026-05-12)  [Fix v1.12.6 regression: US theme radar & TSMC Top 5 disappeared]
+
+  User report: 「在進入Dashboard 的狀態選美股,原本做好的組別都不會顯示」
+  (After picking U.S. scope, the existing themed-group view disappeared.)
+
+  Root cause (v1.12.6 bug):
+    v1.12.6 gated render_tomorrow_momentum_pulse() behind _focal_show_hooks,
+    which requires experience_level == "overview" AND scope == "Taiwan only".
+    But momentum_pulse's internal helper (_render_live_momentum_and_tsmc_block)
+    CHAINS into render_us_theme_radar_standalone() for U.S. scope and
+    render_tsmc_supply_chain_top5_recommendations() for Taiwan scope.
+    These are the user's DAILY navigation surface (5 US themes × 28
+    tickers, TSMC Top 5 recommendations) — NOT discovery hooks.
+
+    Effect:
+    - Taiwan + 投資規劃/股票比較/股票研究 → TSMC Top 5 disappeared
+    - U.S. + any state (incl. overview) → US Theme Radar disappeared
+    - Only Taiwan + overview kept these visible
+
+  Fix:
+    Decoupled the two gates:
+    - render_today_focal_points: still gated to overview (it IS a hook)
+    - render_tomorrow_momentum_pulse: back to General Market only gate
+      (v1.12.5 behavior). Drops the experience_level + scope checks
+      added in v1.12.6 because momentum pulse's downstream "組別" calls
+      are core navigation, not hooks.
+
+  No effect on the dispatch short-circuit (elif _focal_show_hooks: pass)
+  — that one is still correctly overview-only and keeps the Standard
+  layout content hidden in the overview hook page.
+
+  Tests: 4 smoke tests verifying:
+    - momentum pulse renders for ALL General Market states
+    - focal points stays overview-only (no regression of v1.12.6)
+    - US theme radar / TSMC Top 5 reachable
+    - v1.12.5 + v1.12.6 + v1.12.7 changes all preserved
 
 v1.12.7 (2026-05-12)  [Hero Bar: commercial copywriting for the 5 button hints]
 
@@ -48466,14 +48503,20 @@ def generate_dashboard():
         )
         render_global_market_indicator(global_indicator)
 
-    # v1.12.2 / v1.12.6: Today Focal Points + Momentum Pulse blocks.
-    # These 2 blocks form the discovery hook for subscription users —
-    # they show ONLY when the user is in the "總覽 / Overview" state.
-    # When the user picks 投資規劃 / 股票比較 / 股票研究 / AI 分析分享,
-    # the dedicated layout takes over and these hook blocks are hidden
-    # (so the screen doesn't compete with the chosen feature).
+    # v1.12.2 / v1.12.6 / v1.12.8: Focal Points + Momentum Pulse blocks.
     #
-    # Gates: General Market mode + Taiwan only scope + experience_level == "overview"
+    # v1.12.6 BUG (fixed in v1.12.8): both blocks were gated together to
+    # overview state only. But momentum_pulse internally also renders
+    # TSMC Top 5 (Taiwan scope) AND U.S. Theme Radar (U.S. scope) — these
+    # are NOT "overview-only" hooks, they're the user's daily go-to
+    # group lists. Hiding them in non-overview states made the "美股組別"
+    # disappear when user picked U.S. scope.
+    #
+    # CORRECT split:
+    #   - render_today_focal_points : ONLY in overview state (it IS the hook)
+    #   - render_tomorrow_momentum_pulse : in ANY General Market state
+    #     (back to v1.12.5 behavior — the inner US theme radar / TSMC Top 5
+    #     are the user's primary navigation, not hooks)
     _focal_exp_level = st.session_state.get("dashboard_experience_level", "overview")
     _focal_show_hooks = (
         dashboard_mode == "General Market"
@@ -48482,13 +48525,14 @@ def generate_dashboard():
     )
 
     if _focal_show_hooks:
-        # Today Focal Points (Top 3 ETF + Top 3 Supply Chain)
+        # Today Focal Points (Top 3 ETF + Top 3 Supply Chain) — overview-only
         render_today_focal_points(snapshot_row)
 
-    # v1.9.5 / v1.12.6: Tomorrow Momentum Pulse — same hook-only gate as focal.
-    # Was previously gated to General Market only; v1.12.6 narrowed to
-    # overview state so the hook doesn't fight with feature pages.
-    if _focal_show_hooks:
+    # v1.9.5: Tomorrow Momentum Pulse — NO experience_level gate.
+    # Always renders when General Market mode is active because momentum
+    # pulse internally chains into TSMC Top 5 (Taiwan) or U.S. Theme Radar
+    # (U.S.) — these are core navigation, not hooks that should hide.
+    if dashboard_mode == "General Market":
         _momentum_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
         render_tomorrow_momentum_pulse(_momentum_scope)
 
