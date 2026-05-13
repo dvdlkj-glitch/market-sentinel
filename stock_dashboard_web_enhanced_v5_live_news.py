@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1f
+Version : v1.12.1g
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,51 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1g (2026-05-12)  [US theme radar: add company name under ticker]
+
+  - User requested: in the US theme radar (U.S. only mode), show the full
+    company name underneath each ticker symbol so subscription users who
+    don't memorize ticker codes can recognize stocks at a glance.
+
+  - Layout choice = "A" (stacked):
+      ┌──────────────────────────────────────────────┐
+      │ ANET                  $142.54   +4.48% 📈    │
+      │ Arista Networks                              │
+      │                                              │
+      │ VRT                   $367.13   -0.21% 📉    │
+      │ Vertiv Holdings                              │
+      └──────────────────────────────────────────────┘
+    Ticker stays on top (primary, mono font, white, bold), company name
+    sits below (secondary, smaller, muted, narrower).
+
+  Implementation:
+    1. New helper: _us_ticker_display_name(ticker)
+         - Looks up runtime_meta first (populated by yfinance fetch)
+         - Falls back to hardcoded _US_TICKER_NAME_FALLBACK_MAP (covers
+           all 35 US theme tickers verbatim — no missed lookups)
+         - Trims common suffixes (Inc., Corporation, plc, etc.) for cleaner
+           display in tight row space
+    2. Row HTML in _cockpit_render_us_theme_radar_html — new
+       <div class="us-radar-company-name"> sibling under .us-radar-tk
+    3. New CSS class .us-radar-company-name:
+         - font-size 0.74rem (vs 0.92 on ticker)
+         - color rgba(255,255,255,0.55) — muted vs full white
+         - line-height 1.25
+         - overflow ellipsis with nowrap to prevent ultra-long names
+           from breaking row grid (e.g. "POET Technologies Inc." trim)
+    4. Tablet media query: shrink to 0.7rem
+
+  Scope: All 6 themes (35 tickers) — uniform styling.
+    MAG 7 / Oil Equities / Energy (Div.) / DRAM / Data Center / Si Photonics
+
+  Tests: 6 smoke tests covering:
+    - All 35 US theme tickers have fallback name in map
+    - Helper returns empty string for unknown ticker (not crash)
+    - HTML row contains new company-name div
+    - CSS class present + tablet variant present
+    - Suffix trimming for "Inc.", "Corp.", etc.
+    - No regression in existing chip/mini-chip rendering
 
 v1.12.1f (2026-05-12)  [US theme radar: NEW theme "Silicon Photonics / CPO"]
 
@@ -36548,6 +36593,20 @@ def _cockpit_inject_css() -> None:
             font-family: 'JetBrains Mono', 'Consolas', monospace;
             font-size: 0.92rem; font-weight: 700; color: #fff;
         }
+        /* v1.12.1g: Company name displayed below ticker (Layout A: stacked) */
+        .us-radar-company-name {
+            font-size: 0.74rem;
+            color: rgba(255, 255, 255, 0.55);
+            font-weight: 400;
+            letter-spacing: 0.01em;
+            line-height: 1.25;
+            margin-top: 1px;
+            /* Prevent ultra-long names from breaking row layout */
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .us-radar-px {
             font-size: 0.95rem; color: rgba(255,255,255,0.65);
         }
@@ -37200,6 +37259,7 @@ def _cockpit_inject_css() -> None:
                 padding: 0.35rem 0.5rem;
             }
             .us-radar-tk { font-size: 0.95rem; }
+            .us-radar-company-name { font-size: 0.7rem; }
             .us-radar-px { font-size: 0.88rem; }
             .us-radar-move { font-size: 0.78rem; min-width: 56px; }
             /* v1.8.3: pulse banner stacks score below body on tablet */
@@ -38942,6 +39002,102 @@ def _us_radar_compare_queue_html(
     )
 
 
+# ---------------------------------------------------------------------------
+# v1.12.1g: Helper to look up the company display name for a US ticker
+# ---------------------------------------------------------------------------
+# Used by _cockpit_render_us_theme_radar_html to render a 2-line row layout
+# where the ticker is on top and the company name is shown below it.
+#
+# Fallback chain (most accurate first):
+#   1. Runtime metadata (from yfinance .info during fetch, populated by
+#      register_runtime_symbol_metadata) — most accurate, but may be missing
+#      if yfinance was rate-limited or the snapshot is stale.
+#   2. Hardcoded curated map below — covers the 35 known US theme tickers.
+#      Updated 2026-05-12 (v1.12.1g) to align with US_THEME_GROUPS.
+#   3. Empty string — caller renders ticker alone if no name available.
+#
+# We DON'T fall back to display_ticker_label() because that function returns
+# "TICKER Company Name" combined — for the 2-line layout we need just the
+# company part. Hence this dedicated helper.
+_US_TICKER_NAME_FALLBACK_MAP: dict[str, str] = {
+    # MAG 7
+    "NVDA":  "NVIDIA",
+    "META":  "Meta Platforms",
+    "AAPL":  "Apple",
+    "AMZN":  "Amazon",
+    "GOOGL": "Alphabet (Google)",
+    "MSFT":  "Microsoft",
+    "TSLA":  "Tesla",
+    # Oil Equities
+    "XLE":   "Energy Select ETF",
+    "XOM":   "Exxon Mobil",
+    "CVX":   "Chevron",
+    "OXY":   "Occidental Petroleum",
+    "COP":   "ConocoPhillips",
+    # Energy (Diversified) — v1.12.1e
+    "NEE":   "NextEra Energy",
+    "ENPH":  "Enphase Energy",
+    "CEG":   "Constellation Energy",
+    "FSLR":  "First Solar",
+    "PLUG":  "Plug Power",
+    # DRAM / Memory
+    "MU":    "Micron Technology",
+    "WDC":   "Western Digital",
+    "SNDK":  "SanDisk",
+    # Data Center
+    "DLR":   "Digital Realty Trust",
+    "EQIX":  "Equinix",
+    "VRT":   "Vertiv Holdings",
+    "NVT":   "nVent Electric",
+    "ETN":   "Eaton Corp",
+    "MOD":   "Modine Manufacturing",
+    "AVGO":  "Broadcom",
+    "ANET":  "Arista Networks",
+    # Silicon Photonics / CPO — v1.12.1f
+    "MRVL":  "Marvell Technology",
+    "COHR":  "Coherent",
+    "LITE":  "Lumentum",
+    "GFS":   "GlobalFoundries",
+    "GLW":   "Corning",
+    "CRDO":  "Credo Technology",
+    "POET":  "POET Technologies",
+}
+
+
+def _us_ticker_display_name(ticker: str) -> str:
+    """v1.12.1g: Resolve a US ticker to its short company name for use in
+    the US theme radar's 2-line row layout.
+
+    Tries runtime metadata first (which yfinance populates during fetch),
+    then the hardcoded curated map. Returns empty string if no name found.
+    """
+    if not ticker:
+        return ""
+    tk = str(ticker).upper().strip()
+    # 1. Runtime metadata (populated by register_runtime_symbol_metadata)
+    runtime_name = ""
+    try:
+        runtime_meta = get_runtime_symbol_metadata(tk)
+        runtime_name = str(runtime_meta.get("name", "") or "").strip()
+    except Exception:
+        runtime_name = ""
+    if runtime_name:
+        # yfinance "longName" can include "Inc.", "Corporation" suffixes
+        # which make the row crowded. Trim common suffixes for cleaner display.
+        for suffix in (
+            ", Inc.", " Inc.", ", Inc", " Inc",
+            " Corporation", " Corp.", " Corp",
+            " plc", " PLC", " Ltd.", " Ltd",
+            " Holdings", " Holding",
+        ):
+            if runtime_name.endswith(suffix):
+                runtime_name = runtime_name[:-len(suffix)].strip()
+                break
+        return runtime_name
+    # 2. Hardcoded curated fallback
+    return _US_TICKER_NAME_FALLBACK_MAP.get(tk, "")
+
+
 def _cockpit_render_us_theme_radar_html(
     radar: list[dict],
     lang_zh: bool,
@@ -39026,6 +39182,12 @@ def _cockpit_render_us_theme_radar_html(
                     ticker_mini_chips_html = _us_ticker_mini_chip_strip_html(
                         this_ticker_catalyst, lang_zh
                     )
+                # v1.12.1g: 2-line layout — ticker on top, company name below
+                company_name = _us_ticker_display_name(tk)
+                company_name_html = (
+                    f'<div class="us-radar-company-name">{escape(company_name)}</div>'
+                    if company_name else ""
+                )
                 leader_rows.append(
                     f'<a class="us-radar-row-link" '
                     f'href="{escape(row_href)}" target="_self" '
@@ -39034,6 +39196,7 @@ def _cockpit_render_us_theme_radar_html(
                     f'<div class="us-radar-row">'
                     f'  <div class="us-radar-tk-cell">'
                     f'    <div class="us-radar-tk">{tk}</div>'
+                    f'    {company_name_html}'
                     f'    {ticker_mini_chips_html}'
                     f'  </div>'
                     f'  <div class="us-radar-px">{price_str}</div>'
