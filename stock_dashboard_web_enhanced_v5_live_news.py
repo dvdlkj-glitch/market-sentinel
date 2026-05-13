@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.1d
+Version : v1.12.1e
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -44,7 +44,7 @@ MARKET SCOPES:
 US THEME RADAR (v1.7.x), shown ONLY in U.S. only mode (replaces Q1-Q5):
   - 🌟 MAG 7         — NVDA, META, AAPL, AMZN, GOOGL, MSFT, TSLA  (7 ticks)
   - 🛢️ Oil Equities  — XLE, XOM, CVX, OXY, COP                    (5 ticks)
-  - 🏗️ Materials     — LIN, SHW, FCX, NEM, APD                    (5 ticks)
+  - ⚡ Energy (Div.) — NEE, ENPH, CEG, FSLR, PLUG                  (5 ticks) [v1.12.1e]
   - 💾 DRAM/Memory   — MU, WDC, SNDK                              (3 ticks)
   - 🏢 Data Center   — DLR, EQIX, VRT, NVT, ETN, MOD, AVGO, ANET  (8 ticks)
   Total: 28 tickers, each card shows ALL its tickers sorted by today's % move.
@@ -244,6 +244,36 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.1e (2026-05-12)  [US theme radar: Materials → Energy (Diversified)]
+
+  - User requested: replace "化工材料股" (Materials) theme in the US-only
+    theme radar with "Top 5 廣義能源股" — clean energy / renewables /
+    nuclear, distinct from the existing oil_stocks theme (which stays).
+
+  - Rationale:
+    The existing oil_stocks theme already covers fossil fuels (XLE, XOM,
+    CVX, OXY, COP). The new energy_diversified theme covers the rest of
+    the energy stack (renewables, nuclear, hydrogen) — both complementary,
+    no duplicate tickers between the two themes.
+
+  Changes:
+    US_THEME_GROUPS[2] swapped:
+      OLD: key="materials",          tickers=["LIN", "SHW", "FCX", "NEM", "APD"]
+      NEW: key="energy_diversified", tickers=["NEE", "ENPH", "CEG", "FSLR", "PLUG"]
+
+    Ticker rationale:
+      NEE  = NextEra Energy   (utility-scale renewables giant)
+      ENPH = Enphase Energy   (solar microinverters)
+      CEG  = Constellation Energy (largest US nuclear operator)
+      FSLR = First Solar      (US-domestic solar manufacturing)
+      PLUG = Plug Power       (hydrogen fuel cell)
+
+  - 5-theme radar structure preserved:
+      MAG7 / Oil Equities / Energy (Diversified) / DRAM / Data Center
+
+  Tests: 4 smoke tests verifying ticker uniqueness, theme count = 5,
+  label localization (zh/en), no orphan reference to "materials" key.
 
 v1.12.1d (2026-05-12)  [BFI82U row parser - based on ACTUAL TWSE row structure]
 
@@ -34218,11 +34248,11 @@ US_THEME_GROUPS = [
         "tickers": ["XLE", "XOM", "CVX", "OXY", "COP"],
     },
     {
-        "key": "materials",
-        "emoji": "🏗️",
-        "label_zh": "化工材料股",
-        "label_en": "Materials",
-        "tickers": ["LIN", "SHW", "FCX", "NEM", "APD"],
+        "key": "energy_diversified",
+        "emoji": "⚡",
+        "label_zh": "能源股 (廣義)",
+        "label_en": "Energy (Diversified)",
+        "tickers": ["NEE", "ENPH", "CEG", "FSLR", "PLUG"],
     },
     {
         "key": "dram_memory",
