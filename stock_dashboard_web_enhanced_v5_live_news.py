@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.8
+Version : v1.12.9
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,55 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.12.9 (2026-05-12)  [CRITICAL fix: focal-points CSS vanished on rerun (anti-pattern)]
+
+  User report: 「今日重點」block 樣式完全壞了 — supply-chain rows squashed
+  into 1 line of plain text instead of styled cards.
+
+  Root cause:
+    _inject_focal_points_css() used the WRONG injection pattern —
+    session_state guard:
+
+        def _inject_focal_points_css() -> None:
+            if st.session_state.get("_focal_points_css_injected"):
+                return
+            st.session_state["_focal_points_css_injected"] = True
+            st.markdown("<style>...</style>", unsafe_allow_html=True)
+
+    This is the EXACT anti-pattern that v1.10.1 fixed in
+    _ensure_tomorrow_momentum_css(). Streamlit reruns the whole script
+    on every interaction and rebuilds the DOM, so a once-per-session
+    flag causes <style> tags to be dropped on the 2nd+ rerun (only the
+    first render's style tag survives, but DOM rebuild can lose it).
+
+  Effect timeline:
+    - v1.12.2 added _inject_focal_points_css with session-state guard
+    - First render after reboot: CSS injected ✓
+    - After interaction (button click, autorefresh, scope switch):
+      Streamlit reruns → guard returns early → no CSS → plain inline HTML
+    - User saw styled focal on initial load but plain after switching
+
+  Fix:
+    1. Pulled the full CSS string out to module-level constant
+       _FOCAL_POINTS_CSS (avoids re-creating the same string per render)
+    2. _inject_focal_points_css() is now a single line:
+       render_html_block(_FOCAL_POINTS_CSS)
+       — same pattern as _ensure_tomorrow_momentum_css (v1.10.1)
+    3. Removed session_state["_focal_points_css_injected"] flag check.
+
+  Why it's safe:
+    - Multiple identical <style> blocks in DOM don't conflict (CSS is
+      declarative, last-wins, identical = no-op)
+    - render_html_block is already used by 12 other CSS injectors and
+      this is the proven pattern in this codebase
+
+  Tests: 4 smoke tests:
+    - _FOCAL_POINTS_CSS module constant defined
+    - _inject_focal_points_css contains render_html_block(_FOCAL_POINTS_CSS)
+    - No session_state guard remains in _inject_focal_points_css
+    - All CSS class names from v1.12.4 preserved (focal-score-strong,
+      focal-vol-elevated, focal-signal-buy, focal-etf-name, etc.)
 
 v1.12.8 (2026-05-12)  [Fix v1.12.6 regression: US theme radar & TSMC Top 5 disappeared]
 
@@ -17683,19 +17732,7 @@ def _focal_card_chain_html(item: dict, rank: int, lang_zh: bool) -> str:
     )
 
 
-def _inject_focal_points_css() -> None:
-    """Inject CSS for the focal-points block once per session.
-
-    v1.12.3 (2026-05-12): Restyled to match the 「明日動能脈搏」(momentum
-    pulse) block's visual language — larger fonts, neutral slate gradient
-    (vs the previous teal-tinted one), thicker rows. The two blocks
-    sit next to each other on the page, so visual consistency matters.
-    """
-    if st.session_state.get("_focal_points_css_injected"):
-        return
-    st.session_state["_focal_points_css_injected"] = True
-    st.markdown(
-        """
+_FOCAL_POINTS_CSS = """
         <style>
         /* === Outer shell: matches momentum-pulse-shell === */
         .focal-block {
@@ -17925,9 +17962,30 @@ def _inject_focal_points_css() -> None:
             .focal-chip { font-size: 11px; padding: 2px 7px; }
         }
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+
+
+def _inject_focal_points_css() -> None:
+    """Inject CSS for the focal-points block.
+
+    v1.12.9 (2026-05-12): FIX — removed session_state guard that caused
+    CSS to vanish on the second rerun (same anti-pattern as
+    _ensure_tomorrow_momentum_css v1.10.1 already fixed).
+
+    Streamlit reruns the whole script on every interaction and rebuilds
+    the DOM, so a once-per-session guard caused styles to disappear on
+    rerun. CSS in <style> tags is idempotent (multiple identical style
+    blocks don't conflict), so unconditional injection is correct.
+
+    Earlier v1.12.3 inlined the entire CSS in this function, gated by
+    `if st.session_state.get("_focal_points_css_injected"): return`.
+    That caused the focal-points block to render as plain inline text
+    after the first interaction (visible: every supply-chain row
+    squashed into one line, all the .focal-card-row flex layout gone).
+    Pulled out as _FOCAL_POINTS_CSS module-level constant so the
+    function is now a single render_html_block call.
+    """
+    render_html_block(_FOCAL_POINTS_CSS)
 
 
 def render_today_focal_points(snapshot_row: dict | None) -> None:
