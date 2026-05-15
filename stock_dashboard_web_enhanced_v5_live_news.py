@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.12.9
+Version : v1.13.2
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,196 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.2 (2026-05-12)  [US Theme Radar 排版升級: Bloomberg-style 公司名為主]
+
+  User request: institutional-style layout for the 6 U.S. theme groups
+  (MAG 7 / Oil / Energy Diversified / DRAM / Data Center / Silicon
+  Photonics). Make company name the PRIMARY identifier, ticker
+  SECONDARY — matching Bloomberg / Reuters terminal conventions.
+
+  Pure CSS/HTML refactor — ZERO functional changes:
+    - No formula changes
+    - No data fetch changes
+    - No new dependencies
+    - Click handlers / radar_jump URLs unchanged
+    - All 6 themes affected the same way (single render path)
+
+  Before (v1.12.1g):
+    [NVDA]  NVIDIA  [▲AI需求 6]            $235.74  +4.39%
+    ↑monospace, bold, white                  
+    Same horizontal flex row — name+ticker+chips fight for space.
+
+  After (v1.13.2):
+    NVIDIA                                  $235.74  +4.39%
+    NVDA  [▲AI需求 6]
+    ↑ 0.92rem, weight 600, white (PRIMARY)
+    ↓ 0.78rem, weight 500, mono, dimmed (SECONDARY)
+
+  HTML changes:
+    - .us-radar-tk-cell now wraps in column flex
+    - Company name <div> moved BEFORE the ticker block (row 1)
+    - New container .us-radar-tk-row wraps ticker + mini chips (row 2)
+
+  CSS changes:
+    - .us-radar-company-name: 0.74→0.92rem, weight 400→600,
+      color rgba(255,255,255,0.55) → rgba(255,255,255,0.95) (PRIMARY)
+    - .us-radar-tk: 0.92→0.78rem, weight 700→500, color #fff →
+      rgba(255,255,255,0.62) (SECONDARY)
+    - .us-radar-tk-cell: flex-direction row → column, removed gap/wrap
+    - NEW: .us-radar-tk-row { display:flex; row-direction; for tk+chips }
+    - Tablet breakpoint (1024px): tk 0.95→0.74rem, name 0.7→0.86rem
+      (also flipped to match Bloomberg hierarchy)
+
+  Impact: all 6 themes × ~5-7 tickers per theme = ~30 ticker rows
+  re-arranged. Company name now scannable at-a-glance, ticker still
+  visible as identifier below.
+
+  Tests: 5 smoke tests verifying CSS values, HTML order, breakpoints.
+
+v1.13.1 (2026-05-12)  [明日動能脈搏 Phase 2: 方向/強度/信心 + Key Drivers hook]
+
+  User wants the momentum block to feel like an actionable subscription
+  hook, not just a 50-point neutral number. Phase 2 adds 3 derived
+  metrics + key driver detection above the existing 8-row signal table.
+
+  PHASE 2 ADDITIONS (Taiwan side; U.S. unchanged):
+
+  1) Direction + Strength split:
+     Single 0-100 score → decomposed into:
+       🎯 預期方向: 偏多↑ / 中性→ / 偏空↓
+       ⚡ 預期幅度: 持平 / 小幅±0.3-0.7% / 中幅±0.7-1.5% / 強勢±1.5%+
+     Helper: _momentum_direction_strength(score, rows)
+     Logic: tone-count (pos/neg/neutral signals) cross-validated against
+     score-distance-from-50. Bullish requires either net_tone≥2 with
+     score≥47, OR score≥58 alone (override fallback).
+
+  2) Confidence metric (signal consistency × data completeness):
+     💡 信心度: 高●●●  /  中●●○  /  低●○○
+     Helper: _momentum_confidence(rows)
+     Formula:
+       consistency = max(pos_pts, neg_pts) / (pos_pts + neg_pts) × 100
+       data_factor: ≥6 ready → 1.0, 3-5 → 0.85, <3 → 0.6
+       adjusted = consistency × data_factor
+       Bands: ≥70 ∧ ≥5-ready → high
+              ≥50 ∧ ≥4-ready → medium
+              else → low
+
+  3) Key driver / warning / conflict detection:
+     🏆 最強訊號: highest-scoring tone=positive row (≥70% of budget)
+     ⚠️ 警示訊號: lowest-scoring tone=negative row (≤35% of budget)
+     🤔 矛盾警示: if 2+ strong-positive AND 2+ strong-negative both exist
+     Helper: _momentum_key_drivers(rows)
+     Surfaces the most actionable signals so user knows WHY today's
+     score is what it is — not just the aggregate.
+
+  4) New UI hook block — renders BETWEEN the verdict badge and the
+     8-row table. 3 columns: direction / strength / confidence,
+     followed by insight rows for top-driver / warning / conflict.
+     Mobile: 3 columns → 2 → 1 with confidence spanning full width
+     at 481-900px breakpoint.
+
+  5) CSS additions in _TOMORROW_MOMENTUM_CSS:
+     - .momentum-hook-block (container)
+     - .hook-metric + .hook-metric-direction/strength/confidence
+     - .hook-dir-bullish/bearish/neutral (color tones)
+     - .hook-conf-high/medium/low (color tones)
+     - .hook-insight-row + .hook-insight-driver/warning/conflict/empty
+     - Mobile + tablet breakpoints
+
+  6) Backwards compat:
+     - payload dict gains 3 NEW fields: direction, confidence, key_drivers
+     - All 3 are optional in render (block hides if missing)
+     - U.S. side payload is unchanged (no Phase 2 fields, no hook block)
+     - Existing 8-row table render is unchanged
+     - verdict badge (right side) is unchanged
+
+  No data-pipeline changes. All Phase 2 metrics derive from the same
+  rows[] array produced by Phase 1's score engine.
+
+  Tests: 9 smoke tests:
+    - 3 helper functions defined
+    - direction_strength returns expected keys
+    - confidence returns expected keys
+    - key_drivers returns expected keys
+    - Taiwan builder returns dict with 3 new top-level fields
+    - Hook block HTML emitted only for Taiwan + lang_zh
+    - CSS classes for direction/confidence/insights all present
+    - Mobile responsive breakpoints defined
+    - Version bump
+
+v1.13.0 (2026-05-12)  [明日動能脈搏 Phase 1: 量價交叉 + 10日 momentum + RSI 校正]
+
+  User request: improve the tomorrow-momentum formula so it produces a
+  more meaningful subscription hook — fix existing scoring bugs and
+  use stronger predictive factors.
+
+  Phase 1 scope (today): formula bug fixes + new factor.
+  Phase 2 (deferred to next session): direction / strength / confidence
+  split + key driver detection + UI changes.
+
+  THE 3 BUG FIXES + 1 NEW FACTOR:
+
+  1) Price-volume crossover replaces broken raw-ratio volume score:
+     OLD (v1.12.x): _momentum_volume_score returned 0 for any ratio<0.9.
+       → TSMC 量能 0.44x gave 0/15 even when price was rising healthily
+       → 量縮+漲 (healthy chip-locking) treated identically to 量縮+跌
+     NEW (v1.13.0): _momentum_volume_crossover_score combines volume
+     ratio + direction into a 4×3 quadrant scoring matrix:
+       量爆+漲 (heavy+up):   100% max  ← strongest bullish
+       量爆+跌 (heavy+down):  20% max  ← capitulation warning
+       量縮+漲 (light+up):    55% max  ← healthy chip-lock
+       量縮+跌 (light+down):  25% max  ← floor, never 0
+     Floor at ~20-25% so vol signals never zero out the score.
+
+  2) 5-day momentum → 10-day momentum (both TSMC + TAIEX):
+     5-day lookback was too noisy for next-day prediction. Academic
+     research (Jegadeesh-Titman 1993) suggests 10-day captures
+     trend with better signal-to-noise.
+     TSMC 5d (20 pts) → TSMC 10d (25 pts)
+     TAIEX 5d (8 pts) → TAIEX 10d (10 pts)
+
+  3) RSI(14) overbought/oversold correction (NEW 5 pts):
+     Penalizes mean-reversion risk when TSMC is overbought (>75).
+     U-shape curve gives both 50-65 (healthy trend) and 25-35
+     (oversold rebound) the highest marks.
+     Helper: _momentum_rsi() (Wilder's formula) + _momentum_rsi_score().
+
+  4) Budget rebalancing (still totals 100):
+     TSMC daily   25 → 15  (short-term return is noisy)
+     TSMC mom     20 → 25  (10d carries more weight)
+     TSMC volume  15 → 15  (now crossover-based)
+     TSMC RSI      0 →  5  (NEW)
+     TAIEX daily  10 → 10  (unchanged)
+     TAIEX mom     8 → 10  (10d bumped up)
+     TWSE vol     12 → 10  (rebalanced)
+     Inst flow    10 → 10  (unchanged)
+
+  UNCHANGED (intentionally — Phase 2 work):
+    - UI layout (still 1 score 0-100 + 7-8 rows)
+    - Verdict bands (≥70 strong / ≥40 neutral / <40 weak)
+    - U.S. side (Mag7) — Phase 1 is Taiwan-only fix
+    - Direction / strength / confidence split (Phase 2)
+    - Key driver / warning highlight (Phase 2)
+
+  Implementation notes:
+    - _momentum_volume_score kept (DEPRECATED) for U.S. backward compat
+    - Old "TSMC 5 日動能" row label → "TSMC 10 日動能"
+    - Old "TSMC 量能(對 20 日均量)" → "TSMC 量價結構"
+    - New row "TSMC RSI 校正" added (8th row in Taiwan)
+    - Missing-data placeholder row count: 3 → 4 for TSMC slice
+    - All score ranges recalibrated for 10d windows (was ±5%, now ±6%)
+
+  Risk:
+    - Score values will SHIFT (different formula). Users may notice
+      different "neutral 50.4" type readings. This is intentional —
+      old formula was buggy.
+    - History/backtest data starts fresh from v1.13.0 (Phase 3 cold start).
+    - Number of rows increased TSMC 3→4. UI render code is row-agnostic
+      so no UI changes needed.
+
+  Tests: 6 smoke tests for the new helpers, formula path, missing-data
+  placeholder count, budget summing to 100, version bump.
 
 v1.12.9 (2026-05-12)  [CRITICAL fix: focal-points CSS vanished on rerun (anti-pattern)]
 
@@ -15277,14 +15467,21 @@ TOMORROW_MOMENTUM_MAG7_TICKERS = [
 
 # Pre-budgeted per-signal point caps. Sum of each scope's caps = 100.
 TOMORROW_MOMENTUM_TAIWAN_BUDGET = {
+    # v1.13.0 (Phase 1): Rebalanced budget — TSMC daily noise reduced
+    # from 25→15, momentum lookback extended 5d→10d, RSI overbought
+    # correction added. Volume now uses price-volume crossover logic
+    # (see _momentum_volume_crossover_score) instead of broken raw ratio
+    # buckets that always gave 0 for ratio<0.9.
+    #
     # TSMC slice (60 pts total)
-    "tsmc_daily":   25,
-    "tsmc_5d":      20,
-    "tsmc_volume":  15,
+    "tsmc_daily":   15,   # was 25 — short-term return is noisy
+    "tsmc_10d":     25,   # was tsmc_5d 20 — longer momentum lookback
+    "tsmc_volume":  15,   # crossover logic now
+    "tsmc_rsi":      5,   # NEW — overbought / oversold correction
     # Market slice (40 pts total)
     "taiex_daily":  10,
-    "taiex_5d":      8,
-    "twse_volume":  12,
+    "taiex_10d":    10,   # was taiex_5d 8 — bumped + longer lookback
+    "twse_volume":  10,   # was 12 — crossover logic now
     "instl_flow":   10,
 }
 TOMORROW_MOMENTUM_US_BUDGET = {
@@ -15364,7 +15561,16 @@ def _momentum_linear_score(value: float | None, lo: float, hi: float, max_pts: f
 
 
 def _momentum_volume_score(latest_vol: float | None, avg_vol: float | None, max_pts: float) -> float:
-    """Volume scoring brackets. Latest volume vs the trailing 20-day mean."""
+    """Volume scoring brackets. Latest volume vs the trailing 20-day mean.
+
+    DEPRECATED in v1.13.0 (kept for U.S. side compat). Taiwan side now uses
+    _momentum_volume_crossover_score which combines volume + direction
+    (量價交叉) — the correct signal-processing approach since:
+      量爆 + 漲 = 資金追入(strong bullish)
+      量爆 + 跌 = 出貨警訊(strong bearish)
+      量縮 + 漲 = 健康籌碼鎖定(mild bullish)
+      量縮 + 跌 = 無人接(mild bearish, NOT 0 like before)
+    """
     if latest_vol is None or avg_vol is None or avg_vol <= 0:
         return 0.0
     ratio = float(latest_vol) / float(avg_vol)
@@ -15375,6 +15581,154 @@ def _momentum_volume_score(latest_vol: float | None, avg_vol: float | None, max_
     if ratio >= 0.9:
         return round(max_pts * 0.33, 2)
     return 0.0
+
+
+def _momentum_volume_crossover_score(
+    latest_vol: float | None,
+    avg_vol: float | None,
+    daily_return: float | None,
+    max_pts: float,
+) -> tuple[float, str]:
+    """v1.13.0 Phase 1: Price-volume crossover scoring.
+
+    Returns (score, interpretation_zh). The 4-quadrant logic:
+
+        Ratio class \\ Direction   |  Up (≥0.3%)   Flat   Down (≤-0.3%)
+        --------------------------|-------------------------------------
+        Heavy   (ratio ≥ 1.5)     |  100%    65%       20%
+        Above   (ratio ≥ 1.2)     |   80%    55%       30%
+        Normal  (0.85 ≤ ratio < 1.2) |  60%    50%       45%
+        Light   (ratio < 0.85)     |   55%    40%       25%
+
+    Rationale:
+      - 量爆+漲 (100%): 資金強力追入, 明日續強概率最高
+      - 量爆+跌 (20%): 出貨 / 恐慌賣壓, 明日恐續弱
+      - 量縮+漲 (55%): 籌碼鎖定健康整理, 中性偏多
+      - 量縮+跌 (25%): 無人接但也無賣壓, 中性偏空
+      - 量持平+任何方向: 給中等分數, 信號不明確
+
+    These percentages are calibrated to give max_pts when ideal
+    (heavy + up) and floor at ~20% (heavy + down) so that volume signals
+    NEVER zero out the indicator even when ratio is ambiguous.
+
+    Returns (score, interpretation_zh) — interpretation in zh for UI label.
+    """
+    if latest_vol is None or avg_vol is None or avg_vol <= 0:
+        return 0.0, "資料準備中"
+    ratio = float(latest_vol) / float(avg_vol)
+    direction = daily_return if daily_return is not None else 0.0
+    # Direction buckets
+    if direction >= 0.3:
+        dir_label = "up"
+    elif direction <= -0.3:
+        dir_label = "down"
+    else:
+        dir_label = "flat"
+    # Ratio buckets
+    if ratio >= 1.5:
+        ratio_label = "heavy"
+        ratio_zh = "爆量"
+    elif ratio >= 1.2:
+        ratio_label = "above"
+        ratio_zh = "增量"
+    elif ratio >= 0.85:
+        ratio_label = "normal"
+        ratio_zh = "量持平"
+    else:
+        ratio_label = "light"
+        ratio_zh = "量縮"
+    # Score matrix
+    score_pct_table = {
+        ("heavy",  "up"):   1.00,
+        ("heavy",  "flat"): 0.65,
+        ("heavy",  "down"): 0.20,
+        ("above",  "up"):   0.80,
+        ("above",  "flat"): 0.55,
+        ("above",  "down"): 0.30,
+        ("normal", "up"):   0.60,
+        ("normal", "flat"): 0.50,
+        ("normal", "down"): 0.45,
+        ("light",  "up"):   0.55,
+        ("light",  "flat"): 0.40,
+        ("light",  "down"): 0.25,
+    }
+    score_pct = score_pct_table.get((ratio_label, dir_label), 0.50)
+    score = round(score_pct * max_pts, 2)
+    # Friendly interpretation combining quadrant
+    interp_map_zh = {
+        ("heavy",  "up"):   "爆量強漲",
+        ("heavy",  "flat"): "爆量震盪",
+        ("heavy",  "down"): "爆量殺出",
+        ("above",  "up"):   "增量上行",
+        ("above",  "flat"): "增量震盪",
+        ("above",  "down"): "增量下殺",
+        ("normal", "up"):   "量平緩漲",
+        ("normal", "flat"): "量平整理",
+        ("normal", "down"): "量平緩跌",
+        ("light",  "up"):   "量縮緩漲",
+        ("light",  "flat"): "量縮觀望",
+        ("light",  "down"): "量縮續弱",
+    }
+    interpretation = interp_map_zh.get((ratio_label, dir_label), ratio_zh)
+    return score, interpretation
+
+
+def _momentum_rsi(close_series, period: int = 14) -> float | None:
+    """v1.13.0 Phase 1: Wilder's RSI(14).
+    Returns 0-100 or None if insufficient data.
+
+    Formula: RSI = 100 - (100 / (1 + RS))
+      where RS = avg gain / avg loss over `period` days using Wilder's
+      exponential smoothing (period - 1 prior + current).
+    """
+    try:
+        if close_series is None or len(close_series) < period + 1:
+            return None
+        deltas = close_series.diff().dropna()
+        gains = deltas.clip(lower=0)
+        losses = (-deltas).clip(lower=0)
+        # Wilder's smoothing: first avg = simple, then EMA-like
+        avg_gain = gains.iloc[:period].mean()
+        avg_loss = losses.iloc[:period].mean()
+        for i in range(period, len(deltas)):
+            avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return round(float(rsi), 1)
+    except Exception:
+        return None
+
+
+def _momentum_rsi_score(rsi: float | None, max_pts: float) -> tuple[float, str, str]:
+    """v1.13.0 Phase 1: RSI-based overbought/oversold correction.
+
+    Returns (score, interpretation_zh, tone). Score ranges 0 to max_pts:
+      RSI > 75 → 0.0 (overbought, expect mean-reversion penalty)
+      RSI 65-75 → 0.5*max (strong but caution)
+      RSI 50-65 → max (healthy uptrend, ideal zone)
+      RSI 35-50 → 0.6*max (sideways)
+      RSI 25-35 → 0.7*max (oversold rebound chance)
+      RSI < 25 → 0.5*max (deep oversold, caution)
+
+    The U-shape gives both healthy-uptrend and oversold-rebound chances
+    high marks, penalizes only the overbought zone (>75).
+    """
+    if rsi is None or not math.isfinite(rsi):
+        return 0.0, "資料準備中", "neutral"
+    if rsi > 75:
+        return 0.0, f"超買 ({rsi:.0f}, 回測警訊)", "negative"
+    if rsi > 65:
+        return round(max_pts * 0.5, 2), f"強勢 ({rsi:.0f}, 接近超買)", "positive"
+    if rsi >= 50:
+        return max_pts, f"健康上行 ({rsi:.0f})", "positive"
+    if rsi >= 35:
+        return round(max_pts * 0.6, 2), f"中性整理 ({rsi:.0f})", "neutral"
+    if rsi >= 25:
+        return round(max_pts * 0.7, 2), f"超賣反彈機會 ({rsi:.0f})", "positive"
+    return round(max_pts * 0.5, 2), f"深度超賣 ({rsi:.0f}, 謹慎)", "neutral"
 
 
 def _momentum_signed_flow_score(value: float | None, max_pts: float, scale: float = 200.0) -> float:
@@ -15393,6 +15747,263 @@ def _momentum_verdict_from_score(score: float) -> tuple[str, str, str]:
     if score >= 40:
         return ("neutral", "🟡", "momentum-verdict-neutral")
     return ("weak", "🔴", "momentum-verdict-weak")
+
+
+def _momentum_direction_strength(score: float, rows: list[dict]) -> dict:
+    """v1.13.1 Phase 2: Decompose 0-100 score into direction + strength.
+
+    Args:
+        score: total 0-100 score
+        rows: list of signal rows with "tone" field (positive/neutral/negative)
+
+    Returns dict:
+        {
+            "direction_key": "bullish" | "bearish" | "neutral",
+            "direction_zh": "偏多 ↑" | "偏空 ↓" | "中性 →",
+            "direction_emoji": "↑" | "↓" | "→",
+            "strength_key": "strong" | "medium" | "small" | "flat",
+            "strength_zh": "強勢 ±2%+" | "中幅 ±0.5-1%" | ...,
+            "expected_pct_range_zh": "+1% ~ +2%",
+        }
+
+    Logic:
+        - Direction: from net tone count. >+2 net positive → bullish.
+        - Strength: from |score - 50| distance.
+            ±0-5  → flat / 持平 (≤±0.3%)
+            ±5-12 → small / 小幅 (±0.3-0.7%)
+            ±12-25 → medium / 中幅 (±0.7-1.5%)
+            ±25+ → strong / 強勢 (±1.5%+)
+    """
+    # Direction: tone count + score sanity check
+    pos_count = sum(1 for r in rows if r.get("tone") == "positive")
+    neg_count = sum(1 for r in rows if r.get("tone") == "negative")
+    net_tone = pos_count - neg_count
+
+    # Sanity: if score skews opposite of tone count, lean to score
+    score_lean = score - 50
+    if net_tone >= 2 and score_lean >= -3:
+        direction_key = "bullish"
+    elif net_tone <= -2 and score_lean <= 3:
+        direction_key = "bearish"
+    elif score_lean >= 8:
+        direction_key = "bullish"
+    elif score_lean <= -8:
+        direction_key = "bearish"
+    else:
+        direction_key = "neutral"
+
+    direction_map = {
+        "bullish": ("偏多 ↑",  "↑"),
+        "bearish": ("偏空 ↓",  "↓"),
+        "neutral": ("中性 →",  "→"),
+    }
+    direction_zh, direction_emoji = direction_map[direction_key]
+
+    # Strength from |score - 50|
+    distance = abs(score - 50)
+    if distance < 5:
+        strength_key = "flat"
+        strength_zh = "持平整理"
+        pct_range_zh = "±0.3% 內"
+    elif distance < 12:
+        strength_key = "small"
+        strength_zh = "小幅波動"
+        pct_range_zh = "±0.3-0.7%"
+    elif distance < 25:
+        strength_key = "medium"
+        strength_zh = "中幅波動"
+        pct_range_zh = "±0.7-1.5%"
+    else:
+        strength_key = "strong"
+        strength_zh = "強勢突破"
+        pct_range_zh = "±1.5% 以上"
+
+    # If direction is bullish/bearish, prepend +/-
+    if direction_key == "bullish":
+        pct_range_signed = pct_range_zh.replace("±", "+")
+        if "內" not in pct_range_signed:
+            pct_range_signed = pct_range_signed.split("-")[0] + " ~ +" + pct_range_signed.split("-")[-1] if "-" in pct_range_signed else pct_range_signed
+    elif direction_key == "bearish":
+        pct_range_signed = pct_range_zh.replace("±", "-")
+        if "內" not in pct_range_signed:
+            pct_range_signed = pct_range_signed.split("-")[0] + " ~ -" + pct_range_signed.split("-")[-1] if "-" in pct_range_signed else pct_range_signed
+    else:
+        pct_range_signed = pct_range_zh
+
+    return {
+        "direction_key": direction_key,
+        "direction_zh": direction_zh,
+        "direction_emoji": direction_emoji,
+        "strength_key": strength_key,
+        "strength_zh": strength_zh,
+        "expected_pct_range_zh": pct_range_signed,
+    }
+
+
+def _momentum_confidence(rows: list[dict]) -> dict:
+    """v1.13.1 Phase 2: Calculate signal consistency / confidence.
+
+    Args:
+        rows: list of signal rows with "tone" + "contribution" + "contribution_max"
+
+    Returns dict:
+        {
+            "confidence_key": "high" | "medium" | "low",
+            "confidence_zh": "高 ●●●" | "中 ●●○" | "低 ●○○",
+            "consistency_pct": float (0-100),
+            "pos_count": int,
+            "neg_count": int,
+            "neutral_count": int,
+            "data_ready_count": int (signals with non-zero data),
+        }
+
+    Confidence formula:
+        consistency = max(pos_pts, neg_pts) / (pos_pts + neg_pts) × 100
+        adjusted by data_completeness:
+            data_ready ≥ 6/8 → full weight
+            data_ready 3-5   → ×0.85
+            data_ready < 3   → ×0.6
+
+    Bands:
+        consistency ≥ 70% AND data_ready ≥ 5 → high
+        consistency ≥ 50% AND data_ready ≥ 4 → medium
+        else → low
+    """
+    pos_pts = 0.0
+    neg_pts = 0.0
+    pos_count = 0
+    neg_count = 0
+    neutral_count = 0
+    data_ready_count = 0
+
+    for r in rows:
+        contrib = r.get("contribution", 0.0)
+        cmax = r.get("contribution_max", 0.0) or 1.0
+        tone = r.get("tone", "neutral")
+        # Data-ready check: value_text not "—" and contribution > 0
+        # (or it's negative but data did flow through, e.g. tone=negative)
+        value_text = str(r.get("value_text", "—"))
+        if value_text != "—":
+            data_ready_count += 1
+        if tone == "positive":
+            pos_count += 1
+            pos_pts += contrib
+        elif tone == "negative":
+            neg_count += 1
+            # For "negative" tone, the absent points (cmax - contrib) is the
+            # negative signal strength
+            neg_pts += (cmax - contrib)
+        else:
+            neutral_count += 1
+
+    # Consistency: how skewed is the signal mix?
+    total_directional = pos_pts + neg_pts
+    if total_directional > 0:
+        consistency_pct = max(pos_pts, neg_pts) / total_directional * 100
+    else:
+        # All neutral / no data
+        consistency_pct = 0.0
+
+    # Data completeness penalty
+    if data_ready_count >= 6:
+        data_factor = 1.0
+    elif data_ready_count >= 3:
+        data_factor = 0.85
+    else:
+        data_factor = 0.6
+    adjusted_consistency = consistency_pct * data_factor
+
+    if adjusted_consistency >= 70 and data_ready_count >= 5:
+        confidence_key = "high"
+        confidence_zh = "高 ●●●"
+    elif adjusted_consistency >= 50 and data_ready_count >= 4:
+        confidence_key = "medium"
+        confidence_zh = "中 ●●○"
+    else:
+        confidence_key = "low"
+        confidence_zh = "低 ●○○"
+
+    return {
+        "confidence_key": confidence_key,
+        "confidence_zh": confidence_zh,
+        "consistency_pct": round(adjusted_consistency, 1),
+        "pos_count": pos_count,
+        "neg_count": neg_count,
+        "neutral_count": neutral_count,
+        "data_ready_count": data_ready_count,
+    }
+
+
+def _momentum_key_drivers(rows: list[dict]) -> dict:
+    """v1.13.1 Phase 2: Detect key drivers, warnings, and conflicts.
+
+    Args:
+        rows: list of signal rows
+
+    Returns dict:
+        {
+            "top_driver": {"label": str, "value_text": str, "interpretation": str} | None,
+            "warning": {"label": str, "value_text": str, "interpretation": str} | None,
+            "conflict_note_zh": str | None,
+        }
+
+    Logic:
+        - top_driver: highest-scoring row with tone=positive (e.g. signal
+          giving >=80% of its budget)
+        - warning: lowest-scoring row with tone=negative (e.g. signal giving
+          <=30% of its budget) — flags as risk
+        - conflict_note: if there are ≥2 strong-positive AND ≥2 strong-negative
+          signals, flag the divergence
+    """
+    # Compute per-row signal strength (% of budget)
+    def signal_pct(row):
+        cmax = row.get("contribution_max", 0) or 1
+        return row.get("contribution", 0) / cmax * 100 if cmax else 0
+
+    # Top driver: highest score with tone=positive
+    pos_rows = [r for r in rows if r.get("tone") == "positive" and r.get("value_text") != "—"]
+    pos_rows_sorted = sorted(pos_rows, key=signal_pct, reverse=True)
+    top_driver = None
+    if pos_rows_sorted and signal_pct(pos_rows_sorted[0]) >= 70:
+        r = pos_rows_sorted[0]
+        top_driver = {
+            "label": r.get("label_zh", "?"),
+            "value_text": r.get("value_text", "?"),
+            "interpretation": r.get("interpretation_zh", ""),
+            "signal_pct": round(signal_pct(r), 1),
+        }
+
+    # Warning: lowest score with tone=negative
+    neg_rows = [r for r in rows if r.get("tone") == "negative" and r.get("value_text") != "—"]
+    neg_rows_sorted = sorted(neg_rows, key=signal_pct)
+    warning = None
+    if neg_rows_sorted and signal_pct(neg_rows_sorted[0]) <= 35:
+        r = neg_rows_sorted[0]
+        warning = {
+            "label": r.get("label_zh", "?"),
+            "value_text": r.get("value_text", "?"),
+            "interpretation": r.get("interpretation_zh", ""),
+            "signal_pct": round(signal_pct(r), 1),
+        }
+
+    # Conflict: 2+ strong positive AND 2+ strong negative
+    strong_pos = [r for r in rows if r.get("tone") == "positive" and signal_pct(r) >= 70 and r.get("value_text") != "—"]
+    strong_neg = [r for r in rows if r.get("tone") == "negative" and signal_pct(r) <= 35 and r.get("value_text") != "—"]
+    conflict_note_zh = None
+    if len(strong_pos) >= 2 and len(strong_neg) >= 2:
+        # Pick representative labels
+        pos_labels = [r.get("label_zh", "") for r in strong_pos[:2]]
+        neg_labels = [r.get("label_zh", "") for r in strong_neg[:2]]
+        conflict_note_zh = (
+            f"訊號分歧:{', '.join(pos_labels)} 偏多,但 "
+            f"{', '.join(neg_labels)} 偏空 — 謹慎觀察"
+        )
+
+    return {
+        "top_driver": top_driver,
+        "warning": warning,
+        "conflict_note_zh": conflict_note_zh,
+    }
 
 
 def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> dict:
@@ -15427,7 +16038,7 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
     data_date: str | None = None
     components_with_data = 0  # to detect total fetch failure
 
-    # --- TSMC slice (60 pts) -------------------------------------------
+    # --- TSMC slice (60 pts total: 15+25+15+5) -----------------------
     tsmc_close, tsmc_volume = _momentum_extract_close_volume(daily_data, "2330.TW")
     if tsmc_close is not None and len(tsmc_close) >= 2:
         components_with_data += 1
@@ -15436,7 +16047,7 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
         except Exception:
             pass
 
-        # 1. TSMC daily return
+        # 1. TSMC daily return (v1.13.0: budget 25→15, less noise weight)
         tsmc_daily = _momentum_pct(tsmc_close.iloc[-1], tsmc_close.iloc[-2])
         score_d = _momentum_linear_score(tsmc_daily, -3, 3, budget["tsmc_daily"])
         total_score += score_d
@@ -15459,33 +16070,33 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
             ),
         })
 
-        # 2. TSMC 5-day momentum
-        if len(tsmc_close) >= 6:
-            tsmc_5d = _momentum_pct(tsmc_close.iloc[-1], tsmc_close.iloc[-6])
+        # 2. TSMC 10-day momentum (v1.13.0: was 5d, longer lookback)
+        if len(tsmc_close) >= 11:
+            tsmc_10d = _momentum_pct(tsmc_close.iloc[-1], tsmc_close.iloc[-11])
         else:
-            tsmc_5d = None
-        score_5 = _momentum_linear_score(tsmc_5d, -5, 5, budget["tsmc_5d"])
-        total_score += score_5
+            tsmc_10d = None
+        score_10 = _momentum_linear_score(tsmc_10d, -6, 6, budget["tsmc_10d"])
+        total_score += score_10
         rows.append({
-            "label_zh": "TSMC 5 日動能",
-            "label_en": "TSMC 5d momentum",
-            "value_text": f"{tsmc_5d:+.2f}%" if tsmc_5d is not None else "—",
-            "contribution": score_5,
-            "contribution_max": budget["tsmc_5d"],
+            "label_zh": "TSMC 10 日動能",
+            "label_en": "TSMC 10d momentum",
+            "value_text": f"{tsmc_10d:+.2f}%" if tsmc_10d is not None else "—",
+            "contribution": score_10,
+            "contribution_max": budget["tsmc_10d"],
             "interpretation_zh": (
-                "趨勢明顯偏多" if (tsmc_5d or 0) >= 3 else
-                "近 5 日轉強" if (tsmc_5d or 0) >= 1 else
-                "區間震盪" if (tsmc_5d or 0) > -1 else
-                "近 5 日轉弱"
+                "趨勢明顯偏多" if (tsmc_10d or 0) >= 4 else
+                "10 日轉強" if (tsmc_10d or 0) >= 1.5 else
+                "區間震盪" if (tsmc_10d or 0) > -1.5 else
+                "10 日轉弱"
             ),
             "tone": (
-                "positive" if (tsmc_5d or 0) >= 1 else
-                "negative" if (tsmc_5d or 0) <= -1 else
+                "positive" if (tsmc_10d or 0) >= 1.5 else
+                "negative" if (tsmc_10d or 0) <= -1.5 else
                 "neutral"
             ),
         })
 
-        # 3. TSMC volume vs 20d
+        # 3. TSMC volume + price crossover (v1.13.0: replaces broken raw-ratio bucket)
         if tsmc_volume is not None and len(tsmc_volume) >= 21:
             latest_vol = float(tsmc_volume.iloc[-1])
             avg20_vol = float(tsmc_volume.iloc[-21:-1].mean())
@@ -15494,32 +16105,44 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
             latest_vol = None
             avg20_vol = None
             vol_ratio = None
-        score_v = _momentum_volume_score(latest_vol, avg20_vol, budget["tsmc_volume"])
+        score_v, interp_v = _momentum_volume_crossover_score(
+            latest_vol, avg20_vol, tsmc_daily, budget["tsmc_volume"]
+        )
         total_score += score_v
         rows.append({
-            "label_zh": "TSMC 量能(對 20 日均量)",
-            "label_en": "TSMC volume vs 20d avg",
+            "label_zh": "TSMC 量價結構",
+            "label_en": "TSMC volume × price crossover",
             "value_text": f"{vol_ratio:.2f}x" if vol_ratio is not None else "—",
             "contribution": score_v,
             "contribution_max": budget["tsmc_volume"],
-            "interpretation_zh": (
-                "放量明顯" if (vol_ratio or 0) >= 1.5 else
-                "量能溫和增加" if (vol_ratio or 0) >= 1.2 else
-                "量能持平" if (vol_ratio or 0) >= 0.9 else
-                "量縮觀望"
-            ),
+            "interpretation_zh": interp_v,
             "tone": (
-                "positive" if (vol_ratio or 0) >= 1.2 else
-                "negative" if (vol_ratio or 0) < 0.9 else
+                "positive" if score_v >= budget["tsmc_volume"] * 0.65 else
+                "negative" if score_v <= budget["tsmc_volume"] * 0.30 else
                 "neutral"
             ),
         })
+
+        # 4. TSMC RSI(14) overbought/oversold correction (v1.13.0: NEW)
+        tsmc_rsi = _momentum_rsi(tsmc_close, period=14)
+        score_rsi, interp_rsi, tone_rsi = _momentum_rsi_score(tsmc_rsi, budget["tsmc_rsi"])
+        total_score += score_rsi
+        rows.append({
+            "label_zh": "TSMC RSI 校正",
+            "label_en": "TSMC RSI(14) correction",
+            "value_text": f"{tsmc_rsi:.0f}" if tsmc_rsi is not None else "—",
+            "contribution": score_rsi,
+            "contribution_max": budget["tsmc_rsi"],
+            "interpretation_zh": interp_rsi,
+            "tone": tone_rsi,
+        })
     else:
-        # TSMC data missing — push 3 placeholder rows
+        # TSMC data missing — push 4 placeholder rows (was 3 in v1.12.x)
         for label_zh, max_pts in [
             ("TSMC 收盤漲跌幅", budget["tsmc_daily"]),
-            ("TSMC 5 日動能", budget["tsmc_5d"]),
-            ("TSMC 量能(對 20 日均量)", budget["tsmc_volume"]),
+            ("TSMC 10 日動能", budget["tsmc_10d"]),
+            ("TSMC 量價結構", budget["tsmc_volume"]),
+            ("TSMC RSI 校正", budget["tsmc_rsi"]),
         ]:
             rows.append({
                 "label_zh": label_zh, "label_en": label_zh,
@@ -15555,35 +16178,35 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
             ),
         })
 
-        # 5. TAIEX 5-day momentum
-        if len(taiex_close) >= 6:
-            taiex_5d = _momentum_pct(taiex_close.iloc[-1], taiex_close.iloc[-6])
+        # 5. TAIEX 10-day momentum (v1.13.0: was 5d)
+        if len(taiex_close) >= 11:
+            taiex_10d = _momentum_pct(taiex_close.iloc[-1], taiex_close.iloc[-11])
         else:
-            taiex_5d = None
-        score_t5 = _momentum_linear_score(taiex_5d, -3, 3, budget["taiex_5d"])
-        total_score += score_t5
+            taiex_10d = None
+        score_t10 = _momentum_linear_score(taiex_10d, -4, 4, budget["taiex_10d"])
+        total_score += score_t10
         rows.append({
-            "label_zh": "加權指數 5 日動能",
-            "label_en": "TAIEX 5d momentum",
-            "value_text": f"{taiex_5d:+.2f}%" if taiex_5d is not None else "—",
-            "contribution": score_t5,
-            "contribution_max": budget["taiex_5d"],
+            "label_zh": "加權指數 10 日動能",
+            "label_en": "TAIEX 10d momentum",
+            "value_text": f"{taiex_10d:+.2f}%" if taiex_10d is not None else "—",
+            "contribution": score_t10,
+            "contribution_max": budget["taiex_10d"],
             "interpretation_zh": (
-                "趨勢偏多" if (taiex_5d or 0) >= 1.5 else
-                "近 5 日轉強" if (taiex_5d or 0) >= 0.5 else
-                "震盪整理" if (taiex_5d or 0) > -0.5 else
+                "趨勢偏多" if (taiex_10d or 0) >= 2 else
+                "近 10 日轉強" if (taiex_10d or 0) >= 0.7 else
+                "震盪整理" if (taiex_10d or 0) > -0.7 else
                 "趨勢轉弱"
             ),
             "tone": (
-                "positive" if (taiex_5d or 0) >= 0.5 else
-                "negative" if (taiex_5d or 0) <= -0.5 else
+                "positive" if (taiex_10d or 0) >= 0.7 else
+                "negative" if (taiex_10d or 0) <= -0.7 else
                 "neutral"
             ),
         })
     else:
         for label_zh, max_pts in [
             ("加權指數漲跌幅", budget["taiex_daily"]),
-            ("加權指數 5 日動能", budget["taiex_5d"]),
+            ("加權指數 10 日動能", budget["taiex_10d"]),
         ]:
             rows.append({
                 "label_zh": label_zh, "label_en": label_zh,
@@ -15665,6 +16288,11 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
     score_clamped = max(0.0, min(100.0, round(total_score, 1)))
     verdict_key, emoji, css_class = _momentum_verdict_from_score(score_clamped)
 
+    # v1.13.1 Phase 2: Direction / strength / confidence / key drivers
+    direction_info = _momentum_direction_strength(score_clamped, rows)
+    confidence_info = _momentum_confidence(rows)
+    drivers_info = _momentum_key_drivers(rows)
+
     return {
         "score": score_clamped,
         "verdict_key": verdict_key,
@@ -15675,6 +16303,11 @@ def build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs: dict | None) -> 
         "ready": components_with_data >= 1,
         "data_source_note": "依照昨日收盤價估算明日動能(60% TSMC + 40% 大盤量能 / 法人)",
         "scope": "Taiwan",
+        # v1.13.1 Phase 2 fields (used only by Taiwan render — U.S. side
+        # still uses legacy 1-score layout)
+        "direction": direction_info,
+        "confidence": confidence_info,
+        "key_drivers": drivers_info,
     }
 
 
@@ -15984,6 +16617,111 @@ def _render_tomorrow_momentum_pulse_html(payload: dict, lang_zh: bool) -> str:
     )
     subtitle = subtitle_template.format(scope=scope_text)
 
+    # v1.13.1 Phase 2: Build hook block (direction/strength/confidence/key drivers)
+    # Only for Taiwan scope (U.S. side keeps legacy layout for now).
+    hook_block_html = ""
+    if scope == "Taiwan" and lang_zh:
+        direction = payload.get("direction") or {}
+        confidence = payload.get("confidence") or {}
+        key_drivers = payload.get("key_drivers") or {}
+        if direction or confidence or key_drivers:
+            dir_zh = direction.get("direction_zh", "")
+            dir_key = direction.get("direction_key", "neutral")
+            strength_zh = direction.get("strength_zh", "")
+            pct_range = direction.get("expected_pct_range_zh", "")
+            conf_zh = confidence.get("confidence_zh", "")
+            conf_key = confidence.get("confidence_key", "low")
+            pos_c = confidence.get("pos_count", 0)
+            neg_c = confidence.get("neg_count", 0)
+            data_c = confidence.get("data_ready_count", 0)
+            total_signals = pos_c + neg_c + confidence.get("neutral_count", 0)
+
+            # CSS classes by direction
+            dir_class_map = {
+                "bullish": "hook-dir-bullish",
+                "bearish": "hook-dir-bearish",
+                "neutral": "hook-dir-neutral",
+            }
+            dir_class = dir_class_map.get(dir_key, "hook-dir-neutral")
+            conf_class_map = {
+                "high":   "hook-conf-high",
+                "medium": "hook-conf-medium",
+                "low":    "hook-conf-low",
+            }
+            conf_class = conf_class_map.get(conf_key, "hook-conf-low")
+
+            # Top driver / warning / conflict sub-block
+            top_driver = key_drivers.get("top_driver")
+            warning = key_drivers.get("warning")
+            conflict = key_drivers.get("conflict_note_zh")
+
+            insight_rows_html = ""
+            if top_driver:
+                insight_rows_html += textwrap.dedent(f"""
+                    <div class="hook-insight-row hook-insight-driver">
+                        <span class="hook-insight-icon">🏆</span>
+                        <span class="hook-insight-label">最強訊號</span>
+                        <span class="hook-insight-text">
+                            <strong>{escape(top_driver.get('label', ''))}</strong>
+                            ({escape(top_driver.get('value_text', ''))})
+                            — {escape(top_driver.get('interpretation', ''))}
+                        </span>
+                    </div>
+                """).strip()
+            if warning:
+                insight_rows_html += textwrap.dedent(f"""
+                    <div class="hook-insight-row hook-insight-warning">
+                        <span class="hook-insight-icon">⚠️</span>
+                        <span class="hook-insight-label">警示訊號</span>
+                        <span class="hook-insight-text">
+                            <strong>{escape(warning.get('label', ''))}</strong>
+                            ({escape(warning.get('value_text', ''))})
+                            — {escape(warning.get('interpretation', ''))}
+                        </span>
+                    </div>
+                """).strip()
+            if conflict:
+                insight_rows_html += textwrap.dedent(f"""
+                    <div class="hook-insight-row hook-insight-conflict">
+                        <span class="hook-insight-icon">🤔</span>
+                        <span class="hook-insight-label">矛盾警示</span>
+                        <span class="hook-insight-text">{escape(conflict)}</span>
+                    </div>
+                """).strip()
+
+            # If no insights at all, show a placeholder
+            if not insight_rows_html:
+                insight_rows_html = (
+                    '<div class="hook-insight-row hook-insight-empty">'
+                    '<span class="hook-insight-icon">💡</span>'
+                    '<span class="hook-insight-text">訊號分佈均勻,無突出方向</span>'
+                    '</div>'
+                )
+
+            hook_block_html = textwrap.dedent(f"""
+                <div class="momentum-hook-block">
+                    <div class="hook-metrics-row">
+                        <div class="hook-metric hook-metric-direction {dir_class}">
+                            <div class="hook-metric-label">🎯 預期方向</div>
+                            <div class="hook-metric-value">{escape(dir_zh)}</div>
+                        </div>
+                        <div class="hook-metric hook-metric-strength">
+                            <div class="hook-metric-label">⚡ 預期幅度</div>
+                            <div class="hook-metric-value">{escape(strength_zh)}</div>
+                            <div class="hook-metric-sub">{escape(pct_range)}</div>
+                        </div>
+                        <div class="hook-metric hook-metric-confidence {conf_class}">
+                            <div class="hook-metric-label">💡 信心度</div>
+                            <div class="hook-metric-value">{escape(conf_zh)}</div>
+                            <div class="hook-metric-sub">{data_c}/{total_signals} 訊號 · {pos_c} 多 / {neg_c} 空</div>
+                        </div>
+                    </div>
+                    <div class="hook-insights">
+                        {insight_rows_html}
+                    </div>
+                </div>
+            """).strip()
+
     return textwrap.dedent(
         f"""
         <div class="momentum-pulse-shell">
@@ -16000,6 +16738,7 @@ def _render_tomorrow_momentum_pulse_html(payload: dict, lang_zh: bool) -> str:
                     </div>
                 </div>
             </div>
+            {hook_block_html}
             <div class="momentum-pulse-table">
                 <div class="momentum-row momentum-row-header">
                     <div class="momentum-cell-label">{escape(col_signal)}</div>
@@ -16258,6 +16997,176 @@ _TOMORROW_MOMENTUM_CSS = """
     }
     .momentum-row {
         font-size: 13px !important;
+    }
+}
+
+/* ===========================================================
+   v1.13.1 Phase 2: Hook block (direction / strength / confidence + key drivers)
+   Renders ABOVE the 8-row signal table, BELOW the verdict badge.
+   =========================================================== */
+.momentum-hook-block {
+    background: rgba(15, 19, 35, 0.55);
+    border: 1px solid rgba(96, 110, 145, 0.22);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 10px 0 14px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.hook-metrics-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+}
+.hook-metric {
+    padding: 10px 12px;
+    background: rgba(20, 26, 45, 0.6);
+    border: 1px solid rgba(96, 110, 145, 0.22);
+    border-radius: 10px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.hook-metric-label {
+    font-size: 12px;
+    color: #98a2b8;
+    font-weight: 500;
+}
+.hook-metric-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f4f6fb;
+    letter-spacing: 0.3px;
+}
+.hook-metric-sub {
+    font-size: 11.5px;
+    color: #b8c0d4;
+    font-variant-numeric: tabular-nums;
+}
+/* Direction tones */
+.hook-dir-bullish {
+    border-color: rgba(111, 217, 154, 0.55);
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.14), rgba(20, 26, 45, 0.65));
+}
+.hook-dir-bullish .hook-metric-value { color: #8be8b1; }
+.hook-dir-bearish {
+    border-color: rgba(240, 136, 148, 0.50);
+    background: linear-gradient(180deg, rgba(217, 102, 112, 0.14), rgba(20, 26, 45, 0.65));
+}
+.hook-dir-bearish .hook-metric-value { color: #f08894; }
+.hook-dir-neutral {
+    border-color: rgba(230, 195, 95, 0.40);
+    background: linear-gradient(180deg, rgba(220, 175, 60, 0.10), rgba(20, 26, 45, 0.65));
+}
+.hook-dir-neutral .hook-metric-value { color: #f4d68a; }
+/* Confidence tones */
+.hook-conf-high {
+    border-color: rgba(111, 217, 154, 0.55);
+}
+.hook-conf-high .hook-metric-value { color: #8be8b1; }
+.hook-conf-medium {
+    border-color: rgba(230, 195, 95, 0.45);
+}
+.hook-conf-medium .hook-metric-value { color: #f4d68a; }
+.hook-conf-low {
+    border-color: rgba(152, 162, 184, 0.35);
+}
+.hook-conf-low .hook-metric-value { color: #b8c0d4; }
+
+/* Insight rows */
+.hook-insights {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.hook-insight-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(20, 26, 45, 0.5);
+    border-left: 3px solid rgba(120, 134, 165, 0.35);
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #d8dde9;
+}
+.hook-insight-row.hook-insight-driver {
+    border-left-color: #6fd99a;
+    background: rgba(76, 208, 168, 0.08);
+}
+.hook-insight-row.hook-insight-warning {
+    border-left-color: #f08894;
+    background: rgba(217, 102, 112, 0.08);
+}
+.hook-insight-row.hook-insight-conflict {
+    border-left-color: #f4d68a;
+    background: rgba(220, 175, 60, 0.06);
+}
+.hook-insight-row.hook-insight-empty {
+    border-left-color: rgba(152, 162, 184, 0.30);
+    color: #98a2b8;
+}
+.hook-insight-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+}
+.hook-insight-label {
+    font-size: 12px;
+    color: #98a2b8;
+    font-weight: 600;
+    flex-shrink: 0;
+    min-width: 60px;
+}
+.hook-insight-text {
+    flex: 1;
+    color: #e9ecf3;
+}
+.hook-insight-text strong {
+    color: #f4f6fb;
+    font-weight: 600;
+}
+
+/* Mobile responsive */
+@media (max-width: 480px) {
+    .momentum-hook-block {
+        padding: 10px 12px;
+        gap: 10px;
+    }
+    .hook-metrics-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .hook-metric {
+        padding: 8px 10px;
+    }
+    .hook-metric-label {
+        font-size: 11.5px;
+    }
+    .hook-metric-value {
+        font-size: 14.5px;
+    }
+    .hook-metric-sub {
+        font-size: 11px;
+    }
+    .hook-insight-row {
+        padding: 6px 10px;
+        font-size: 12px;
+        gap: 6px;
+    }
+    .hook-insight-label {
+        min-width: 50px;
+        font-size: 11px;
+    }
+}
+@media (min-width: 481px) and (max-width: 900px) {
+    .hook-metrics-row {
+        grid-template-columns: 1fr 1fr;
+    }
+    .hook-metric-confidence {
+        grid-column: 1 / -1;
     }
 }
 </style>
@@ -38163,21 +39072,37 @@ def _cockpit_inject_css() -> None:
         }
         .us-radar-tk {
             font-family: 'JetBrains Mono', 'Consolas', monospace;
-            font-size: 0.92rem; font-weight: 700; color: #fff;
+            /* v1.13.2: ticker is now the SECONDARY identifier (smaller,
+               lighter weight, dimmer color). Company name above is primary. */
+            font-size: 0.78rem;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.62);
+            letter-spacing: 0.04em;
         }
-        /* v1.12.1g: Company name displayed below ticker (Layout A: stacked) */
+        /* v1.13.2 (Bloomberg style): Company name is the PRIMARY identifier —
+           larger, bolder, white. Sits on its own row ABOVE the ticker+chips. */
         .us-radar-company-name {
-            font-size: 0.74rem;
-            color: rgba(255, 255, 255, 0.55);
-            font-weight: 400;
-            letter-spacing: 0.01em;
-            line-height: 1.25;
-            margin-top: 1px;
+            font-size: 0.92rem;
+            color: rgba(255, 255, 255, 0.95);
+            font-weight: 600;
+            letter-spacing: 0.005em;
+            line-height: 1.2;
+            margin-bottom: 2px;
             /* Prevent ultra-long names from breaking row layout */
             max-width: 100%;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+        /* v1.13.2: New container for the secondary row (ticker + mini chips) */
+        .us-radar-tk-row {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+            min-width: 0;
+            row-gap: 0.22rem;
         }
         .us-radar-px {
             font-size: 0.95rem; color: rgba(255,255,255,0.65);
@@ -38360,13 +39285,13 @@ def _cockpit_inject_css() -> None:
            Smaller font + tighter padding than theme-level chips so the
            28-row list stays scannable. */
         .us-radar-tk-cell {
+            /* v1.13.2: Column flex so company name (PRIMARY) stacks above
+               ticker+chips row (SECONDARY). Bloomberg-terminal style. */
             display: flex;
-            flex-direction: row;
-            align-items: center;
-            gap: 0.4rem;
-            flex-wrap: wrap;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0;
             min-width: 0;
-            row-gap: 0.22rem;
         }
         .us-radar-row-chips {
             display: inline-flex;
@@ -38830,8 +39755,8 @@ def _cockpit_inject_css() -> None:
                 gap: 0.4rem;
                 padding: 0.35rem 0.5rem;
             }
-            .us-radar-tk { font-size: 0.95rem; }
-            .us-radar-company-name { font-size: 0.7rem; }
+            .us-radar-tk { font-size: 0.74rem; }
+            .us-radar-company-name { font-size: 0.86rem; }
             .us-radar-px { font-size: 0.88rem; }
             .us-radar-move { font-size: 0.78rem; min-width: 56px; }
             /* v1.8.3: pulse banner stacks score below body on tablet */
@@ -38856,10 +39781,12 @@ def _cockpit_inject_css() -> None:
                 font-size: 0.70rem;
                 padding: 0.18rem 0.42rem;
             }
-            /* v1.8.4: per-row mini chips shrink slightly on tablet
-               and the tk-cell allows wrap so chips can drop below
-               the symbol when space is tight. */
+            /* v1.13.2: tk-cell remains column (Bloomberg layout). Just
+               tighten any inner spacing for the secondary row. */
             .us-radar-tk-cell {
+                gap: 0;
+            }
+            .us-radar-tk-row {
                 gap: 0.32rem;
                 row-gap: 0.18rem;
             }
@@ -40754,7 +41681,11 @@ def _cockpit_render_us_theme_radar_html(
                     ticker_mini_chips_html = _us_ticker_mini_chip_strip_html(
                         this_ticker_catalyst, lang_zh
                     )
-                # v1.12.1g: 2-line layout — ticker on top, company name below
+                # v1.13.2 (2026-05-12): Bloomberg-style 2-line layout —
+                # company name is the PRIMARY identifier (upper row, larger,
+                # bolder), ticker is the SECONDARY identifier (lower row,
+                # smaller, mono). Mini chips sit next to the ticker on the
+                # lower row. Match institutional terminal conventions.
                 company_name = _us_ticker_display_name(tk)
                 company_name_html = (
                     f'<div class="us-radar-company-name">{escape(company_name)}</div>'
@@ -40767,9 +41698,11 @@ def _cockpit_render_us_theme_radar_html(
                     f'aria-label="{escape(row_title)}">'
                     f'<div class="us-radar-row">'
                     f'  <div class="us-radar-tk-cell">'
-                    f'    <div class="us-radar-tk">{tk}</div>'
                     f'    {company_name_html}'
-                    f'    {ticker_mini_chips_html}'
+                    f'    <div class="us-radar-tk-row">'
+                    f'      <div class="us-radar-tk">{tk}</div>'
+                    f'      {ticker_mini_chips_html}'
+                    f'    </div>'
                     f'  </div>'
                     f'  <div class="us-radar-px">{price_str}</div>'
                     f'  <div class="us-radar-move {move_class}">{move_str}</div>'
