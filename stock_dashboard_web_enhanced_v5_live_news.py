@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.2
+Version : v1.13.6
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,124 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.6 (2026-05-12)  [Fix v1.13.5 — Smart Compare button text was unreadable]
+
+  User report: 「對比按鈕底色太淺,文字被蓋掉」(screenshot showed the
+  Smart Compare button with near-white bg making the text barely visible).
+
+  Root cause: v1.13.5 used st.button() with default Streamlit styling.
+  On this dashboard's theme, that default bg is near-white,
+  which clashed with the green text "🔄 跟 4 檔同類股比較".
+
+  Fix: Added scoped CSS via marker-div pattern. Emits an empty
+  <div class="smart-compare-btn-wrap"></div> right BEFORE the
+  st.columns() that contains the button, then uses adjacent-sibling
+  selectors (`.smart-compare-btn-wrap + div .stButton > button`) to
+  scope the dark-theme override to ONLY this button.
+
+  Visual result:
+    - Background: dark slate green gradient (matches hook block tone)
+    - Border: rgba(111, 217, 154, 0.55) (green for "go-action")
+    - Text: #8be8b1 (readable light green)
+    - Hover: brighter green + 1px lift transform
+    - Active: pressed-in feel
+
+  Other Streamlit buttons on the page (Hero Bar, etc) are UNAFFECTED
+  because they're scoped under .hero-bar-shell and the CSS uses an
+  adjacent-sibling selector starting from .smart-compare-btn-wrap.
+
+  Zero functional change. Only CSS.
+
+v1.13.5 (2026-05-12)  [個股研究 UX 全套升級: Hook Block + 類股共振 + 智能對比]
+
+  User request: 「在運用目前 Dashboard 比較 / 工作台功能的前提下,在 UI 和
+  引導使用者為主要研究方向給建議,如何增強使用者的慾望」
+
+  This patch combines Phase A + B + C into a single delivery — three new
+  UI blocks at the TOP of every single-stock page (個股工作台):
+
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║ PHASE A: 30-second Ticker Hook Block (the "thesis" view)         ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  Distills bundle.analysis into a 4-card hook at the top of the page:
+    🎯 綜合評分 (score 0-100, banded into 極強/強勢/中性/偏弱/弱勢)
+    📈 趨勢評等 (from 1-year return: 強多/偏多/震盪/偏空/弱空)
+    ⚡ 短期訊號 (BUY/HOLD/SELL + RSI/Volume status sub-text)
+    +
+    🏆 為什麼值得看 (Top 3 bullish reasons from analysis.reasons)
+    ⚠️ 風險因子 (Top 2 bearish reasons)
+
+  All data SOURCED FROM EXISTING bundle.analysis dict — no new fetches.
+  Helpers:
+    _build_ticker_hook_data(bundle)
+    _render_ticker_hook_block(hook)
+  CSS: _TICKER_HOOK_CSS (module-level constant, same pattern as
+       _TOMORROW_MOMENTUM_CSS to avoid v1.10.1 vanish bug)
+
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║ PHASE B: 類股共振 mini-block (peer resonance)                    ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  Shows how peer tickers in the same theme/sector are moving today —
+  helps users see if the focal's move is part of a broad-theme rally
+  or an outlier (key confirmation bias check).
+
+  Peer detection (_find_peer_tickers):
+    - U.S. ticker → search US_THEME_GROUPS for membership
+                    (NVDA → MAG 7 peers: META, AAPL, AMZN, GOOGL, MSFT, TSLA)
+    - Taiwan ticker → search SUPPLY_CHAIN_FOCUS_CONFIGS catalogs,
+                       prefer same sub-group ("group" field) for finer peers
+    - Returns (group_label_zh, [up to 5 peer tickers])
+
+  Each peer row shows:
+    - Company name + ticker (Bloomberg-style, name primary)
+    - Current price
+    - Daily % move + sync/divergence tag vs focal
+
+  Lightweight fetcher (_fetch_peer_quotes):
+    - 5-min cached yfinance batch download (2 days, 5d period)
+    - Used independently from main daily_data so peer block can render
+      even when focal page is loaded outside watchlist context
+
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║ PHASE C: Smart Compare button (deep-link to Stock Comparison)    ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  Adds a "🔄 跟 N 檔同類股比較" button right after the hook block.
+  On click:
+    1. Pre-populates st.session_state["_comparison_setup_tickers"]
+       with [focal_ticker, *peers[:4]] (max 5 tickers — matches
+       COMPARISON_MAX_TICKERS in stock_comparison_dashboard.py)
+    2. Sets dashboard_mode = "Stock Comparison"
+    3. st.rerun() → loads the full-page Stock Comparison mode with
+       all 5 tickers already in the setup tray (no manual ticker entry)
+
+  Caption next to the button previews which peers will be loaded.
+  Only renders if peers found (otherwise compare has nothing to do).
+
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║ Implementation notes                                              ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  - All 3 phases wired into render_ticker_bundle_page() at the TOP,
+    in order: hook → smart-compare button → peer-resonance → existing
+    news section + decision brief + ... (existing flow unchanged)
+  - Try/except around each new block so a Phase B fetch failure or
+    Phase C state-mutation issue doesn't break the rest of the page
+  - All CSS uses momentum-pulse pattern (module-level _CSS constant
+    + render_html_block / st.markdown unconditional injection)
+
+  Acceptance (when user opens a stock page):
+    1. Sees the 30-second hook in the first viewport
+    2. If peers exist: sees "🔄 跟 N 檔比較" button
+    3. Below button: peer resonance mini-block (NVDA → MAG 7 peers etc)
+    4. Then the existing 12-section research workspace
+
+  Tests: 9 smoke tests for the 3 helpers, CSS classes, button wiring,
+  bundle page integration.
+
+v1.13.3 (2026-05-12)  [Phase A — Ticker Hook Block (subscription hook)]
+
+  Phase A of v1.13.5 combo. See v1.13.5 entry for full details.
+  This intermediate tag preserved for git history.
 
 v1.13.2 (2026-05-12)  [US Theme Radar 排版升級: Bloomberg-style 公司名為主]
 
@@ -28162,6 +28280,940 @@ def render_signal_panel(ticker: str, analysis: dict, intraday: dict, news_items:
         )
     )
 
+def _build_ticker_hook_data(bundle: dict) -> dict:
+    """v1.13.3 Phase A: Distill a ticker bundle into a "30-second hook" payload.
+
+    The hook block is the FIRST thing a subscription user sees when they open
+    a stock page. It answers the 4 most important questions in 30 seconds:
+      1. 綜合評分: how strong is this stock right now?
+      2. 趨勢評等: long-term position (bullish / neutral / bearish)
+      3. Why bullish: top 3 positive signals
+      4. Why bearish: top 2 negative / risk signals
+
+    Returns dict with keys:
+      ticker, company_name, sector, last_price, daily_pct, ytd_pct,
+      score, score_band, trend_label, trend_tone,
+      signal_zh, signal_tone,
+      bullish_reasons (list[str]), bearish_reasons (list[str]),
+      rsi_status_zh, volume_status_zh, news_pulse_label
+
+    All fields derived from bundle's existing analysis dict — no new fetches.
+    """
+    analysis = bundle.get("analysis") or {}
+    ticker = str(bundle.get("ticker", "")).upper()
+    name = bundle.get("name") or analysis.get("name") or ""
+    last_price = analysis.get("last_price")
+
+    # Score 0-100
+    raw_score = analysis.get("score")
+    try:
+        score = float(raw_score) if raw_score is not None else None
+    except (TypeError, ValueError):
+        score = None
+
+    # Score band
+    if score is None:
+        score_band = "no_data"
+    elif score >= 75:
+        score_band = "strong"
+    elif score >= 55:
+        score_band = "good"
+    elif score >= 40:
+        score_band = "neutral"
+    elif score >= 25:
+        score_band = "weak"
+    else:
+        score_band = "poor"
+
+    # Trend (1-year return based)
+    one_year_return = analysis.get("one_year_return")
+    trend_label = str(analysis.get("trend", "") or "").strip()
+    if one_year_return is not None and not (isinstance(one_year_return, float) and (one_year_return != one_year_return)):
+        if one_year_return >= 30:
+            trend_tone = "strong_positive"
+            trend_zh = "趨勢強多 ●●●"
+        elif one_year_return >= 10:
+            trend_tone = "positive"
+            trend_zh = "趨勢偏多 ●●○"
+        elif one_year_return >= -10:
+            trend_tone = "neutral"
+            trend_zh = "區間震盪 ●○○"
+        elif one_year_return >= -30:
+            trend_tone = "negative"
+            trend_zh = "趨勢偏空 ○○●"
+        else:
+            trend_tone = "strong_negative"
+            trend_zh = "趨勢弱空 ○●●"
+    else:
+        trend_tone = "neutral"
+        trend_zh = "—"
+
+    # Signal
+    signal_raw = str(analysis.get("signal", "") or "HOLD").upper()
+    signal_zh_map = {"BUY": "做多", "HOLD": "中性", "SELL": "做空"}
+    signal_zh = signal_zh_map.get(signal_raw, "中性")
+    signal_tone_map = {"BUY": "positive", "HOLD": "neutral", "SELL": "negative"}
+    signal_tone = signal_tone_map.get(signal_raw, "neutral")
+
+    # Reasons (from analyze_market_sentinel) — split into bullish/bearish
+    reasons_raw = analysis.get("reasons") or []
+    if not isinstance(reasons_raw, (list, tuple)):
+        reasons_raw = []
+    bullish_keywords = ("上行", "走多", "強勢", "突破", "創高", "領先", "買盤", "增持", "上漲", "利多", "看多", "強多", "領漲", "成長", "升")
+    bearish_keywords = ("下行", "回測", "弱", "破", "創低", "落後", "賣壓", "減持", "下跌", "利空", "看空", "風險", "警示", "過熱", "超買")
+    bullish_reasons = []
+    bearish_reasons = []
+    for r in reasons_raw:
+        r_str = str(r).strip()
+        if not r_str:
+            continue
+        if any(kw in r_str for kw in bearish_keywords):
+            bearish_reasons.append(r_str)
+        elif any(kw in r_str for kw in bullish_keywords):
+            bullish_reasons.append(r_str)
+        else:
+            # Default: depend on signal tone
+            if signal_tone == "positive":
+                bullish_reasons.append(r_str)
+            elif signal_tone == "negative":
+                bearish_reasons.append(r_str)
+            else:
+                bullish_reasons.append(r_str)
+
+    # RSI
+    rsi_status = str(analysis.get("rsi_status", "") or "")
+    rsi_status_zh = {
+        "Overbought": "RSI 超買 (回測警訊)",
+        "Oversold": "RSI 超賣 (反彈機會)",
+        "Neutral": "RSI 中性",
+    }.get(rsi_status, rsi_status)
+
+    # Volume status
+    vol_status = str(analysis.get("volume_status", "") or "")
+    vol_status_zh = {
+        "Elevated": "量能放大 (資金追入)",
+        "Normal": "量能持平",
+        "Light": "量能縮減 (觀望)",
+        "N/A": "—",
+    }.get(vol_status, vol_status)
+
+    # News pulse
+    news_pulse = analysis.get("news_pulse")
+    if isinstance(news_pulse, dict):
+        news_pulse_label = str(news_pulse.get("label", "") or "").strip()
+    else:
+        news_pulse_label = ""
+
+    # Sector / asset hint (rough — based on ticker prefix)
+    sector_hint = ""
+    if ticker.endswith(".TW") or ticker.endswith(".TWO"):
+        sector_hint = "台股"
+    elif ticker:
+        sector_hint = "美股"
+
+    # Daily move %
+    daily_pct = None
+    try:
+        ohlc = bundle.get("daily_ohlc")
+        if ohlc is not None and len(ohlc) >= 2:
+            close = ohlc["Close"] if "Close" in ohlc.columns else ohlc.iloc[:, -1]
+            if len(close) >= 2:
+                daily_pct = (float(close.iloc[-1]) - float(close.iloc[-2])) / float(close.iloc[-2]) * 100
+    except Exception:
+        daily_pct = None
+
+    return {
+        "ticker": ticker,
+        "company_name": name,
+        "sector": sector_hint,
+        "last_price": last_price,
+        "daily_pct": daily_pct,
+        "score": score,
+        "score_band": score_band,
+        "trend_zh": trend_zh,
+        "trend_tone": trend_tone,
+        "trend_label_raw": trend_label,
+        "one_year_return": one_year_return,
+        "signal_zh": signal_zh,
+        "signal_tone": signal_tone,
+        "bullish_reasons": bullish_reasons[:3],   # Top 3
+        "bearish_reasons": bearish_reasons[:2],   # Top 2
+        "rsi_status_zh": rsi_status_zh,
+        "volume_status_zh": vol_status_zh,
+        "news_pulse_label": news_pulse_label,
+    }
+
+
+_TICKER_HOOK_CSS = """
+<style>
+.ticker-hook-block {
+    background: linear-gradient(180deg, rgba(20, 26, 45, 0.92), rgba(14, 18, 32, 0.92));
+    border: 1px solid rgba(96, 110, 145, 0.35);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 6px 0 16px 0;
+    color: #e9ecf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+.ticker-hook-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.ticker-hook-name-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.ticker-hook-company {
+    font-size: 21px;
+    font-weight: 700;
+    color: #f4f6fb;
+    line-height: 1.2;
+}
+.ticker-hook-symbol-line {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 13px;
+    color: #98a2b8;
+}
+.ticker-hook-symbol {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    color: #b8c0d4;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+.ticker-hook-price-block {
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.ticker-hook-price {
+    font-size: 22px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #f4f6fb;
+}
+.ticker-hook-pct {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.ticker-hook-pct.pos { color: #6fd99a; }
+.ticker-hook-pct.neg { color: #f08894; }
+.ticker-hook-pct.neutral { color: #98a2b8; }
+
+/* 3-metric row */
+.ticker-hook-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin: 10px 0 14px 0;
+}
+.ticker-hook-metric {
+    padding: 10px 12px;
+    background: rgba(20, 26, 45, 0.6);
+    border: 1px solid rgba(96, 110, 145, 0.22);
+    border-radius: 10px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.ticker-hook-metric-label {
+    font-size: 12px;
+    color: #98a2b8;
+    font-weight: 500;
+}
+.ticker-hook-metric-value {
+    font-size: 17px;
+    font-weight: 700;
+    color: #f4f6fb;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px;
+}
+.ticker-hook-metric-sub {
+    font-size: 11.5px;
+    color: #b8c0d4;
+}
+/* Tone classes */
+.tone-strong-positive {
+    border-color: rgba(111, 217, 154, 0.55);
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.14), rgba(20, 26, 45, 0.65));
+}
+.tone-strong-positive .ticker-hook-metric-value { color: #8be8b1; }
+.tone-positive {
+    border-color: rgba(111, 217, 154, 0.40);
+}
+.tone-positive .ticker-hook-metric-value { color: #8be8b1; }
+.tone-neutral {
+    border-color: rgba(230, 195, 95, 0.35);
+}
+.tone-neutral .ticker-hook-metric-value { color: #f4d68a; }
+.tone-negative {
+    border-color: rgba(240, 136, 148, 0.40);
+}
+.tone-negative .ticker-hook-metric-value { color: #f08894; }
+.tone-strong-negative {
+    border-color: rgba(240, 136, 148, 0.55);
+    background: linear-gradient(180deg, rgba(217, 102, 112, 0.14), rgba(20, 26, 45, 0.65));
+}
+.tone-strong-negative .ticker-hook-metric-value { color: #f08894; }
+
+/* Reasons section */
+.ticker-hook-reasons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ticker-hook-reason-group {
+    padding: 10px 12px;
+    background: rgba(20, 26, 45, 0.5);
+    border-left: 3px solid rgba(120, 134, 165, 0.35);
+    border-radius: 6px;
+}
+.ticker-hook-reason-group.bullish {
+    border-left-color: #6fd99a;
+    background: rgba(76, 208, 168, 0.08);
+}
+.ticker-hook-reason-group.bearish {
+    border-left-color: #f08894;
+    background: rgba(217, 102, 112, 0.08);
+}
+.ticker-hook-reason-group.empty {
+    border-left-color: rgba(152, 162, 184, 0.30);
+    color: #98a2b8;
+}
+.ticker-hook-reason-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: #d8dde9;
+    margin-bottom: 4px;
+}
+.ticker-hook-reason-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.ticker-hook-reason-list li {
+    font-size: 13px;
+    color: #c5cbdd;
+    padding-left: 14px;
+    position: relative;
+    line-height: 1.5;
+}
+.ticker-hook-reason-list li::before {
+    content: "•";
+    position: absolute;
+    left: 4px;
+    color: rgba(184, 192, 212, 0.7);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .ticker-hook-metrics {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .ticker-hook-company {
+        font-size: 18px;
+    }
+    .ticker-hook-price {
+        font-size: 18px;
+    }
+    .ticker-hook-header {
+        gap: 8px;
+    }
+}
+</style>
+"""
+
+
+def _render_ticker_hook_block(hook: dict) -> None:
+    """v1.13.3 Phase A: Render the 30-second hook block at the top of a stock page.
+
+    Args:
+        hook: dict produced by _build_ticker_hook_data()
+    """
+    if not hook:
+        return
+    # Inject CSS every render (idempotent — same pattern as momentum-pulse)
+    st.markdown(_TICKER_HOOK_CSS, unsafe_allow_html=True)
+
+    ticker = hook.get("ticker", "—")
+    name = hook.get("company_name", "") or ticker
+    sector = hook.get("sector", "")
+    # Price + daily pct
+    last_price = hook.get("last_price")
+    if last_price is not None and not pd.isna(last_price):
+        try:
+            price_str = f"${float(last_price):,.2f}"
+        except Exception:
+            price_str = "—"
+    else:
+        price_str = "—"
+    daily_pct = hook.get("daily_pct")
+    if daily_pct is not None and not pd.isna(daily_pct):
+        pct_class = "pos" if daily_pct >= 0 else "neg"
+        pct_sign = "+" if daily_pct >= 0 else ""
+        pct_str = f"{pct_sign}{daily_pct:.2f}%"
+    else:
+        pct_class = "neutral"
+        pct_str = "—"
+
+    # Metric 1: 綜合評分
+    score = hook.get("score")
+    if score is not None:
+        score_str = f"{score:.0f} / 100"
+        score_band = hook.get("score_band", "neutral")
+        score_band_zh = {
+            "strong":  "極強 ●●●",
+            "good":    "強勢 ●●○",
+            "neutral": "中性 ●○○",
+            "weak":    "偏弱 ○●○",
+            "poor":    "弱勢 ○○●",
+            "no_data": "—",
+        }.get(score_band, "—")
+        score_tone = {
+            "strong":  "tone-strong-positive",
+            "good":    "tone-positive",
+            "neutral": "tone-neutral",
+            "weak":    "tone-negative",
+            "poor":    "tone-strong-negative",
+            "no_data": "tone-neutral",
+        }.get(score_band, "tone-neutral")
+    else:
+        score_str = "—"
+        score_band_zh = "資料準備中"
+        score_tone = "tone-neutral"
+
+    # Metric 2: 趨勢評等
+    trend_zh = hook.get("trend_zh", "—")
+    trend_tone_key = hook.get("trend_tone", "neutral")
+    trend_tone = {
+        "strong_positive": "tone-strong-positive",
+        "positive":        "tone-positive",
+        "neutral":         "tone-neutral",
+        "negative":        "tone-negative",
+        "strong_negative": "tone-strong-negative",
+    }.get(trend_tone_key, "tone-neutral")
+    one_year_return = hook.get("one_year_return")
+    if one_year_return is not None and not pd.isna(one_year_return):
+        trend_sub = f"1Y: {one_year_return:+.1f}%"
+    else:
+        trend_sub = ""
+
+    # Metric 3: 短期訊號
+    signal_zh = hook.get("signal_zh", "中性")
+    signal_tone_key = hook.get("signal_tone", "neutral")
+    signal_tone = {
+        "positive": "tone-positive",
+        "neutral":  "tone-neutral",
+        "negative": "tone-negative",
+    }.get(signal_tone_key, "tone-neutral")
+    rsi_status_zh = hook.get("rsi_status_zh", "")
+    vol_status_zh = hook.get("volume_status_zh", "")
+    signal_sub_parts = [s for s in [rsi_status_zh, vol_status_zh] if s and s != "—"]
+    signal_sub = " · ".join(signal_sub_parts[:1]) if signal_sub_parts else ""
+
+    # Reasons
+    bullish_reasons = hook.get("bullish_reasons") or []
+    bearish_reasons = hook.get("bearish_reasons") or []
+    if bullish_reasons:
+        bullish_html = (
+            f'<div class="ticker-hook-reason-group bullish">'
+            f'<div class="ticker-hook-reason-header">🏆 為什麼值得看 (Top {len(bullish_reasons)})</div>'
+            f'<ul class="ticker-hook-reason-list">'
+            + "".join(f"<li>{escape(r)}</li>" for r in bullish_reasons)
+            + "</ul></div>"
+        )
+    else:
+        bullish_html = (
+            '<div class="ticker-hook-reason-group empty">'
+            '<div class="ticker-hook-reason-header">🏆 為什麼值得看</div>'
+            '<div style="font-size:12px;color:#98a2b8;">'
+            '訊號不明確,建議觀察其他訊號'
+            '</div></div>'
+        )
+    if bearish_reasons:
+        bearish_html = (
+            f'<div class="ticker-hook-reason-group bearish">'
+            f'<div class="ticker-hook-reason-header">⚠️ 風險因子 (Top {len(bearish_reasons)})</div>'
+            f'<ul class="ticker-hook-reason-list">'
+            + "".join(f"<li>{escape(r)}</li>" for r in bearish_reasons)
+            + "</ul></div>"
+        )
+    else:
+        bearish_html = ""
+
+    # Assemble
+    news_label = hook.get("news_pulse_label", "")
+    news_chip = (
+        f' · 新聞: {escape(news_label)}'
+        if news_label and news_label.strip() and news_label != "—"
+        else ""
+    )
+
+    html = (
+        f'<div class="ticker-hook-block">'
+        f'<div class="ticker-hook-header">'
+        f'<div class="ticker-hook-name-block">'
+        f'<div class="ticker-hook-company">{escape(name)}</div>'
+        f'<div class="ticker-hook-symbol-line">'
+        f'<span class="ticker-hook-symbol">{escape(ticker)}</span>'
+        f'<span>{escape(sector)}{news_chip}</span>'
+        f'</div>'
+        f'</div>'
+        f'<div class="ticker-hook-price-block">'
+        f'<div class="ticker-hook-price">{escape(price_str)}</div>'
+        f'<div class="ticker-hook-pct {pct_class}">{escape(pct_str)}</div>'
+        f'</div>'
+        f'</div>'
+        f'<div class="ticker-hook-metrics">'
+        f'<div class="ticker-hook-metric {score_tone}">'
+        f'<div class="ticker-hook-metric-label">🎯 綜合評分</div>'
+        f'<div class="ticker-hook-metric-value">{escape(score_str)}</div>'
+        f'<div class="ticker-hook-metric-sub">{escape(score_band_zh)}</div>'
+        f'</div>'
+        f'<div class="ticker-hook-metric {trend_tone}">'
+        f'<div class="ticker-hook-metric-label">📈 趨勢評等</div>'
+        f'<div class="ticker-hook-metric-value">{escape(trend_zh)}</div>'
+        f'<div class="ticker-hook-metric-sub">{escape(trend_sub)}</div>'
+        f'</div>'
+        f'<div class="ticker-hook-metric {signal_tone}">'
+        f'<div class="ticker-hook-metric-label">⚡ 短期訊號</div>'
+        f'<div class="ticker-hook-metric-value">{escape(signal_zh)}</div>'
+        f'<div class="ticker-hook-metric-sub">{escape(signal_sub)}</div>'
+        f'</div>'
+        f'</div>'
+        f'<div class="ticker-hook-reasons">'
+        f'{bullish_html}'
+        f'{bearish_html}'
+        f'</div>'
+        f'</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _find_peer_tickers(ticker: str, max_peers: int = 5) -> tuple[str, list[str]]:
+    """v1.13.4 Phase B: Find peer tickers in the same theme/sector.
+
+    Returns (group_label, [peer_tickers]) — peers exclude the source ticker.
+
+    Strategy:
+      - U.S. ticker → search US_THEME_GROUPS for membership
+      - Taiwan ticker → search supply chain catalogs
+
+    If no peer group found, returns ("", []).
+    """
+    t = str(ticker or "").upper().strip()
+    if not t:
+        return "", []
+    # U.S. path — search US_THEME_GROUPS
+    if not (t.endswith(".TW") or t.endswith(".TWO")):
+        try:
+            for theme in US_THEME_GROUPS:
+                theme_tickers = [str(x).upper() for x in (theme.get("tickers") or [])]
+                if t in theme_tickers:
+                    label_zh = theme.get("label_zh") or theme.get("label_en") or ""
+                    emoji = theme.get("emoji", "")
+                    group_label = f"{emoji} {label_zh}".strip()
+                    peers = [p for p in theme_tickers if p != t][:max_peers]
+                    return group_label, peers
+        except Exception:
+            pass
+        return "", []
+    # Taiwan path — search supply chain catalogs
+    try:
+        for chain_key in SUPPLY_CHAIN_FOCUS_ORDER:
+            config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(chain_key) or {}
+            catalog = config.get("catalog") or []
+            chain_tickers = [str(item.get("ticker", "")).upper() for item in catalog]
+            if t in chain_tickers:
+                label = config.get("title", "")
+                # Get sub-group (more specific peers from same "group" field)
+                source_subgroup = None
+                for item in catalog:
+                    if str(item.get("ticker", "")).upper() == t:
+                        source_subgroup = item.get("group", "")
+                        break
+                # Prefer same sub-group, else same chain
+                if source_subgroup:
+                    peers = [
+                        str(item.get("ticker", "")).upper()
+                        for item in catalog
+                        if item.get("group") == source_subgroup
+                        and str(item.get("ticker", "")).upper() != t
+                    ][:max_peers]
+                    if peers:
+                        return f"📦 {label} · {source_subgroup}", peers
+                # Fallback: all peers in chain
+                peers = [
+                    str(item.get("ticker", "")).upper()
+                    for item in catalog
+                    if str(item.get("ticker", "")).upper() != t
+                ][:max_peers]
+                if peers:
+                    return f"📦 {label}", peers
+    except Exception:
+        pass
+    return "", []
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_peer_quotes(peer_tickers: tuple[str, ...]) -> dict:
+    """v1.13.4 Phase B: Lightweight 2-day OHLC fetch for peer-resonance block.
+
+    Cached 5 minutes to avoid repeated calls when user switches tickers
+    within the same theme. Returns dict {ticker: {"last": float, "prev": float}}.
+    """
+    if not peer_tickers:
+        return {}
+    try:
+        frame = yf.download(
+            list(peer_tickers),
+            period="5d",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+            group_by="ticker",
+        )
+        if frame is None or frame.empty:
+            return {}
+        out = {}
+        # Handle single ticker case (yfinance returns flat DataFrame)
+        if len(peer_tickers) == 1:
+            tk = peer_tickers[0]
+            try:
+                close = frame["Close"].dropna()
+                if len(close) >= 2:
+                    out[tk] = {"last": float(close.iloc[-1]), "prev": float(close.iloc[-2])}
+            except Exception:
+                pass
+            return out
+        # Multi-ticker: columns is MultiIndex (ticker, ohlc-field)
+        for tk in peer_tickers:
+            try:
+                if (tk, "Close") in frame.columns:
+                    close = frame[(tk, "Close")].dropna()
+                elif tk in frame.columns:
+                    close = frame[tk]["Close"].dropna()
+                else:
+                    continue
+                if len(close) >= 2:
+                    out[tk] = {"last": float(close.iloc[-1]), "prev": float(close.iloc[-2])}
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def _render_peer_resonance_block(ticker: str, lang_zh: bool = True) -> None:
+    """v1.13.4 Phase B: Render a "類股共振" (sector resonance) block showing
+    how peer tickers in the same theme/sector are moving today.
+
+    Helps users see if the focal ticker's move is part of a broader theme
+    rally or an outlier — critical for confirmation bias check.
+
+    Args:
+        ticker: focal ticker
+        lang_zh: True for Traditional Chinese
+    """
+    group_label, peers = _find_peer_tickers(ticker, max_peers=5)
+    if not peers:
+        return
+
+    # Fetch peer quotes (cached)
+    peer_quotes = _fetch_peer_quotes(tuple(peers))
+    # Also fetch focal ticker to compute source_move
+    source_quote = _fetch_peer_quotes((ticker,)).get(ticker)
+    source_move = None
+    if source_quote:
+        try:
+            source_move = (source_quote["last"] - source_quote["prev"]) / source_quote["prev"] * 100
+        except Exception:
+            source_move = None
+
+    rows_html = []
+    aligned_count = 0
+    diverged_count = 0
+    for peer in peers:
+        q = peer_quotes.get(peer)
+        peer_move = None
+        peer_price = None
+        if q:
+            try:
+                peer_price = q["last"]
+                peer_move = (q["last"] - q["prev"]) / q["prev"] * 100
+            except Exception:
+                pass
+
+        # Resolve display name
+        peer_name = _us_ticker_display_name(peer)
+        if not peer_name:
+            for chain_key in SUPPLY_CHAIN_FOCUS_ORDER:
+                config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(chain_key) or {}
+                for item in (config.get("catalog") or []):
+                    if str(item.get("ticker", "")).upper() == peer:
+                        peer_name = item.get("name") or ""
+                        break
+                if peer_name:
+                    break
+        peer_name = peer_name or peer
+
+        if peer_move is None:
+            move_str = "—"
+            move_class = "neutral"
+            sync_tag = ""
+        else:
+            move_str = f"{peer_move:+.2f}%"
+            move_class = "pos" if peer_move >= 0 else "neg"
+            if source_move is not None:
+                if (source_move >= 0 and peer_move >= 0) or (source_move <= 0 and peer_move <= 0):
+                    sync_tag = '<span class="peer-sync-tag synced">同步</span>'
+                    aligned_count += 1
+                else:
+                    sync_tag = '<span class="peer-sync-tag diverged">背離</span>'
+                    diverged_count += 1
+            else:
+                sync_tag = ""
+
+        price_str = f"${peer_price:.2f}" if peer_price is not None else ""
+        rows_html.append(
+            f'<div class="peer-row">'
+            f'  <div class="peer-row-name">'
+            f'    <span class="peer-name">{escape(peer_name)}</span>'
+            f'    <span class="peer-ticker">{escape(peer)}</span>'
+            f'  </div>'
+            f'  <div class="peer-row-price">{escape(price_str)}</div>'
+            f'  <div class="peer-row-move {move_class}">{escape(move_str)}{sync_tag}</div>'
+            f'</div>'
+        )
+
+    if aligned_count > 0 or diverged_count > 0:
+        summary = f"{aligned_count} 同步 / {diverged_count} 背離"
+    else:
+        summary = ""
+
+    html = (
+        '<div class="peer-resonance-block">'
+        '<div class="peer-resonance-header">'
+        f'<span class="peer-resonance-title">🔗 類股共振</span>'
+        f'<span class="peer-resonance-group">{escape(group_label)}</span>'
+        + (f'<span class="peer-resonance-summary">{escape(summary)}</span>' if summary else '')
+        + '</div>'
+        '<div class="peer-resonance-body">'
+        + "".join(rows_html)
+        + '</div>'
+        '</div>'
+    )
+    st.markdown(_PEER_RESONANCE_CSS, unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)
+
+
+_SMART_COMPARE_BTN_CSS = """
+<style>
+/* v1.13.6: Smart Compare button — scoped dark-theme styling so the
+   button doesn't blend into the page bg (Streamlit's default button
+   bg can be near-white on certain themes).
+
+   We emit an empty <div class="smart-compare-btn-wrap"></div> marker
+   IMMEDIATELY BEFORE the columns containing the button. The CSS then
+   uses adjacent-sibling selectors to scope ONLY this button without
+   affecting other Streamlit buttons on the page (Hero Bar buttons are
+   scoped under .hero-bar-shell, so they remain unaffected). */
+
+/* Hide the marker div itself */
+.smart-compare-btn-wrap {
+    height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Target the very next sibling — Streamlit's columns row containing
+   the button — and dive into the button element. */
+.smart-compare-btn-wrap + div .stButton > button,
+.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button {
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.18), rgba(20, 26, 45, 0.85)) !important;
+    border: 1px solid rgba(111, 217, 154, 0.55) !important;
+    color: #8be8b1 !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    letter-spacing: 0.03em !important;
+    padding: 10px 14px !important;
+    border-radius: 10px !important;
+    transition: all 0.18s !important;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.12) inset !important;
+}
+
+.smart-compare-btn-wrap + div .stButton > button:hover,
+.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button:hover {
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.30), rgba(20, 26, 45, 0.90)) !important;
+    border-color: rgba(111, 217, 154, 0.85) !important;
+    color: #b4f0c8 !important;
+    transform: translateY(-1px) !important;
+}
+
+.smart-compare-btn-wrap + div .stButton > button:active,
+.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button:active {
+    transform: translateY(0) !important;
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.22), rgba(15, 19, 35, 0.95)) !important;
+}
+
+.smart-compare-btn-wrap + div .stButton > button:focus:not(:active),
+.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button:focus:not(:active) {
+    box-shadow: 0 0 0 2px rgba(111, 217, 154, 0.35) !important;
+    outline: none !important;
+}
+
+/* Mobile — slightly less padding */
+@media (max-width: 480px) {
+    .smart-compare-btn-wrap + div .stButton > button,
+    .smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button {
+        padding: 8px 12px !important;
+        font-size: 13px !important;
+    }
+}
+</style>
+"""
+
+
+_PEER_RESONANCE_CSS = """
+<style>
+.peer-resonance-block {
+    background: rgba(15, 19, 35, 0.55);
+    border: 1px solid rgba(96, 110, 145, 0.22);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 8px 0 14px 0;
+    color: #e9ecf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+.peer-resonance-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(96, 110, 145, 0.25);
+    flex-wrap: wrap;
+}
+.peer-resonance-title {
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #f4f6fb;
+}
+.peer-resonance-group {
+    font-size: 13px;
+    color: #b8c0d4;
+    font-weight: 500;
+}
+.peer-resonance-summary {
+    margin-left: auto;
+    font-size: 12px;
+    color: #98a2b8;
+    font-variant-numeric: tabular-nums;
+}
+.peer-resonance-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.peer-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 6px 4px;
+    font-size: 13px;
+}
+.peer-row + .peer-row {
+    border-top: 1px solid rgba(96, 110, 145, 0.15);
+}
+.peer-row-name {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.peer-name {
+    font-size: 13px;
+    color: #e9ecf3;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.peer-ticker {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11px;
+    color: #98a2b8;
+}
+.peer-row-price {
+    font-size: 13px;
+    color: #b8c0d4;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+.peer-row-move {
+    font-size: 13.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.peer-row-move.pos { color: #6fd99a; }
+.peer-row-move.neg { color: #f08894; }
+.peer-row-move.neutral { color: #98a2b8; }
+.peer-sync-tag {
+    font-size: 10.5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+}
+.peer-sync-tag.synced {
+    background: rgba(76, 208, 168, 0.15);
+    border: 1px solid rgba(111, 217, 154, 0.40);
+    color: #8be8b1;
+}
+.peer-sync-tag.diverged {
+    background: rgba(220, 175, 60, 0.12);
+    border: 1px solid rgba(230, 195, 95, 0.40);
+    color: #f4d68a;
+}
+@media (max-width: 480px) {
+    .peer-resonance-block {
+        padding: 10px 12px;
+    }
+    .peer-row {
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+    }
+    .peer-row-price {
+        display: none;
+    }
+}
+</style>
+"""
+
+
 def render_news_first_section(ticker: str, analysis: dict, intraday: dict, news_items: list[dict]):
     left, center, right = st.columns([0.95, 1.95, 1.0], gap="large")
     with left:
@@ -33793,6 +34845,77 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
     news_items = bundle["news_items"]
     daily_ohlc = bundle.get("daily_ohlc", pd.DataFrame())
     intraday_ohlc = bundle.get("intraday_ohlc", pd.DataFrame())
+
+    # v1.13.3 Phase A: 30-second hook block at the TOP of every ticker page.
+    # Distills the analysis bundle into 4 cards (price/score/trend/signal)
+    # + top 3 bullish + top 2 bearish reasons, so subscription users get
+    # an at-a-glance thesis before scrolling through the full workspace.
+    try:
+        hook_data = _build_ticker_hook_data(bundle)
+        if hook_data:
+            _render_ticker_hook_block(hook_data)
+    except Exception:
+        # Best effort — if hook fails, the rest of the page still works
+        pass
+
+    # v1.13.5 Phase C: Smart-compare button — deep-links the current focal
+    # ticker + auto-detected peers into the Stock Comparison full-page mode.
+    # Only renders if peers exist in the same theme/sector (otherwise the
+    # compare workflow has nothing to compare against).
+    #
+    # v1.13.6: Added scoped CSS — Streamlit's default button bg on this
+    # page was near-white and made the text unreadable. We wrap the button
+    # in a marker div (.smart-compare-btn-wrap) and target it via CSS
+    # adjacent-sibling pattern so only this button gets the dark theme.
+    try:
+        group_label_for_peers, peers_for_compare = _find_peer_tickers(ticker, max_peers=4)
+        if peers_for_compare:
+            # Inject scoped CSS for the smart-compare button (idempotent)
+            st.markdown(_SMART_COMPARE_BTN_CSS, unsafe_allow_html=True)
+            # Marker div — the CSS below targets `.smart-compare-btn-wrap + div`
+            # to find the very next Streamlit element (the button wrapper).
+            st.markdown('<div class="smart-compare-btn-wrap"></div>', unsafe_allow_html=True)
+            cmp_col_left, cmp_col_right = st.columns([1, 3])
+            with cmp_col_left:
+                compare_btn_label = (
+                    f"🔄 跟 {len(peers_for_compare)} 檔同類股比較"
+                    if get_lang() == "繁體中文"
+                    else f"🔄 Compare with {len(peers_for_compare)} peers"
+                )
+                if st.button(
+                    compare_btn_label,
+                    key=f"hook_compare_btn_{ticker}",
+                    help=(
+                        f"自動帶入 {ticker} + {len(peers_for_compare)} 檔同類股進「股票比較」全頁模式"
+                        if get_lang() == "繁體中文"
+                        else f"Auto-load {ticker} + {len(peers_for_compare)} peers into Stock Comparison"
+                    ),
+                    use_container_width=True,
+                ):
+                    # Pre-populate the comparison setup with focal + peers
+                    compare_set = [ticker] + list(peers_for_compare)
+                    st.session_state["_comparison_setup_tickers"] = compare_set
+                    # Switch dashboard mode
+                    st.session_state["dashboard_mode"] = "Stock Comparison"
+                    st.rerun()
+            with cmp_col_right:
+                # Friendly hint about which peers will be loaded
+                peers_preview = ", ".join(peers_for_compare[:4])
+                st.caption(
+                    f"📦 來自 **{group_label_for_peers}** — 將比較 {peers_preview}"
+                    if get_lang() == "繁體中文"
+                    else f"📦 From **{group_label_for_peers}** — peers: {peers_preview}"
+                )
+    except Exception:
+        pass
+
+    # v1.13.4 Phase B: 類股共振 mini-block — show how peer tickers in the
+    # same theme are moving today. Helps confirm if the focal's move is
+    # a broad-theme rally or an outlier (key signal for confirmation bias).
+    try:
+        _render_peer_resonance_block(ticker, lang_zh=(get_lang() == "繁體中文"))
+    except Exception:
+        pass
 
     render_news_first_section(ticker, analysis, intraday, news_items)
     render_decision_brief(ticker, analysis, intraday, news_items)
