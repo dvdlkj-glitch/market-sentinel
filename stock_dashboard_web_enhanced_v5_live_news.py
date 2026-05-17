@@ -3,8 +3,8 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.9
-Updated : 2026-05-12
+Version : v1.13.11
+Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
 
@@ -246,6 +246,94 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.11 (2026-05-17)  [Stock Comparison: 2 個 engine label 更明確 + 加說明]
+
+  User observation: 「4 維度評估」顯示 AMZN 5.5 略勝, 但下方「智慧比較」
+  顯示 INTC 領先. 邏輯不一致?
+
+  Investigation: 不是 bug, 是 2 個獨立 engine 回答不同問題:
+
+  Engine A — 「4 維度量化評估」(stock_comparison_dashboard.py):
+    Source: bundle["eval_scores"] from _fetch_eval()
+    Formula: 平均(技術 + 價值 + 成長 + 籌碼), 各維 0-10 分
+    Question answered: 「綜合而言哪檔最有吸引力?」(long-term composite)
+    For INTC: tech 7.4 + value 2.5 + growth 2.2 = lowered by weak value/growth
+    For AMZN: tech 4.4 + value 4.4 + growth 7.8 = balanced winner
+
+  Engine B — 「智慧比較 / 勝出卡」(main file compute_lens_winner_fields):
+    Source: analysis["pro_score"] + lens adjustment (-3 ~ +3)
+    Formula: base_score(技術-heavy from analyze_market_sentinel)
+             + position-lens adjustment (rewards SMA200 hold, 1Y return,
+             mid-term trend alignment)
+    Question answered: 「短中期交易角度,哪檔時機最對?」
+    For INTC: technical strength + SMA200 hold → high pro_score
+    For AMZN: weaker short-term technicals → lower pro_score
+
+  These ARE meant to be different evaluation lenses. The 「inconsistency」
+  is actually informative signal: INTC may have a short-term trading
+  setup despite weaker long-term fundamentals, while AMZN has stronger
+  long-term composite but a less favorable trading setup right now.
+
+  Fix (Option 2 — labels only, ZERO formula changes):
+
+    1. stock_comparison_dashboard.py line 1220:
+       Title: "📊 4 維度評估對比" → "📊 4 維度量化評估對比"
+       Subtitle: added "綜合排名(各維平均)" 字樣
+
+    2. Main file line 28057 (zh) + 28070 (en):
+       Compare label: "智慧比較" → "🎯 智慧比較(部位視角分析)"
+                      "Smart Compare" → "🎯 Smart Compare (Position-Lens View)"
+
+    3. Main file guide text (zh dict + en source string):
+       Added explanation that the winner here is "短中期交易角度",
+       may differ from 4-Dim Quant Evaluation above, both worth consulting.
+
+  No engine logic changed. No new code. 3 text edits + 1 dict update.
+  Users now see the two engines clearly labeled and understand they
+  represent different evaluation lenses.
+
+  Tests: 4 smoke tests verifying label updates and dict consistency.
+
+v1.13.10 (2026-05-17)  [Fix v1.13.8 — Watchlist 也接受美股(不再 台股-only)]
+
+  User report: Watchlist 有 INTC / MSFT / AMZN / PLTR(美股), 但「從
+  Watchlist 加入」顯示「Watchlist 沒有台股 ticker」訊息. 美股完全被擋
+  掉, 無法從 watchlist 加入 Stock Comparison.
+
+  Root cause: stock_comparison_dashboard.py line ~545 had:
+    tw_watchlist = [t for t in watchlist_tickers if is_taiwan_ticker(t)]
+    if tw_watchlist:
+        # 顯示 multiselect
+    else:
+        st.info("Watchlist 沒有台股 ticker")  ← 美股就走這
+
+  This filter was a leftover from when Stock Comparison was Taiwan-only.
+  Today, the module fully supports 台股 / 美股 / mixed scopes — the
+  filter is dead-weight that excludes valid tickers.
+
+  Fix: Drop the is_taiwan_ticker filter. Pass ALL watchlist tickers
+  through to the multiselect. _display_label resolver (v1.13.8/9)
+  handles both Taiwan + US naming so the UI looks consistent:
+
+    Before:
+      Watchlist [INTC, MSFT, AMZN, PLTR]
+      → Stock Comparison 「沒有台股 ticker」 ❌
+
+    After:
+      Watchlist [INTC, MSFT, AMZN, PLTR]
+      → Stock Comparison shows:
+          ☐ INTC Intel
+          ☐ MSFT Microsoft
+          ☐ AMZN Amazon
+          ☐ PLTR Palantir
+        ✅ all selectable
+
+  Message text also generic'd: "Watchlist 沒有台股 ticker" →
+  "Watchlist 是空的" (only triggers when watchlist truly empty).
+
+  No new code, no architecture change. Just removed 1 filter +
+  updated 1 message text.
 
 v1.13.9 (2026-05-12)  [Fix v1.13.8 — 3715.TW 沒名(coverage gap)]
 
@@ -11010,7 +11098,7 @@ TERM_TRANSLATIONS = {
         "Cycle View likes broad trend alignment.": "週期視角偏好大方向一致。",
         "Cycle View discounts broken leadership.": "週期視角會降低失去領先地位的評價。",
         "Cycle View notes news, but does not over-weight it.": "週期視角會參考新聞，但不會給過高權重。",
-        "Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking.": "當你想先得到一個答案時，先看這裡。Winner Card 會依目前趨勢鏡頭調整，因此領先者會隨你的問題而改變。",
+        "Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking. Note: the winner here reflects short-to-mid-term trading angle and may differ from the 4-Dimension Quant Evaluation above (composite rank). They answer different questions — both are worth consulting.": "當你想先得到一個答案時，先看這裡。Winner Card 會依目前趨勢鏡頭調整，因此領先者會隨你的問題而改變。注意：此處的勝出標的是「短中期交易角度」，可能與上方「4 維度量化評估」(綜合排名) 結果不同 — 兩者回答的問題不同，都值得參考。",
         "Compared with {runner}, this setup currently has the cleaner edge for the active lens. Change the lens and the winner can change too.": "和 {runner} 相比，這個配置在目前鏡頭下更乾淨、更具優勢。切換鏡頭後，領先者也可能改變。",
         "This is the most active catalyst bucket right now. If new headlines keep leaning the same way, they can strengthen or weaken the current signal faster than technicals alone.": "這是目前最活躍的催化劑分類。如果新標題持續往同一方向傾斜，對目前訊號的強化或削弱速度可能比技術面更快。",
         "Confidence comes from trend structure, news pulse, and trade setup aligning. When those disagree, the dashboard tends to fall back to HOLD.": "信心來自趨勢結構、新聞脈動與交易型態彼此一致。當它們互相衝突時，儀表板通常會回到觀望。",
@@ -28000,7 +28088,7 @@ def render_winner_card(bundles: list[dict], lens_meta: dict | None = None):
     leader_analysis = leader["analysis"]
     catalyst = leader_analysis.get("catalyst_engine", {}).get("dominant", "Macro")
     runner_catalyst = runner["analysis"].get("catalyst_engine", {}).get("dominant", "Macro")
-    guide = tr_term("Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking.")
+    guide = tr_term("Start here when you want one answer first. The winner card now adapts to the active Trend Lens, so leadership can change based on the question you are asking. Note: the winner here reflects short-to-mid-term trading angle and may differ from the 4-Dimension Quant Evaluation above (composite rank). They answer different questions — both are worth consulting.")
     why = leader_fields["lens_reasons"][:3] or leader_analysis["reasons"][:3]
 
     if get_lang() == "繁體中文":
@@ -28014,7 +28102,7 @@ def render_winner_card(bundles: list[dict], lens_meta: dict | None = None):
         lens_score_runner = f"鏡頭分數 {runner_fields['lens_score']:+d} · {tr_signal(runner['analysis']['signal'])}"
         lens_adjustment_sub = f"基礎分數 {leader_fields['base_score']:+d}，再由目前鏡頭進一步調整。"
         catalyst_sub = f"次名焦點：{tr_term(runner_catalyst)} · 目前優勢 {diff:+d}"
-        compare_label = "智慧比較"
+        compare_label = "🎯 智慧比較(部位視角分析)"
         winner_badge = "勝出卡"
     else:
         hero_title = f"{display_ticker_label(leader['ticker'])} is leading under {tr_lens_name(leader_fields['lens_title'])}"
@@ -28027,7 +28115,7 @@ def render_winner_card(bundles: list[dict], lens_meta: dict | None = None):
         lens_score_runner = f"Lens score {runner_fields['lens_score']:+d} · {tr_signal(runner['analysis']['signal'])}"
         lens_adjustment_sub = f"Base score {leader_fields['base_score']:+d} adjusted by the active lens."
         catalyst_sub = f"Runner-up focus: {tr_term(runner_catalyst)} · Current edge {diff:+d}"
-        compare_label = "Smart Compare"
+        compare_label = "🎯 Smart Compare (Position-Lens View)"
         winner_badge = "Winner Card"
 
     why_html = ''.join(f'<li>{escape(tr_term(item))}</li>' for item in why)

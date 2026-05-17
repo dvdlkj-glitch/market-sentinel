@@ -542,13 +542,18 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
             unsafe_allow_html=True,
         )
     else:
-        tw_watchlist = [t for t in watchlist_tickers if is_taiwan_ticker(t)] if watchlist_tickers else []
-        if tw_watchlist:
+        # v1.13.10: Accept ALL watchlist tickers (both 台股 + 美股).
+        # Previously filtered by is_taiwan_ticker() which excluded US tickers
+        # like INTC/MSFT/AMZN — even though Stock Comparison fully supports
+        # mixed/US scopes. The filter was a leftover from an earlier
+        # Taiwan-focused iteration.
+        all_watchlist = list(watchlist_tickers) if watchlist_tickers else []
+        if all_watchlist:
             # v1.13.8: format_func adds Chinese company name to each option
             # while keeping ticker as the underlying value.
             wl_picks = st.multiselect(
                 "從 watchlist 多選" if lang_zh else "Multi-select from watchlist",
-                options=tw_watchlist,
+                options=all_watchlist,
                 default=[],
                 key="_comparison_wl_picks",
                 format_func=lambda t: _display_label(t, lang_zh),
@@ -562,7 +567,7 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
                             st.session_state[setup_key].append(ticker)
                 st.rerun()
         else:
-            st.info("Watchlist 沒有台股 ticker" if lang_zh else "No Taiwan tickers in watchlist")
+            st.info("Watchlist 是空的" if lang_zh else "Watchlist is empty")
 
     # === Entry point 3: From supply chain group (toggle) ===
     sc_toggle_label = "🔗 從供應鏈組群加入" if lang_zh else "🔗 Add from supply chain group"
@@ -1212,11 +1217,11 @@ def _render_four_dim_hero(bundles: list[dict], eval_scores_dict: dict, lang_zh: 
 
     verdict = verdict_zh if lang_zh else verdict_en
 
-    title = "📊 4 維度評估對比" if lang_zh else "📊 4-Dimension Evaluation Comparison"
+    title = "📊 4 維度量化評估對比" if lang_zh else "📊 4-Dimension Quant Evaluation"
     subtitle = (
-        "技術面 / 價值面 / 成長面 / 籌碼面 — 量化評分"
+        "技術面 / 價值面 / 成長面 / 籌碼面 — 各維 0-10 分平均後的綜合排名"
         if lang_zh else
-        "Technical / Value / Growth / Chip — quant scores"
+        "Technical / Value / Growth / Chip — averaged quant ranking across 4 dimensions"
     )
 
     # Color class helper
