@@ -131,6 +131,35 @@ def _main(attr_name: str, default=None):
     return getattr(mod, attr_name, default)
 
 
+def _display_label(ticker: str, lang_zh: bool = True) -> str:
+    """v1.13.8: Convert a ticker to a human-friendly label that includes
+    the company name when available.
+
+      "2330.TW" → "2330.TW 台積電"
+      "3711.TW" → "3711.TW 日月光投控"
+      "NVDA"    → "NVDA NVIDIA"
+      "AAPL"    → "AAPL Apple"
+      Unknown ticker → just "TICKER" (no suffix)
+
+    Used in chip rendering, multiselect format_func, and any other UI
+    spot that needs to show ticker + name together. Single source of
+    truth — adjust here and all surfaces update.
+    """
+    if not ticker:
+        return ""
+    tk = str(ticker).upper().strip()
+    resolver = _main("_resolve_ticker_display_name")
+    if not callable(resolver):
+        return tk
+    try:
+        name = resolver(tk) or ""
+    except Exception:
+        name = ""
+    if name:
+        return f"{tk} {name}"
+    return tk
+
+
 # ---------------------------------------------------------------------------
 # CSS for comparison dashboard
 # ---------------------------------------------------------------------------
@@ -515,11 +544,14 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
     else:
         tw_watchlist = [t for t in watchlist_tickers if is_taiwan_ticker(t)] if watchlist_tickers else []
         if tw_watchlist:
+            # v1.13.8: format_func adds Chinese company name to each option
+            # while keeping ticker as the underlying value.
             wl_picks = st.multiselect(
                 "從 watchlist 多選" if lang_zh else "Multi-select from watchlist",
                 options=tw_watchlist,
                 default=[],
                 key="_comparison_wl_picks",
+                format_func=lambda t: _display_label(t, lang_zh),
                 label_visibility="collapsed",
             )
             wl_add_label = "加入所選" if lang_zh else "Add selected"
@@ -567,11 +599,13 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
                 else:
                     group_tickers = []
                 if group_tickers:
+                    # v1.13.8: Apply name resolution to supply chain group options too
                     group_picks = st.multiselect(
                         "選擇個股(來自此組群)" if lang_zh else "Pick tickers from this group",
                         options=group_tickers,
                         default=[],
                         key="_comparison_group_picks",
+                        format_func=lambda t: _display_label(t, lang_zh),
                     )
                     grp_add_label = "加入所選" if lang_zh else "Add selected"
                     if st.button(grp_add_label, key="_comparison_grp_add_btn"):
@@ -601,9 +635,13 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
 
         # v1.12.0c (Option D): HTML chip + per-ticker Material icon close button
         # + clear-all reset button below.
+        # v1.13.8: chip now includes Chinese company name when resolvable
+        # (e.g. "📌 2330.TW 台積電" instead of just "📌 2330.TW").
         cols = st.columns(min(len(selected), 5))
         for idx, ticker in enumerate(selected):
             with cols[idx % 5]:
+                # v1.13.8: Use _display_label so name is appended when known.
+                chip_label = _display_label(ticker, lang_zh)
                 # Chip with proper contrast (dark text on themed background)
                 chip_html = (
                     f'<div style="background: rgba(82, 196, 138, 0.14); '
@@ -611,7 +649,7 @@ def _render_ticker_setup(watchlist_tickers: list[str]) -> list[str]:
                     f'border-radius: 18px; padding: 8px 14px; text-align: center; '
                     f'font-weight: 600; color: #c2cdde; font-size: 14px; '
                     f'margin-bottom: 6px; letter-spacing: 0.02em;">'
-                    f'📌 {escape(ticker)}'
+                    f'📌 {escape(chip_label)}'
                     f'</div>'
                 )
                 st.markdown(chip_html, unsafe_allow_html=True)

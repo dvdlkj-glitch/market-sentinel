@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.6
+Version : v1.13.9
 Updated : 2026-05-12
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,134 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.9 (2026-05-12)  [Fix v1.13.8 — 3715.TW 沒名(coverage gap)]
+
+  User report: 「成果但是不是全部都可以顯示出來」— screenshot showed
+  Watchlist dropdown listing 5 tickers; 4 had names (2330.TW 台積電,
+  2454.TW 聯發科, 2308.TW 台達電, 3711.TW 日月光投控) but 3715.TW
+  was bare.
+
+  Root cause: v1.13.8 resolver only scanned SUPPLY_CHAIN_FOCUS_CONFIGS
+  catalogs (narrow — only AI/memory/satellite/etc supply chain stocks).
+  3715.TW (定穎投控) is in the "Taiwan AI Supply Chain" watchlist preset
+  but NOT in any of the curated supply chain catalogs, so resolver
+  returned empty string → label fell back to just "3715.TW".
+
+  Hidden gem found: main file has TAIWAN_TICKER_METADATA at line ~9983 —
+  a curated mapping of 100+ Taiwan tickers with zh/en/aliases. This is
+  a MUCH wider source than the supply chain catalogs (which are narrow
+  by design for each lab page).
+
+  Fix: Reordered lookup priority in _resolve_ticker_display_name:
+    1. PRIMARY:   TAIWAN_TICKER_METADATA["zh"]  ← NEW, widest coverage
+    2. SECONDARY: SUPPLY_CHAIN_FOCUS_CONFIGS    ← existing, curated
+    3. TERTIARY:  runtime metadata (yfinance)   ← existing, last resort
+
+    Falls back to English name if no Chinese name in metadata.
+    Wrapped in try/except NameError in case of module init-order edge.
+
+  Verified resolved (sample):
+    3715.TW → 定穎投控
+    2330.TW → 台積電 (still works, just routes through metadata first)
+    2317.TW → 鴻海
+    2382.TW → 廣達
+    3231.TW → 緯創
+    2376.TW → 技嘉
+    + 100+ other Taiwan tickers all covered
+
+v1.13.8 (2026-05-12)  [Stock Comparison: chip + dropdown 加上公司名稱]
+
+  User request: 「請幫忙添加股票的公司名稱,請確定不論是台股、還是美股
+  問題都解決,也同時增加公司名稱」
+
+  Before:
+    - Watchlist multiselect: only "2330.TW / 2454.TW / 3711.TW"
+      (just ticker codes, hard to read)
+    - Selected chips: "📌 2330.TW" (no company name)
+    - Supply chain group multiselect: same — only ticker
+
+  After:
+    - Watchlist multiselect: "2330.TW 台積電 / 2454.TW 聯發科 /
+      3711.TW 日月光投控" (ticker + Chinese name)
+    - US tickers in any list: "NVDA NVIDIA / AAPL Apple / MSFT Microsoft"
+    - Selected chips: "📌 2330.TW 台積電"
+    - Supply chain group multiselect: ticker + name too
+
+  Architecture (per v1.13.7 design principle):
+    1. NEW main-file helper: _resolve_ticker_display_name(ticker)
+       - Taiwan path: scans SUPPLY_CHAIN_FOCUS_CONFIGS catalogs for the
+         "name" field, falls back to runtime metadata (yfinance longName)
+       - U.S. path: delegates to existing _us_ticker_display_name
+       - Returns "" if unresolved (callers preserve ticker as fallback)
+
+    2. NEW comparison-module helper: _display_label(ticker, lang_zh)
+       - Wraps _resolve_ticker_display_name via _main() proxy
+       - Formats as "TICKER NAME" or just "TICKER" if no name found
+       - Single source of truth for ticker-label rendering in this module
+
+    3. Wired into 3 UI sites in stock_comparison_dashboard.py:
+       - Watchlist multiselect: format_func=lambda t: _display_label(t, lang_zh)
+       - Supply chain group multiselect: format_func same
+       - Selected chips: chip body uses _display_label result
+
+  Why _resolve_ticker_display_name lives in MAIN file (not comparison module):
+    - Main file owns SUPPLY_CHAIN_FOCUS_CONFIGS + _us_ticker_display_name
+    - Comparison module is a delegating sub-module (per v1.13.7 design):
+      it CALLS main-file helpers via _main(), doesn't duplicate them
+    - Future deeplinks / mini-blocks can reuse this single resolver
+
+  Test coverage:
+    - 6 smoke tests for the new helpers and chip/dropdown integration
+    - Both Taiwan + US paths exercised
+    - Fallback when ticker unresolvable (returns ticker only, no crash)
+
+v1.13.7 (2026-05-12)  [Fix v1.13.5 Phase C — Smart Compare 進去後表格沒出現]
+
+  User report: 「按 smart-compare button → chips 顯示了 → 但下面什麼都沒出現
+  / 表格根本沒出來」
+
+  Root cause: v1.13.5 only set `_comparison_setup_tickers` but NOT
+  `_comparison_locked_tickers`. Inside render_stock_comparison_dashboard
+  (line ~1559), the flow is:
+    1. Render setup chips     ← v1.13.5 reached this
+    2. Validate len >= 2      ← passed
+    3. Render "▶ 開始對比" button
+    4. if not _comparison_locked_tickers:
+         st.info("👆 點上方按鈕開始對比")
+         return                ← v1.13.5 short-circuited here!
+    5. Fetch data + render comparison table
+    6. ...
+
+  So users saw chips at top + an info message ("點按鈕開始對比") in
+  the middle, but the actual comparison table never rendered. From a
+  deep-link UX standpoint this is broken — clicking smart-compare should
+  go straight to the comparison view, not stop at "click another button".
+
+  Fix: Smart-compare button now sets BOTH session keys atomically:
+    st.session_state["_comparison_setup_tickers"]  = compare_set
+    st.session_state["_comparison_locked_tickers"] = list(compare_set)
+    st.session_state["dashboard_mode"]             = "Stock Comparison"
+    st.rerun()
+
+  Result: clicking the button now lands users on the fully-rendered
+  comparison table with all peer data already loaded — matches the
+  intent of "🔄 跟 N 檔同類股比較" affordance.
+
+  Why it's safe:
+    - Users can still REMOVE individual tickers via the chip ✕ buttons,
+      which DOES clear _comparison_locked_tickers (line 645 in
+      stock_comparison_dashboard.py — already handled).
+    - Users entering Stock Comparison via the Dashboard mode dropdown
+      (not smart-compare) get the ORIGINAL flow: see chips → click
+      "▶ 開始對比" — unchanged.
+    - Only this specific entry-point (smart-compare button) gets the
+      "land already locked" behavior.
+
+  Tests: 3 smoke tests:
+    - Both session keys set in the button handler
+    - dashboard_mode set last (before rerun) for clean transition
+    - Version bump
 
 v1.13.6 (2026-05-12)  [Fix v1.13.5 — Smart Compare button text was unreadable]
 
@@ -34895,6 +35023,13 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
                     # Pre-populate the comparison setup with focal + peers
                     compare_set = [ticker] + list(peers_for_compare)
                     st.session_state["_comparison_setup_tickers"] = compare_set
+                    # v1.13.7: Also lock so the comparison table renders
+                    # immediately on landing — users expect "click → see
+                    # comparison", not "click → see chips → click again".
+                    # Without locking, render_stock_comparison_dashboard
+                    # short-circuits with "👆 點上方按鈕開始對比" and the
+                    # actual comparison table never appears.
+                    st.session_state["_comparison_locked_tickers"] = list(compare_set)
                     # Switch dashboard mode
                     st.session_state["dashboard_mode"] = "Stock Comparison"
                     st.rerun()
@@ -42684,6 +42819,70 @@ _US_TICKER_NAME_FALLBACK_MAP: dict[str, str] = {
     "CRDO":  "Credo Technology",
     "POET":  "POET Technologies",
 }
+
+
+def _resolve_ticker_display_name(ticker: str) -> str:
+    """v1.13.8: Unified ticker → Chinese-friendly company name resolver.
+    v1.13.9: Added TAIWAN_TICKER_METADATA as the PRIMARY Taiwan source —
+    it's a curated 100+ ticker map (zh/en/aliases) that's much wider than
+    the supply chain catalogs and includes ETFs, financials, AI plays,
+    industrial holdings, etc. Catalogs become secondary fallback.
+
+    Covers both Taiwan tickers and US tickers from a single entry point:
+      - Taiwan (.TW / .TWO suffix): TAIWAN_TICKER_METADATA "zh" first,
+        then SUPPLY_CHAIN_FOCUS_CONFIGS catalogs, then runtime metadata
+      - U.S.: delegate to existing _us_ticker_display_name
+      - Fallback: empty string (callers should keep ticker visible)
+
+    Used by:
+      - stock_comparison_dashboard.py (chips + watchlist multiselect)
+      - Future deeplinks / mini-blocks
+
+    Returns "" if ticker can't be resolved — callers should still show
+    the ticker as identifier.
+    """
+    if not ticker:
+        return ""
+    tk = str(ticker).upper().strip()
+    # Taiwan path
+    if tk.endswith(".TW") or tk.endswith(".TWO"):
+        # 1. PRIMARY: TAIWAN_TICKER_METADATA — curated 100+ entry map
+        try:
+            meta = TAIWAN_TICKER_METADATA.get(tk)
+            if meta and isinstance(meta, dict):
+                zh = str(meta.get("zh", "") or "").strip()
+                if zh:
+                    return zh
+                # Fall back to English name if no Chinese name
+                en = str(meta.get("en", "") or "").strip()
+                if en:
+                    return en
+        except (NameError, AttributeError):
+            # TAIWAN_TICKER_METADATA not yet defined (init order)
+            pass
+        # 2. SECONDARY: supply chain catalogs — narrower but well-curated
+        try:
+            for chain_key in SUPPLY_CHAIN_FOCUS_ORDER:
+                config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(chain_key) or {}
+                catalog = config.get("catalog") or []
+                for item in catalog:
+                    if str(item.get("ticker", "")).upper() == tk:
+                        name = str(item.get("name", "") or "").strip()
+                        if name:
+                            return name
+        except Exception:
+            pass
+        # 3. TERTIARY: runtime metadata (yfinance longName)
+        try:
+            runtime_meta = get_runtime_symbol_metadata(tk)
+            runtime_name = str(runtime_meta.get("name", "") or "").strip()
+            if runtime_name:
+                return runtime_name
+        except Exception:
+            pass
+        return ""
+    # U.S. path — delegate to existing helper
+    return _us_ticker_display_name(tk)
 
 
 def _us_ticker_display_name(ticker: str) -> str:
