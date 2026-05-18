@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.11
+Version : v1.13.12
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,53 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.12 (2026-05-17)  [Defensive: try/except + spinner 包住 focal/momentum render]
+
+  User report: 「進來第一時間可以看到台灣市場基準廣度, 過後就停了,
+  看不到下面的其他, 不論 refresh, 都看不出有任何動靜, 和沒有
+  Fetching Data 的字樣或者 Loading 都沒有」
+
+  Critical context:
+    - Dashboard 1st page (General Market mode, Taiwan scope, overview)
+    - 基準廣度 (5 cards) renders ✓
+    - Everything below (Focal Points, Momentum Pulse, dashboard_tickers
+      fetch) silently disappears — no error, no loading, no spinner
+    - v1.9.6 had REMOVED the loading skeleton because "momentum pulse
+      is fast enough" — but if focal/momentum throws, the silent
+      exception KILLS ALL subsequent render, with no user-visible signal
+
+  Root cause hypothesis (still being narrowed — need user verification):
+    render_today_focal_points(snapshot_row) is likely throwing because:
+      - snapshot_row might be None or missing required fields
+      - prefetch path might be broken (Supabase URL still empty per
+        earlier v1.12.x debug — SUPABASE_URL config=False)
+      - Or some new v1.13.0+ field expectation isn't met
+
+    OR render_tomorrow_momentum_pulse is throwing because:
+      - v1.13.0 Phase 1 added crossover/RSI scoring — edge case in
+        unexpected data shape might raise
+      - v1.13.1 Phase 2 added direction/confidence/key_drivers — bad
+        rows list could fail dict access
+
+  Fix (pure DEFENSIVE — zero logic change):
+    1. Wrapped render_today_focal_points in try/except + st.spinner
+    2. Wrapped render_tomorrow_momentum_pulse same way
+    3. Each section's exception:
+       - Shows friendly warning (Chinese / English)
+       - Reveals full traceback in expander for debug
+       - DOES NOT BLOCK rest-of-page render
+    4. Added user-visible spinner so "blank silence" → "active loading"
+
+  Diagnostic value:
+    On next page load, user will see EITHER:
+      (a) Page renders normally — root cause was transient (TWSE rate
+          limit, Supabase blip, etc) → no further action needed
+      (b) Page renders WITH a warning showing exact exception type +
+          traceback → root cause identified, can fix in targeted patch
+
+  Tests: 5 smoke tests for try/except presence + spinner + traceback
+  capture + version bump.
 
 v1.13.11 (2026-05-17)  [Stock Comparison: 2 個 engine label 更明確 + 加說明]
 
@@ -50926,8 +50973,22 @@ def generate_dashboard():
     )
 
     if _focal_show_hooks:
-        # Today Focal Points (Top 3 ETF + Top 3 Supply Chain) — overview-only
-        render_today_focal_points(snapshot_row)
+        # v1.13.12: Defensive wrap. If render_today_focal_points throws
+        # (e.g. snapshot row missing fields, prefetch table unreadable,
+        # supabase down), we still want the rest of the page to render.
+        # Pre-v1.13.12 a silent exception here killed everything below.
+        with st.spinner("📊 載入今日重點…" if _news_briefing_is_zh() else "📊 Loading Today's Focal Points…"):
+            try:
+                render_today_focal_points(snapshot_row)
+            except Exception as e:
+                import traceback
+                st.warning(
+                    f"⚠️ 今日重點載入失敗 ({type(e).__name__}) — 其餘頁面已正常顯示"
+                    if _news_briefing_is_zh()
+                    else f"⚠️ Today's Focal Points failed to load ({type(e).__name__}) — rest of page still rendering"
+                )
+                with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
+                    st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
     # v1.9.5: Tomorrow Momentum Pulse — NO experience_level gate.
     # Always renders when General Market mode is active because momentum
@@ -50935,7 +50996,19 @@ def generate_dashboard():
     # (U.S.) — these are core navigation, not hooks that should hide.
     if dashboard_mode == "General Market":
         _momentum_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
-        render_tomorrow_momentum_pulse(_momentum_scope)
+        # v1.13.12: Same defensive wrap as focal points above.
+        with st.spinner("⚡ 計算明日動能脈搏…" if _news_briefing_is_zh() else "⚡ Computing Tomorrow Momentum Pulse…"):
+            try:
+                render_tomorrow_momentum_pulse(_momentum_scope)
+            except Exception as e:
+                import traceback
+                st.warning(
+                    f"⚠️ 明日動能脈搏載入失敗 ({type(e).__name__}) — 其餘頁面已正常顯示"
+                    if _news_briefing_is_zh()
+                    else f"⚠️ Tomorrow Momentum Pulse failed to load ({type(e).__name__}) — rest of page still rendering"
+                )
+                with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
+                    st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
     dashboard_tickers = (
         [ticker for ticker in tickers if is_taiwan_active_etf(ticker)]
