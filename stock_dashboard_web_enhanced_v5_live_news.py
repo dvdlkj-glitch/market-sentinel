@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.16
+Version : v1.13.17
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,23 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.17 (2026-05-20)  [Perf: 今日重點 中層快取 — 消除每次 rerun 重抓 (純效能)]
+
+  問題 (承 v1.13.16): 使用者回報任何互動 (切分頁/按鈕/widget) 都讓
+  「載入今日重點」重轉。根因: Streamlit 每次互動會 rerun 整個 script,
+  而 _build_today_focal_points_data() 與兩個 loader 都沒有快取 → 每次
+  rerun 都重新並行抓 6 檔 ETF + 重算供應鏈排序。v1.13.16 的並行預熱只
+  加速「抓取」, 沒解決「每次重抓」。
+
+  修法: 新增 _cached_focal_direct_reads(cache_key) 以 @st.cache_data(ttl=300)
+  包住兩個 loader 的成品。cache_key 取自 snapshot 日期 (無日期則退回 5 分鐘
+  時間桶, 對齊 TTL)。同一視窗內的後續 rerun 直接命中快取, 完全不碰 Supabase。
+  模擬: 連續 5 次 rerun, loader 僅呼叫 1 次, rerun 2-5 = 0ms。
+
+  安全: build 內 try/except 包住, 快取失敗則退回原本直接呼叫 (行為不退化);
+  per-ticker debug trace 仍在每個 TTL 視窗首次 (未命中) 呼叫時寫入, 足供
+  ?debug_focal=1 探針使用。不動 loader 本體、評分、parsing、tertiary fallback。
 
 v1.13.16 (2026-05-20)  [Perf: 今日重點 ETF cold-start 並行預熱 (純效能, 邏輯不變)]
 
@@ -18914,6 +18931,31 @@ def _load_focal_active_etfs_from_lab(limit: int = 3) -> list[dict]:
     return candidates[:limit]
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_focal_direct_reads(cache_key: str) -> dict:
+    """v1.13.17: Cache the expensive direct source-table reads (6 ETF
+    Supabase snapshots + supply-chain overview) for the focal-points block.
+
+    WHY: render_today_focal_points runs on EVERY Streamlit rerun (any
+    button/tab/widget interaction reruns the whole script). Without this
+    cache, every rerun re-fetched all 6 ETFs + supply chains from Supabase
+    (Sydney) and re-ran scoring/sorting — the cause of the persistent slow
+    "載入今日重點…" spinner on interactions (not just first entry).
+
+    cache_key is a stable hashable string (e.g. snapshot date) so the
+    result is reused across reruns within the TTL window; it changes when
+    the underlying snapshot date rolls over, naturally invalidating.
+
+    Returns {"chains": [...], "etfs": [...]}. The per-ticker debug trace
+    written to st.session_state by _load_focal_active_etfs_from_lab still
+    fires on the first (uncached) call of each window, which is enough for
+    the ?debug_focal=1 probe.
+    """
+    chains = _load_focal_supply_chains_from_lab(limit=3)
+    etfs = _load_focal_active_etfs_from_lab(limit=3)
+    return {"chains": chains, "etfs": etfs}
+
+
 def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
     """v1.12.2c: Build focal-point data by reading DIRECTLY from the same
     Supabase tables that Active ETF Lab and Supply Chain Lab use.
@@ -18930,8 +18972,32 @@ def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
 
     Returns dict with 'etfs' + 'chains', or None if no usable data.
     """
-    chains = _load_focal_supply_chains_from_lab(limit=3)
-    etfs = _load_focal_active_etfs_from_lab(limit=3)
+    # v1.13.17: route the expensive direct reads through a cached wrapper
+    # keyed on a stable date string, so reruns within the TTL window reuse
+    # the result instead of re-fetching from Supabase every interaction.
+    _focal_date_key = ""
+    if isinstance(snapshot_row, dict):
+        _focal_date_key = str(
+            snapshot_row.get("snapshot_date")
+            or snapshot_row.get("as_of_date")
+            or ""
+        ).strip()
+    if not _focal_date_key:
+        # No date available — fall back to a coarse 5-min time bucket so we
+        # still get cross-rerun caching (matches the 300s TTL granularity).
+        try:
+            _focal_date_key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
+        except Exception:
+            _focal_date_key = "nodate"
+    try:
+        _direct = _cached_focal_direct_reads(_focal_date_key)
+        chains = list(_direct.get("chains") or [])
+        etfs = list(_direct.get("etfs") or [])
+    except Exception:
+        # Cache wrapper failed for any reason — fall back to direct calls
+        # so behaviour never regresses.
+        chains = _load_focal_supply_chains_from_lab(limit=3)
+        etfs = _load_focal_active_etfs_from_lab(limit=3)
 
     # TERTIARY FALLBACK: if BOTH direct reads returned empty AND we have
     # a snapshot_row, try the v1.12.2b cockpit path as a last resort.
