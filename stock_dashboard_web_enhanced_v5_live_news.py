@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.21
+Version : v1.13.23
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,35 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.23 (2026-05-20)  [Perf: 供應鏈熱度加結果快取 — 消除每次rerun重跑6族群編排]
+
+  問題: 「載入供應鏈族群熱度」spinner 慢。根因兩層:
+   (1) [本版修] _load_focal_supply_chains_from_lab 沒有結果快取, 每次 rerun
+       都重跑 build_supply_chain_overview_rows (6族群編排+序列化+排序)。
+   (2) [需 prefetch] 若某族群快照在 Supabase/本地都沒命中,
+       get_supply_chain_focus_snapshot 會即時抓整族群成分股 (數十檔 yfinance),
+       6族群序列 → 很慢。這層要靠 prefetch 事先把快照寫好才不會發生。
+
+  本版修第 (1) 層: 新增 _cached_supply_chain_overview(cache_key) 以
+  @st.cache_data(ttl=300) 包住 6族群編排, cache_key 用 5 分鐘時間桶。同窗內
+  後續 rerun 直接命中, 不再重跑編排。模擬: 5次rerun 重編排僅執行1次。
+  快取失敗則 fallback 直接呼叫 (行為不退化)。純快取, 不動編排邏輯。
+
+v1.13.22 (2026-05-20)  [Feature: 主動式 ETF 熱度卡 (與供應鏈同風格, 繞過壞掉的 Supabase)]
+
+  需求: user 喜歡供應鏈熱度卡, 想要主動式 ETF 也來一個同風格的。
+
+  關鍵問題: ETF 原本的 Supabase 來源在雲端抓不到 (本對話前段已確診)。若照搬
+  會再次空白。解法: 改用 fetch_daily_data (yfinance 日線) + 既有的
+  _active_etf_price_stats_for_overall 直接算當日漲跌, 完全繞過壞掉的
+  active_etf_snapshots 表 → 與供應鏈同等穩定可靠。
+
+  新增 render_active_etf_heat: 六格冷暖卡 (復用 _SUPPLY_CHAIN_HEAT_CSS 同風格),
+  由當日漲跌幅由強到弱排序, 每格顯示 ETF 中文名+代碼+漲跌幅+風格(來自本地
+  ACTIVE_ETF_METADATA)+量能倍數。右上角自動生成總結 chip。資料經
+  @st.cache_data(ttl=300) 快取。放在供應鏈熱度下方, 由 _SHOW_ACTIVE_ETF_HEAT
+  開關控制 (預設 True)。全程防禦, 失敗靜默不顯示。
 
 v1.13.21 (2026-05-20)  [Feature: 供應鏈族群熱度 強弱光譜卡 — 取代隱藏的今日重點]
 
@@ -8024,6 +8053,11 @@ _SHOW_TODAY_FOCAL_POINTS = False
 # supply-chain snapshot data (no dependency on the unavailable Active ETF
 # source), so it renders reliably and fast. Set False to hide.
 _SHOW_SUPPLY_CHAIN_HEAT = True
+
+# v1.13.22: Master switch for the "主動式 ETF 熱度" block. Uses live yfinance
+# daily data (NOT the unavailable Supabase active_etf_snapshots), so it
+# renders reliably like the supply-chain heat block. Set False to hide.
+_SHOW_ACTIVE_ETF_HEAT = True
 
 
 # v1.3.8.3: In-memory cache for the local snapshot JSON store. Without this,
@@ -18758,6 +18792,31 @@ _AUTOREFRESH_BADGE_CSS = """
 # market_scope == "Taiwan only". US-only mode has its own theme radar
 # focal-point UI in the cockpit.
 # =============================================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_supply_chain_overview(cache_key: str) -> list:
+    """v1.13.23: Cache the heavy 6-group supply-chain overview orchestration.
+
+    build_supply_chain_overview_rows() iterates all 6 groups, each calling
+    get_supply_chain_focus_snapshot() (which on a snapshot miss does a live
+    multi-ticker fetch). Without this cache that whole orchestration re-ran
+    on EVERY Streamlit rerun — the cause of the slow「載入供應鏈族群熱度」
+    spinner. cache_key is a 5-min time bucket so reruns within the window
+    reuse the result; it rolls over naturally to pick up fresh snapshots.
+    Pure caching — no logic change.
+    """
+    lens_meta = {
+        "period": DEFAULT_PERIOD,
+        "interval": DEFAULT_INTERVAL,
+        "title": DEFAULT_TREND_LENS,
+    }
+    rows = build_supply_chain_overview_rows(
+        list(SUPPLY_CHAIN_FOCUS_ORDER),
+        lens_meta=lens_meta,
+        force_refresh=False,
+    )
+    return rows if isinstance(rows, list) else []
+
+
 def _load_focal_supply_chains_from_lab(limit: int = 3) -> list[dict]:
     """v1.12.2c: Load Top N supply chains directly from
     supply_chain_focus_snapshots Supabase table (the table Supply Chain
@@ -18768,20 +18827,27 @@ def _load_focal_supply_chains_from_lab(limit: int = 3) -> list[dict]:
 
     Uses existing helper build_supply_chain_overview_rows() which
     handles cache/refresh logic and returns rows sorted by rank.
+
+    v1.13.23: routed through _cached_supply_chain_overview so the heavy
+    6-group orchestration only runs once per 5-min window, not every rerun.
     """
     try:
-        lens_meta = {
-            "period": DEFAULT_PERIOD,
-            "interval": DEFAULT_INTERVAL,
-            "title": DEFAULT_TREND_LENS,
-        }
-        rows = build_supply_chain_overview_rows(
-            list(SUPPLY_CHAIN_FOCUS_ORDER),
-            lens_meta=lens_meta,
-            force_refresh=False,
-        )
+        try:
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
+        except Exception:
+            _key = "nokey"
+        rows = _cached_supply_chain_overview(_key)
     except Exception:
-        return []
+        # Cache wrapper failed — fall back to direct call so behaviour
+        # never regresses.
+        try:
+            rows = build_supply_chain_overview_rows(
+                list(SUPPLY_CHAIN_FOCUS_ORDER),
+                lens_meta={"period": DEFAULT_PERIOD, "interval": DEFAULT_INTERVAL, "title": DEFAULT_TREND_LENS},
+                force_refresh=False,
+            )
+        except Exception:
+            return []
     if not isinstance(rows, list) or not rows:
         return []
     # Already sorted by rank in build_supply_chain_overview_rows.
@@ -19686,6 +19752,122 @@ def render_supply_chain_heat(lang_zh: bool = True) -> None:
                 break
         render_html_block(_SUPPLY_CHAIN_HEAT_CSS)
         html = _render_supply_chain_heat_html(groups, lang_zh=lang_zh, data_date=data_date)
+        if html:
+            render_html_block(html)
+    except Exception:
+        return
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _build_active_etf_heat(cache_key: str) -> list:
+    """v1.13.22: 主動式 ETF 熱度資料 — 繞過抓不到的 Supabase, 直接用
+    fetch_daily_data 抓日線 + _active_etf_price_stats_for_overall 算當日漲跌。
+    回傳 list[dict{code,name,style,move,volume_ratio}]。cache 300s。
+
+    cache_key 僅用於 @st.cache_data 分桶 (傳日期/時段字串)。"""
+    syms = [s if "." in s else f"{s}.TW" for s in ACTIVE_ETF_QUICK_PICK_SYMBOLS]
+    try:
+        daily = fetch_daily_data(syms, "5d", "1d")
+    except Exception:
+        return []
+    out: list[dict] = []
+    for sym in syms:
+        try:
+            stats = _active_etf_price_stats_for_overall(daily, sym)
+        except Exception:
+            continue
+        move = stats.get("latest_return")
+        if move is None or not (isinstance(move, (int, float)) and math.isfinite(move)):
+            continue
+        code = sym.split(".")[0]
+        meta = get_active_etf_metadata(sym)
+        out.append({
+            "code": code,
+            "name": str(meta.get("zh") or active_etf_selector_label(sym) or code),
+            "style": str(meta.get("style_zh") or ""),
+            "move": float(move),
+            "volume_ratio": stats.get("volume_ratio"),
+        })
+    return out
+
+
+def _render_active_etf_heat_html(items, lang_zh=True, data_date="") -> str:
+    if not items:
+        return ""
+    its = sorted(
+        items,
+        key=lambda x: (x.get("move") if isinstance(x.get("move"), (int, float))
+                       and math.isfinite(x.get("move")) else -1e9),
+        reverse=True,
+    )
+    # 復用供應鏈熱度的 verdict 邏輯 (改吃 move 欄)
+    moves = [x.get("move") for x in its if isinstance(x.get("move"), (int, float)) and math.isfinite(x.get("move"))]
+    if not moves:
+        verdict_txt, verdict_cls = ("資料整理中" if lang_zh else "Loading"), "sch-tldr-flat"
+    else:
+        up = sum(1 for m in moves if m > 0.3)
+        down = sum(1 for m in moves if m < -0.3)
+        n = len(moves)
+        if up == n:
+            verdict_txt, verdict_cls = (f"全面走強 · {n}/{n} 收紅" if lang_zh else f"All up · {n}/{n}"), "sch-tldr-up"
+        elif down == n:
+            verdict_txt, verdict_cls = (f"全面走弱 · {n}/{n} 收綠" if lang_zh else f"All down · {n}/{n}"), "sch-tldr-down"
+        elif up >= down:
+            verdict_txt, verdict_cls = (f"偏多 · {up} 強 {down} 弱" if lang_zh else f"Risk-on · {up}/{down}"), "sch-tldr-up"
+        else:
+            verdict_txt, verdict_cls = (f"偏空 · {up} 強 {down} 弱" if lang_zh else f"Risk-off · {up}/{down}"), "sch-tldr-down"
+
+    P = ['<div class="sch-shell">', '<div class="sch-head"><div>']
+    P.append(f'<div class="sch-title">⚡ {"主動式 ETF 熱度" if lang_zh else "Active ETF Heat"}</div>')
+    P.append(f'<div class="sch-sub">{escape("資料基準" if lang_zh else "As of")} '
+             f'{escape(str(data_date) or "—")} · {"由強到弱" if lang_zh else "strong→weak"}</div></div>')
+    P.append(f'<div class="sch-tldr {verdict_cls}">{escape(verdict_txt)}</div></div>')
+    P.append('<div class="sch-grid">')
+    for i, x in enumerate(its, start=1):
+        mv = x.get("move")
+        card_cls, pct_cls = _sch_heat_class(mv)
+        rank_lbl = f"#{i}" + ("　最強" if i == 1 and lang_zh else "")
+        name = escape(str(x.get("name") or "—"))
+        code = escape(str(x.get("code") or ""))
+        style = escape(str(x.get("style") or ""))
+        vr = x.get("volume_ratio")
+        vol_txt = ""
+        if isinstance(vr, (int, float)) and math.isfinite(vr) and vr > 0:
+            vol_txt = (f"量能 {vr:.1f}×" if lang_zh else f"vol {vr:.1f}×")
+        meta_line = (f'{"風格" if lang_zh else "Style"} <span class="sch-leader-name">{style}</span>'
+                     if style else f'<span class="sch-leader-name">{code}</span>')
+        breadth = f'<br><span class="sch-breadth">{vol_txt}</span>' if vol_txt else ""
+        P.append(
+            f'<div class="sch-card {card_cls}">'
+            f'<div class="sch-rank">{escape(rank_lbl)}</div>'
+            f'<div class="sch-name">{name} <span style="font-size:12px;color:#8b95ad;font-weight:600;">{code}</span></div>'
+            f'<div class="sch-pct {pct_cls}">{_sch_pct(mv)}</div>'
+            f'<div class="sch-meta">{meta_line}{breadth}</div>'
+            f'</div>'
+        )
+    P.append('</div>')
+    P.append(f'<div class="sch-note">{escape("漲跌幅為當日收盤；量能為相對20日均量倍數。資料取自即時日線。" if lang_zh else "Daily close move; vol = ratio to 20d avg.")}</div>')
+    P.append('</div>')
+    return "".join(P)
+
+
+def render_active_etf_heat(lang_zh: bool = True) -> None:
+    """v1.13.22: 主動式 ETF 熱度 (強弱光譜卡, 與供應鏈同風格)。直接用 yfinance
+    日線計算, 不依賴抓不到的 Supabase active_etf_snapshots。全程防禦。"""
+    try:
+        try:
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
+        except Exception:
+            _key = "nodate"
+        items = _build_active_etf_heat(_key)
+        if not items:
+            return
+        try:
+            data_date = datetime.now(TW_TZ).strftime("%Y-%m-%d")
+        except Exception:
+            data_date = ""
+        render_html_block(_SUPPLY_CHAIN_HEAT_CSS)  # 共用同一套 CSS
+        html = _render_active_etf_heat_html(items, lang_zh=lang_zh, data_date=data_date)
         if html:
             render_html_block(html)
     except Exception:
@@ -52048,6 +52230,22 @@ def generate_dashboard():
                     f"⚠️ 供應鏈族群熱度載入失敗 ({type(e).__name__}) — 其餘頁面已正常顯示"
                     if _news_briefing_is_zh()
                     else f"⚠️ Supply-chain heat failed to load ({type(e).__name__})"
+                )
+                with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
+                    st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
+
+    # v1.13.22: 主動式 ETF 熱度 (同風格強弱卡)。用 yfinance 日線, 繞過抓不到的
+    # Supabase, 所以一定顯示。由 _SHOW_ACTIVE_ETF_HEAT 開關控制。
+    if _focal_show_hooks and _SHOW_ACTIVE_ETF_HEAT:
+        with st.spinner("⚡ 載入主動式 ETF 熱度…" if _news_briefing_is_zh() else "⚡ Loading active ETF heat…"):
+            try:
+                render_active_etf_heat(lang_zh=_news_briefing_is_zh())
+            except Exception as e:
+                import traceback
+                st.warning(
+                    f"⚠️ 主動式 ETF 熱度載入失敗 ({type(e).__name__}) — 其餘頁面已正常顯示"
+                    if _news_briefing_is_zh()
+                    else f"⚠️ Active ETF heat failed to load ({type(e).__name__})"
                 )
                 with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
                     st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
