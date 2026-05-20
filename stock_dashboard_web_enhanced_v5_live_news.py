@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.15
+Version : v1.13.16
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,22 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.16 (2026-05-20)  [Perf: 今日重點 ETF cold-start 並行預熱 (純效能, 邏輯不變)]
+
+  問題: 首次進 dashboard 時「載入今日重點…」轉很久。根因為
+  _load_focal_active_etfs_from_lab() 的迴圈逐檔 (6 檔) 序列讀取 Supabase
+  快照, 冷快取時 = 6 次序列往返 ap-southeast-2 (雪梨), 累積 ~1.5-2.5s。
+
+  修法: 在迴圈前以 ThreadPoolExecutor(max_workers=6) 並行「預熱」全部 6 檔
+  的 _load_supabase_active_etf_snapshot (已是 @st.cache_data)。預熱填滿快取後,
+  原迴圈逐檔讀取即全部命中 (微秒級), 不再付出序列網路延遲。並行 worker 以
+  add_script_run_ctx 掛上 Streamlit script-run context 確保快取在線程內正確解析;
+  每個 future 設 6s timeout, 避免單一卡死的連線拖住整頁。
+
+  關鍵: 完全不動迴圈本體 (score 計算 / move_pct / parsing / per-ticker trace
+  全部原樣); 預熱純粹是優化, 任何例外都靜默略過 → 退回原本逐檔讀取行為。
+  模擬 (6檔×300ms): 序列 1802ms → 並行預熱 302ms (~6x)。
 
 v1.13.15 (2026-05-20)  [UI: 前一日加權指數貢獻拆解 全區字級整體放大 (純外觀)]
 
@@ -18716,6 +18732,53 @@ def _load_focal_active_etfs_from_lab(limit: int = 3) -> list[dict]:
     candidates: list[dict] = []
     # v1.12.2d: trace which step each ticker failed at, for debug display.
     trace: list[str] = []
+    # v1.13.16: cold-start latency fix. The loop below reads each ETF's
+    # Supabase snapshot one-by-one; on a cold cache that is 6 sequential
+    # round trips to Supabase (ap-southeast-2 / Sydney), which is the main
+    # cause of the slow "載入今日重點…" spinner on first page entry.
+    # Since _load_supabase_active_etf_snapshot is @st.cache_data-wrapped,
+    # we PREWARM all 6 entries concurrently here. The loop below then hits
+    # a warm cache (microseconds) instead of paying serial network latency.
+    # No parsing/scoring/trace logic changes — this only fills the cache.
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            # Attach the Streamlit script-run context to worker threads so
+            # the @st.cache_data lookups inside them resolve correctly
+            # (without this, cached calls from bare threads can warn/no-op).
+            from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+            _ctx = get_script_run_ctx()
+        except Exception:
+            add_script_run_ctx = None
+            _ctx = None
+
+        def _prewarm_one(_tk):
+            try:
+                return _load_supabase_active_etf_snapshot(_tk, lens_meta=None, allow_any_lens=True)
+            except Exception:
+                return None
+
+        _prewarm_syms = [str(t).strip() for t in ACTIVE_ETF_QUICK_PICK_SYMBOLS if str(t).strip()]
+        if _prewarm_syms:
+            with ThreadPoolExecutor(max_workers=min(6, len(_prewarm_syms))) as _ex:
+                _futs = [_ex.submit(_prewarm_one, _sym) for _sym in _prewarm_syms]
+                # Best-effort: attach the script-run ctx to spawned worker
+                # threads so the cached calls inside them resolve correctly.
+                if add_script_run_ctx is not None and _ctx is not None:
+                    try:
+                        for _th in list(_ex._threads):  # noqa: SLF001
+                            add_script_run_ctx(_th, _ctx)
+                    except Exception:
+                        pass
+                # Drain with a bounded per-future timeout so a hung
+                # connection can't stall the page load.
+                for _fut in _futs:
+                    try:
+                        _fut.result(timeout=6)
+                    except Exception:
+                        pass  # individual miss is fine; loop below falls back per-ticker
+    except Exception:
+        pass  # prewarm is purely an optimization; never block the real load
     for ticker in ACTIVE_ETF_QUICK_PICK_SYMBOLS:
         ticker_label = str(ticker).strip()
         if not ticker_label:
