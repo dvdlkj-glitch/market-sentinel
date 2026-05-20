@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.17
+Version : v1.13.19
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,35 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.19 (2026-05-20)  [Debug: focal 載入計時探針 (靜默記錄, ?debug_focal=1 顯示)]
+
+  需求: 想知道「載入今日重點」時間花在哪個環節。
+
+  作法 (純量測, 不動資料/算法): 每次 rerun 靜默記錄耗時進 session_state —
+    - _build_today_focal_points_data 量 cached read 總耗時, 並用「loaders
+      計時 marker 有無更新」判斷本次是 cache HIT (快, 無網路) 還是 MISS (冷抓)
+    - _cached_focal_direct_reads body (僅 MISS 時執行) 量 supply-chain loader
+      與 ETF loader (6檔) 各自耗時
+  ?debug_focal=1 探針新增「⏱ Timing (last rerun)」區: 顯示上一次 rerun 的
+  cache 狀態 + 總耗時, 以及最近一次冷抓的 supply-chain vs ETF 分解。
+  平時零顯示 (只記錄), 要看才加參數 → 抓得到「實際遇到的那次慢」。
+
+v1.13.18 (2026-05-20)  [Debug: focal 探針改為 gate-free 獨立版 + HTTP 狀態碼]
+
+  問題: ?debug_focal=1 叫不出來。根因: 舊探針內嵌在 render_today_focal_points,
+  被 General-Market + Taiwan-only + overview 三重 gate 包住, 且執行後自刪
+  URL param → 換模式/分頁或 refresh 就觸發不到。
+
+  修法: 抽出獨立函式 render_focal_debug_probe_if_requested(), 在主流程 gate
+  之前無條件呼叫 (僅當 ?debug_focal=1 在 URL 時才渲染輸出)。不自刪 param
+  (refresh 後仍在, 方便截圖)。新增診斷:
+    - 對 active_etf_snapshots 表發 raw 查詢並印「HTTP 狀態碼」, 可分辨
+      空表 / 401 key 錯 / 403 RLS / 404 表名錯 / 網路 timeout
+    - SERVICE 與 PUBLISHABLE 兩個 key 各測一次 (helper 實際走 SERVICE)
+    - URL 結構解析 (抓 host 空的 malformed 情況)
+    - 本地檔 fallback 狀態 + 每檔 ticker trace
+  移除舊內嵌探針 (含自刪段)。純診斷工具, 不動任何資料/render 邏輯。
 
 v1.13.17 (2026-05-20)  [Perf: 今日重點 中層快取 — 消除每次 rerun 重抓 (純效能)]
 
@@ -18951,8 +18980,24 @@ def _cached_focal_direct_reads(cache_key: str) -> dict:
     fires on the first (uncached) call of each window, which is enough for
     the ?debug_focal=1 probe.
     """
+    # v1.13.19: record loader split timings. This body ONLY runs on a cache
+    # MISS (cold fetch); on a HIT @st.cache_data returns without entering
+    # here. So these numbers represent the cold-fetch breakdown. Stored in
+    # session_state for the ?debug_focal=1 timing readout. Pure measurement.
+    import time as _t
+    _t_sc0 = _t.perf_counter()
     chains = _load_focal_supply_chains_from_lab(limit=3)
+    _t_sc1 = _t.perf_counter()
     etfs = _load_focal_active_etfs_from_lab(limit=3)
+    _t_etf1 = _t.perf_counter()
+    try:
+        st.session_state["_focal_timing_loaders"] = {
+            "supply_chain_ms": (_t_sc1 - _t_sc0) * 1000.0,
+            "etf_loader_ms": (_t_etf1 - _t_sc1) * 1000.0,
+            "measured_at": datetime.now(TW_TZ).strftime("%H:%M:%S"),
+        }
+    except Exception:
+        pass
     return {"chains": chains, "etfs": etfs}
 
 
@@ -18989,15 +19034,41 @@ def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
             _focal_date_key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
         except Exception:
             _focal_date_key = "nodate"
+    # v1.13.19: time the cached read. A fast return ⇒ cache HIT (no network);
+    # a slow return ⇒ MISS (cold fetch, loaders ran). Recorded for the
+    # ?debug_focal=1 timing readout. Pure measurement — no logic change.
+    import time as _t
+    _t_build0 = _t.perf_counter()
+    _cache_was_hit = None
     try:
+        # snapshot the loaders-timing marker BEFORE the call; if the cached
+        # wrapper body runs (MISS) it overwrites this with a fresh timestamp.
+        _prev_marker = st.session_state.get("_focal_timing_loaders", {}).get("measured_at") \
+            if isinstance(st.session_state.get("_focal_timing_loaders"), dict) else None
         _direct = _cached_focal_direct_reads(_focal_date_key)
         chains = list(_direct.get("chains") or [])
         etfs = list(_direct.get("etfs") or [])
+        _new_marker = st.session_state.get("_focal_timing_loaders", {}).get("measured_at") \
+            if isinstance(st.session_state.get("_focal_timing_loaders"), dict) else None
+        # If the loaders-marker changed, the wrapper body ran ⇒ MISS.
+        _cache_was_hit = (_new_marker == _prev_marker)
     except Exception:
         # Cache wrapper failed for any reason — fall back to direct calls
         # so behaviour never regresses.
         chains = _load_focal_supply_chains_from_lab(limit=3)
         etfs = _load_focal_active_etfs_from_lab(limit=3)
+    _t_build1 = _t.perf_counter()
+    try:
+        st.session_state["_focal_timing_build"] = {
+            "cached_read_ms": (_t_build1 - _t_build0) * 1000.0,
+            "cache_status": ("HIT (no network)" if _cache_was_hit
+                             else "MISS (cold fetch)" if _cache_was_hit is False
+                             else "UNKNOWN (fallback path)"),
+            "cache_key": _focal_date_key,
+            "measured_at": datetime.now(TW_TZ).strftime("%H:%M:%S"),
+        }
+    except Exception:
+        pass
 
     # TERTIARY FALLBACK: if BOTH direct reads returned empty AND we have
     # a snapshot_row, try the v1.12.2b cockpit path as a last resort.
@@ -19444,6 +19515,165 @@ def _inject_focal_points_css() -> None:
     render_html_block(_FOCAL_POINTS_CSS)
 
 
+def render_focal_debug_probe_if_requested() -> None:
+    """v1.13.18: Standalone, gate-free focal-points diagnostic probe.
+
+    Call this UNCONDITIONALLY near the top of the main app body. It only
+    renders when ?debug_focal=1 is present in the URL. Unlike the old probe
+    (which lived inside render_today_focal_points and was therefore hidden
+    behind the General-Market / Taiwan-only / overview triple gate, and
+    self-deleted the URL param), this version:
+      - fires regardless of dashboard mode / scope / experience level
+      - does NOT delete the URL param (survives refresh, easy to screenshot)
+      - reports HTTP status codes so we can distinguish empty-table /
+        bad-key (401) / RLS (403) / wrong-table (404) / network timeout
+      - checks both keys and the local-file fallback state
+    Pure diagnostics — touches no data/render logic.
+    """
+    try:
+        flag = _query_param_first("debug_focal")
+    except Exception:
+        flag = ""
+    if not flag:
+        return
+
+    # --- URL structure parse (catches '/rest/v1 with no host') ---
+    try:
+        from urllib.parse import urlparse as _urlparse
+        _p = _urlparse(SUPABASE_URL)
+        url_struct = (
+            f"scheme=`{_p.scheme or '(none)'}` "
+            f"host=`{_p.netloc or '(EMPTY — malformed!)'}` "
+            f"path=`{_p.path or '(none)'}`"
+        )
+    except Exception as exc:
+        url_struct = f"parse error: {type(exc).__name__}"
+
+    def _probe_with_key(key_name, key_value):
+        if not SUPABASE_URL:
+            return f"{key_name}: SKIP (SUPABASE_URL empty)"
+        if not key_value:
+            return f"{key_name}: SKIP (key empty)"
+        try:
+            from urllib.request import Request, urlopen
+            from urllib.error import HTTPError, URLError
+            probe_path = (
+                f"{SUPABASE_URL}/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
+                f"?select=ticker,as_of_date,status,fetched_at"
+                f"&order=fetched_at.desc&limit=10"
+            )
+            req = Request(
+                probe_path,
+                headers={
+                    "apikey": key_value,
+                    "Authorization": f"Bearer {key_value}",
+                    "Accept": "application/json",
+                },
+                method="GET",
+            )
+            try:
+                with urlopen(req, timeout=6) as resp:
+                    status = resp.getcode()
+                    raw_data = json.loads(resp.read().decode("utf-8"))
+            except HTTPError as he:
+                try:
+                    body = he.read().decode("utf-8")[:160]
+                except Exception:
+                    body = "(no body)"
+                hint = {
+                    401: " → key invalid/expired",
+                    403: " → RLS policy blocks this key",
+                    404: " → table name wrong / not exposed via REST",
+                }.get(he.code, "")
+                return f"{key_name}: HTTP {he.code}{hint}\n      body: {body}"
+            if isinstance(raw_data, list):
+                if not raw_data:
+                    return f"{key_name}: HTTP {status} OK but EMPTY (0 rows → prefetch never wrote to this table)"
+                rows = "\n".join(
+                    f"      - {r.get('ticker','?')} | {r.get('as_of_date','?')} | "
+                    f"{r.get('status','?')} | {str(r.get('fetched_at','?'))[:19]}"
+                    for r in raw_data
+                )
+                return f"{key_name}: HTTP {status} OK ({len(raw_data)} rows)\n{rows}"
+            return f"{key_name}: HTTP {status} non-list ({type(raw_data).__name__})"
+        except URLError as ue:
+            return f"{key_name}: NETWORK FAIL ({ue.reason}) → host unreachable / DNS / firewall"
+        except Exception as exc:
+            return f"{key_name}: {type(exc).__name__}: {str(exc)[:120]}"
+
+    probe_service = _probe_with_key("SERVICE_ROLE_KEY (helper uses this)", SUPABASE_SERVICE_ROLE_KEY)
+    probe_publish = _probe_with_key("PUBLISHABLE_KEY", SUPABASE_PUBLISHABLE_KEY)
+
+    # local-file fallback state (the other source in the chain)
+    try:
+        if ACTIVE_ETF_LAB_SNAPSHOT_PATH.exists():
+            _store = _active_etf_lab_snapshot_store()
+            _items = _store.get("items", {}) if isinstance(_store, dict) else {}
+            local_state = f"EXISTS ({len(_items)} items)"
+        else:
+            local_state = "MISSING (expected on Streamlit Cloud — ephemeral disk; Supabase is the only viable source there)"
+    except Exception as exc:
+        local_state = f"check failed: {type(exc).__name__}"
+
+    # what the helpers actually return right now
+    try:
+        direct_etfs = _load_focal_active_etfs_from_lab(limit=3)
+        direct_etf_count = len(direct_etfs) if isinstance(direct_etfs, list) else direct_etfs
+    except Exception as exc:
+        direct_etf_count = f"ERROR: {type(exc).__name__}: {exc}"
+    try:
+        direct_chains = _load_focal_supply_chains_from_lab(limit=3)
+        direct_chain_count = len(direct_chains) if isinstance(direct_chains, list) else direct_chains
+    except Exception as exc:
+        direct_chain_count = f"ERROR: {type(exc).__name__}: {exc}"
+
+    trace_lines = st.session_state.get("_focal_etf_helper_trace", ["(no trace — helper not called yet this session)"])
+
+    # v1.13.19: timing readout from the LAST rerun (recorded silently every
+    # run; this just displays it). Tells you whether the last load was a
+    # cache HIT (fast, no network) or a cold MISS, and on a MISS the split
+    # between supply-chain vs ETF loaders.
+    _tb = st.session_state.get("_focal_timing_build")
+    _tl = st.session_state.get("_focal_timing_loaders")
+    if isinstance(_tb, dict):
+        timing_block = (
+            f"cache status:        {_tb.get('cache_status', '?')}\n"
+            f"cached read total:   {_tb.get('cached_read_ms', 0):.0f} ms"
+            f"   (this is what you wait for each rerun)\n"
+            f"cache key:           {_tb.get('cache_key', '?')}\n"
+            f"build measured at:   {_tb.get('measured_at', '?')}"
+        )
+        if isinstance(_tl, dict):
+            timing_block += (
+                f"\n\n  last COLD fetch breakdown (when cache last missed, at {_tl.get('measured_at','?')}):\n"
+                f"    supply-chain loader: {_tl.get('supply_chain_ms', 0):.0f} ms\n"
+                f"    ETF loader (6檔):    {_tl.get('etf_loader_ms', 0):.0f} ms"
+            )
+    else:
+        timing_block = "(no timing recorded yet — interact once then reload with ?debug_focal=1)"
+
+    st.warning("🔍 **Focal Debug Probe (v1.13.19)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
+    st.code(
+        f"=== Supabase config (read from Streamlit secrets) ===\n"
+        f"SUPABASE_URL set:               {bool(SUPABASE_URL)}  (len={len(SUPABASE_URL)})\n"
+        f"SUPABASE_SERVICE_ROLE_KEY set:  {bool(SUPABASE_SERVICE_ROLE_KEY)}  (len={len(SUPABASE_SERVICE_ROLE_KEY)})\n"
+        f"SUPABASE_PUBLISHABLE_KEY set:   {bool(SUPABASE_PUBLISHABLE_KEY)}  (len={len(SUPABASE_PUBLISHABLE_KEY)})\n"
+        f"_supabase_is_configured:        {_supabase_is_configured()}\n"
+        f"_supabase_service_is_configured:{_supabase_service_is_configured()}\n"
+        f"active_etf table name:          {SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}\n\n"
+        f"=== URL structure ===\n{url_struct}\n\n"
+        f"=== RAW table probe — SERVICE key (the one ETF helper uses) ===\n{probe_service}\n\n"
+        f"=== RAW table probe — PUBLISHABLE key ===\n{probe_publish}\n\n"
+        f"=== Local-file fallback ===\n{local_state}\n\n"
+        f"=== ⏱ Timing (last rerun) ===\n{timing_block}\n\n"
+        f"=== Helper return counts (after cache) ===\n"
+        f"direct active_etf rows: {direct_etf_count}\n"
+        f"direct supply_chain rows: {direct_chain_count}\n\n"
+        f"=== Per-ticker trace ===\n" + "\n".join(trace_lines),
+        language="text",
+    )
+
+
 def render_today_focal_points(snapshot_row: dict | None) -> None:
     """Render the Today Focal Points block (Top 3 ETF + Top 3 supply chain).
 
@@ -19483,101 +19713,6 @@ def render_today_focal_points(snapshot_row: dict | None) -> None:
     data = _build_today_focal_points_data(snapshot_row)
     etfs = data["etfs"] if data else []
     chains = data["chains"] if data else []
-
-    # v1.12.2a/c: Debug probe — type ?debug_focal=1 in URL to see what
-    # the helpers loaded. Now also shows v1.12.2c direct source-table results.
-    try:
-        debug_flag = _query_param_first("debug_focal")
-    except Exception:
-        debug_flag = ""
-    if debug_flag:
-        recovery_note = (
-            f"\n- recovery: attempted={recovery_attempted}, succeeded={recovery_succeeded}"
-            if recovery_attempted else ""
-        )
-        # First peek what direct source-table helpers returned (separately
-        # from the merged output, to see which path won).
-        try:
-            direct_chains = _load_focal_supply_chains_from_lab(limit=3)
-        except Exception as exc:
-            direct_chains = f"ERROR: {exc}"
-        try:
-            direct_etfs = _load_focal_active_etfs_from_lab(limit=3)
-        except Exception as exc:
-            direct_etfs = f"ERROR: {exc}"
-        direct_chain_count = (
-            len(direct_chains) if isinstance(direct_chains, list) else direct_chains
-        )
-        direct_etf_count = (
-            len(direct_etfs) if isinstance(direct_etfs, list) else direct_etfs
-        )
-        # v1.12.2e: Raw probe — directly query Supabase active_etf_snapshots
-        # table without ticker filter to see what's actually IN the table.
-        raw_etf_table_probe = "(probe skipped)"
-        try:
-            from urllib.request import Request, urlopen
-            from urllib.parse import quote_plus as _qp
-            probe_path = (
-                f"{SUPABASE_URL}/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
-                f"?select=ticker,as_of_date,status,fetched_at"
-                f"&order=fetched_at.desc&limit=10"
-            )
-            req = Request(
-                probe_path,
-                headers={
-                    "apikey": SUPABASE_SERVICE_ROLE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                    "Accept": "application/json",
-                },
-                method="GET",
-            )
-            with urlopen(req, timeout=6) as resp:
-                raw_data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(raw_data, list):
-                if not raw_data:
-                    raw_etf_table_probe = "EMPTY (table has 0 rows)"
-                else:
-                    summary_lines = [
-                        f"  - {r.get('ticker', '?')} | {r.get('as_of_date', '?')} | {r.get('status', '?')} | {r.get('fetched_at', '?')[:19]}"
-                        for r in raw_data
-                    ]
-                    raw_etf_table_probe = f"({len(raw_data)} rows)\n" + "\n".join(summary_lines)
-            else:
-                raw_etf_table_probe = f"NON-LIST response: {type(raw_data).__name__}"
-        except Exception as exc:
-            raw_etf_table_probe = f"PROBE FAILED: {type(exc).__name__}: {str(exc)[:100]}"
-        st.info(
-            f"🔍 **Focal Debug (v1.12.2f)**\n\n"
-            f"**Supabase config check:**\n"
-            f"- SUPABASE_URL set: `{bool(SUPABASE_URL)}` (len={len(SUPABASE_URL)})\n"
-            f"- SUPABASE_SERVICE_ROLE_KEY set: `{bool(SUPABASE_SERVICE_ROLE_KEY)}` (len={len(SUPABASE_SERVICE_ROLE_KEY)})\n"
-            f"- _supabase_is_configured: `{_supabase_is_configured()}`\n"
-            f"- _supabase_service_is_configured: `{_supabase_service_is_configured()}`\n"
-            f"\n**Direct source-table reads:**\n"
-            f"- direct supply_chain rows: `{direct_chain_count}`\n"
-            f"- direct active_etf rows: `{direct_etf_count}`\n"
-            f"\n**ETF helper per-ticker trace:**\n"
-            f"```\n{chr(10).join(st.session_state.get('_focal_etf_helper_trace', ['(no trace)']))}\n```\n"
-            f"\n**RAW Supabase `active_etf_snapshots` table probe (latest 10 rows):**\n"
-            f"```\n{raw_etf_table_probe}\n```\n"
-            f"\n**Cockpit fallback (snapshot_row):**\n"
-            f"- snapshot_row type: `{type(snapshot_row).__name__}`\n"
-            f"- snapshot_row is dict: `{isinstance(snapshot_row, dict)}`\n"
-            f"- cockpit_q3_payload type: `{type(snapshot_row.get('cockpit_q3_payload')).__name__ if isinstance(snapshot_row, dict) else 'N/A'}`\n"
-            f"- cockpit active_etfs count: `{len(snapshot_row['cockpit_q3_payload'].get('active_etfs') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`\n"
-            f"- cockpit chain_rankings count: `{len(snapshot_row['cockpit_q3_payload'].get('chain_rankings') or []) if isinstance(snapshot_row, dict) and isinstance(snapshot_row.get('cockpit_q3_payload'), dict) else 'N/A'}`"
-            f"{recovery_note}\n"
-            f"\n**Final merged output:**\n"
-            f"- etfs (Top {len(etfs)}): `{[e.get('ticker') for e in etfs if isinstance(e, dict)]}`\n"
-            f"- chains (Top {len(chains)}): `{[c.get('title') for c in chains if isinstance(c, dict)]}`"
-        )
-        # Pop debug param so it doesn't persist
-        try:
-            qp = st.query_params
-            if "debug_focal" in qp:
-                del qp["debug_focal"]
-        except Exception:
-            pass
 
     _inject_focal_points_css()
 
@@ -51688,6 +51823,13 @@ def generate_dashboard():
     #     (back to v1.12.5 behavior — the inner US theme radar / TSMC Top 5
     #     are the user's primary navigation, not hooks)
     _focal_exp_level = st.session_state.get("dashboard_experience_level", "overview")
+    # v1.13.18: gate-free debug probe. Renders ONLY when ?debug_focal=1 is in
+    # the URL, but runs regardless of mode/scope/level so it can always be
+    # summoned for diagnostics (the old probe was hidden behind the gate below).
+    try:
+        render_focal_debug_probe_if_requested()
+    except Exception:
+        pass
     _focal_show_hooks = (
         dashboard_mode == "General Market"
         and st.session_state.get("dashboard_market_scope", "Taiwan only") == "Taiwan only"
