@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.20
+Version : v1.13.21
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,21 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.21 (2026-05-20)  [Feature: 供應鏈族群熱度 強弱光譜卡 — 取代隱藏的今日重點]
+
+  需求: 隱藏今日重點後, user 想要一個第一眼 High-Level overview, 但不要再
+  依賴抓不到的 Active ETF 來源。
+
+  作法: 新增「供應鏈族群熱度」區塊 (render_supply_chain_heat) — 六格冷暖卡,
+  由族群平均漲幅 (average_move) 由強到弱排序, 底色冷暖表達強弱 (綠熱/藍涼/
+  黃溫/紅冷), 每格顯示族群名 + 平均漲幅 + 龍頭股 + 上漲家數廣度。右上角依
+  各族群漲跌自動生成總結 chip (全面走強/偏多/偏空…)。
+  資料源: _load_focal_supply_chains_from_lab (limit=6) — 即原本就穩定顯示的
+  供應鏈快照 (supply_chain_focus_snapshots 表), 完全不碰 Active ETF, 所以
+  一定顯示且快。loader 擴充帶出 average_move / fetched_at。
+  放在隱藏的今日重點原位 (共用 overview gate), 由 _SHOW_SUPPLY_CHAIN_HEAT
+  開關控制 (預設 True)。全程防禦, 失敗靜默不顯示。明日動能等其餘區塊不受影響。
 
 v1.13.20 (2026-05-20)  [UI: 隱藏「今日重點」整塊 (主動式ETF + 供應鏈 兩欄面板)]
 
@@ -8003,6 +8018,12 @@ TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY = "__MARKET__"
 # Nothing else about the block's code is changed — this is a pure visibility
 # gate, so flipping it back on instantly restores the original behaviour.
 _SHOW_TODAY_FOCAL_POINTS = False
+
+# v1.13.21: Master switch for the new "供應鏈族群熱度 (強弱光譜卡)" block that
+# replaces the hidden Today's Focal Points. It only uses the stable
+# supply-chain snapshot data (no dependency on the unavailable Active ETF
+# source), so it renders reliably and fast. Set False to hide.
+_SHOW_SUPPLY_CHAIN_HEAT = True
 
 
 # v1.3.8.3: In-memory cache for the local snapshot JSON store. Without this,
@@ -18773,6 +18794,8 @@ def _load_focal_supply_chains_from_lab(limit: int = 3) -> list[dict]:
             "config_key": str(row.get("config_key", "") or ""),
             "leader_name": str(row.get("leader_name", "") or "—"),
             "leader_move": row.get("leader_move"),
+            "average_move": row.get("average_move"),  # v1.13.21: 族群平均漲幅 (強弱卡用)
+            "fetched_at": row.get("fetched_at"),       # v1.13.21: 資料時點 (強弱卡顯示)
             "rising_count": int(row.get("rising_count", 0) or 0),
             "ticker_count": int(row.get("ticker_count", 0) or 0),
             "foreign_net_total": row.get("foreign_net_total"),
@@ -19534,6 +19557,139 @@ def _inject_focal_points_css() -> None:
     function is now a single render_html_block call.
     """
     render_html_block(_FOCAL_POINTS_CSS)
+
+
+_SUPPLY_CHAIN_HEAT_CSS = """
+<style>
+.sch-shell {
+    background: radial-gradient(120% 80% at 0% 0%, rgba(40,52,88,.35), transparent 60%),
+        linear-gradient(180deg, rgba(20,26,45,.94), rgba(12,16,28,.96));
+    border: 1px solid rgba(96,110,145,.30); border-radius: 16px; padding: 18px 20px; margin: 0 0 14px 0;
+    color: #e9ecf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+.sch-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.sch-title { font-size: 18px; font-weight: 800; color: #f6f8fc; display: flex; align-items: center; gap: 8px; }
+.sch-sub { font-size: 12.5px; color: #8b95ad; margin-top: 3px; }
+.sch-tldr { font-size: 13px; font-weight: 700; padding: 5px 13px; border-radius: 999px; align-self: center; letter-spacing: .3px; }
+.sch-tldr-up { background: rgba(76,208,168,.18); color: #8be8b1; border: 1px solid rgba(94,198,137,.45); }
+.sch-tldr-down { background: rgba(217,102,112,.18); color: #f4a3aa; border: 1px solid rgba(232,110,120,.45); }
+.sch-tldr-flat { background: rgba(230,195,95,.16); color: #f4d68a; border: 1px solid rgba(230,195,95,.45); }
+.sch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.sch-card { border-radius: 12px; padding: 14px; position: relative; overflow: hidden; border: 1px solid rgba(96,110,145,.18); }
+.sch-hot  { background: linear-gradient(160deg, rgba(76,208,168,.22), rgba(10,14,26,.55)); border-color: rgba(94,198,137,.4); }
+.sch-warm { background: linear-gradient(160deg, rgba(230,195,95,.14), rgba(10,14,26,.55)); border-color: rgba(230,195,95,.32); }
+.sch-cool { background: linear-gradient(160deg, rgba(91,141,239,.16), rgba(10,14,26,.55)); border-color: rgba(91,141,239,.34); }
+.sch-cold { background: linear-gradient(160deg, rgba(232,110,120,.18), rgba(10,14,26,.55)); border-color: rgba(232,110,120,.4); }
+.sch-rank { font-size: 11px; font-weight: 700; color: #8b95ad; letter-spacing: 1px; }
+.sch-name { font-size: 16px; font-weight: 800; color: #f6f8fc; margin: 4px 0 2px; }
+.sch-pct { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sch-up { color: #6fd99a; } .sch-down { color: #f08894; } .sch-flat { color: #e6c35f; }
+.sch-meta { font-size: 12px; color: #aeb6ca; margin-top: 8px; line-height: 1.6; }
+.sch-leader-name { font-weight: 700; color: #dfe4ef; }
+.sch-breadth { display: inline-block; background: rgba(96,110,145,.2); padding: 1px 7px; border-radius: 4px; font-size: 11px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.sch-note { font-size: 11px; color: #6b7488; margin-top: 10px; font-style: italic; }
+@media (max-width: 720px) { .sch-grid { grid-template-columns: 1fr; } }
+</style>
+"""
+
+
+def _sch_pct(v):
+    if v is None or not (isinstance(v, (int, float)) and math.isfinite(v)):
+        return "—"
+    return f"{'+' if v >= 0 else ''}{v:.2f}%"
+
+
+def _sch_heat_class(v):
+    """族群平均漲幅 → (卡片冷暖 class, 數字色 class)。綠漲紅跌 dashboard 慣例。"""
+    if v is None or not (isinstance(v, (int, float)) and math.isfinite(v)):
+        return "sch-warm", "sch-flat"
+    if v >= 3.0:
+        return "sch-hot", "sch-up"
+    if v >= 0.3:
+        return "sch-cool", "sch-up"
+    if v > -0.3:
+        return "sch-warm", "sch-flat"
+    return "sch-cold", "sch-down"
+
+
+def _sch_verdict(groups, lang_zh=True):
+    """由各族群平均漲幅自動生成一句話總結 + chip 色。"""
+    moves = [g.get("average_move") for g in groups
+             if isinstance(g.get("average_move"), (int, float)) and math.isfinite(g.get("average_move"))]
+    if not moves:
+        return ("資料整理中" if lang_zh else "Loading"), "sch-tldr-flat"
+    up = sum(1 for m in moves if m > 0.3)
+    down = sum(1 for m in moves if m < -0.3)
+    n = len(moves)
+    if up == n:
+        return (f"全面走強 · {n}/{n} 收紅" if lang_zh else f"All up · {n}/{n}"), "sch-tldr-up"
+    if down == n:
+        return (f"全面走弱 · {n}/{n} 收綠" if lang_zh else f"All down · {n}/{n}"), "sch-tldr-down"
+    if up >= down:
+        return (f"偏多 · {up} 強 {down} 弱" if lang_zh else f"Risk-on · {up} up {down} dn"), "sch-tldr-up"
+    return (f"偏空 · {up} 強 {down} 弱" if lang_zh else f"Risk-off · {up} up {down} dn"), "sch-tldr-down"
+
+
+def _render_supply_chain_heat_html(groups, lang_zh=True, data_date="") -> str:
+    if not groups:
+        return ""
+    gs = sorted(
+        groups,
+        key=lambda g: (g.get("average_move") if isinstance(g.get("average_move"), (int, float))
+                       and math.isfinite(g.get("average_move")) else -1e9),
+        reverse=True,
+    )
+    verdict_txt, verdict_cls = _sch_verdict(gs, lang_zh)
+    P = ['<div class="sch-shell">', '<div class="sch-head"><div>']
+    P.append(f'<div class="sch-title">🔥 {"供應鏈族群熱度" if lang_zh else "Supply-Chain Heat"}</div>')
+    P.append(f'<div class="sch-sub">{escape("資料基準" if lang_zh else "As of")} '
+             f'{escape(str(data_date) or "—")} · {"由強到弱" if lang_zh else "strong→weak"}</div></div>')
+    P.append(f'<div class="sch-tldr {verdict_cls}">{escape(verdict_txt)}</div></div>')
+    P.append('<div class="sch-grid">')
+    for i, g in enumerate(gs, start=1):
+        avg = g.get("average_move")
+        card_cls, pct_cls = _sch_heat_class(avg)
+        rank_lbl = f"#{i}" + ("　最強" if i == 1 and lang_zh else "")
+        leader = escape(str(g.get("leader_name") or "—"))
+        rising = g.get("rising_count", 0)
+        total = g.get("ticker_count", 0)
+        P.append(
+            f'<div class="sch-card {card_cls}">'
+            f'<div class="sch-rank">{escape(rank_lbl)}</div>'
+            f'<div class="sch-name">{escape(str(g.get("title") or "—"))}</div>'
+            f'<div class="sch-pct {pct_cls}">{_sch_pct(avg)}</div>'
+            f'<div class="sch-meta">{"龍頭" if lang_zh else "Leader"} '
+            f'<span class="sch-leader-name">{leader}</span>'
+            f'<br><span class="sch-breadth">{rising}/{total} {"檔上漲" if lang_zh else "up"}</span></div>'
+            f'</div>'
+        )
+    P.append('</div>')
+    P.append(f'<div class="sch-note">{escape("漲幅為族群成分股平均；龍頭為族群內代表強勢股。資料取自供應鏈快照收盤。" if lang_zh else "Group average move; leader = strongest constituent.")}</div>')
+    P.append('</div>')
+    return "".join(P)
+
+
+def render_supply_chain_heat(lang_zh: bool = True) -> None:
+    """v1.13.21: 供應鏈族群熱度 (強弱光譜卡). 取代隱藏的「今日重點」, 提供
+    第一眼 High-Level overview。只用穩定的供應鏈快照資料 (不依賴抓不到的
+    Active ETF 來源)。全程防禦: 任何失敗都靜默不顯示, 不影響其餘頁面。"""
+    try:
+        groups = _load_focal_supply_chains_from_lab(limit=6)
+        if not groups:
+            return
+        data_date = ""
+        for g in groups:
+            d = str(g.get("fetched_at") or g.get("as_of_date") or "").strip()
+            if d:
+                # fetched_at 可能是 ISO timestamp, 只取日期部分
+                data_date = d[:10]
+                break
+        render_html_block(_SUPPLY_CHAIN_HEAT_CSS)
+        html = _render_supply_chain_heat_html(groups, lang_zh=lang_zh, data_date=data_date)
+        if html:
+            render_html_block(html)
+    except Exception:
+        return
 
 
 def render_focal_debug_probe_if_requested() -> None:
@@ -51875,6 +52031,23 @@ def generate_dashboard():
                     f"⚠️ 今日重點載入失敗 ({type(e).__name__}) — 其餘頁面已正常顯示"
                     if _news_briefing_is_zh()
                     else f"⚠️ Today's Focal Points failed to load ({type(e).__name__}) — rest of page still rendering"
+                )
+                with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
+                    st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
+
+    # v1.13.21: 供應鏈族群熱度 (強弱光譜卡) — 取代隱藏的「今日重點」, 提供第一眼
+    # High-Level overview。只用穩定的供應鏈快照 (不依賴抓不到的 Active ETF)。
+    # 與 focal 共用 overview gate; 由 _SHOW_SUPPLY_CHAIN_HEAT 開關控制。
+    if _focal_show_hooks and _SHOW_SUPPLY_CHAIN_HEAT:
+        with st.spinner("🔥 載入供應鏈族群熱度…" if _news_briefing_is_zh() else "🔥 Loading supply-chain heat…"):
+            try:
+                render_supply_chain_heat(lang_zh=_news_briefing_is_zh())
+            except Exception as e:
+                import traceback
+                st.warning(
+                    f"⚠️ 供應鏈族群熱度載入失敗 ({type(e).__name__}) — 其餘頁面已正常顯示"
+                    if _news_briefing_is_zh()
+                    else f"⚠️ Supply-chain heat failed to load ({type(e).__name__})"
                 )
                 with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
                     st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
