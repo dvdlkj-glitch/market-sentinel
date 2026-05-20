@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.19
+Version : v1.13.20
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,19 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.20 (2026-05-20)  [UI: 隱藏「今日重點」整塊 (主動式ETF + 供應鏈 兩欄面板)]
+
+  user 要求隱藏整個「今日重點 / Today's Focal Points」區塊 (因主動式 ETF
+  Top 3 資料源在部署環境暫時抓不到, 持續顯示「資料準備中」)。
+
+  作法: 新增 module-level 開關 _SHOW_TODAY_FOCAL_POINTS (預設 False), AND
+  進原本的 render gate (`if _focal_show_hooks and _SHOW_TODAY_FOCAL_POINTS`)。
+  區塊的資料/render/計時/debug 程式碼全部原封不動 → 把開關翻回 True 即刻恢復。
+
+  注意: layout-dispatch 短路 `elif _focal_show_hooks: pass` 維持用原 gate
+  (不接新開關), 否則 overview 狀態會誤掉入 Standard/Advanced 版面。明日動能
+  脈搏 (General Market 即顯示) 不受影響, 仍正常顯示。
 
 v1.13.19 (2026-05-20)  [Debug: focal 載入計時探針 (靜默記錄, ?debug_focal=1 顯示)]
 
@@ -7982,6 +7995,14 @@ ACTIVE_ETF_UPDATE_NOTE_EN = "This section is designed for after-close review and
 ACTIVE_ETF_UPDATE_NOTE_ZH = "本區為收盤後追蹤用途，資訊設計為每日下午 4:00（台北時間）後更新。"
 ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00981A", "00982A", "00988A", "00990A", "00991A", "00992A"]
 TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY = "__MARKET__"
+
+# v1.13.20: Master switch for the "今日重點 / Today's Focal Points" homepage
+# block (the 主動式 ETF Top 3 + 供應鏈 Top 3 two-column panel). Set to False
+# to hide the entire block; set back to True to restore. Hidden because the
+# Active ETF Top 3 data source is currently unavailable on deployment.
+# Nothing else about the block's code is changed — this is a pure visibility
+# gate, so flipping it back on instantly restores the original behaviour.
+_SHOW_TODAY_FOCAL_POINTS = False
 
 
 # v1.3.8.3: In-memory cache for the local snapshot JSON store. Without this,
@@ -51836,7 +51857,11 @@ def generate_dashboard():
         and _focal_exp_level == "overview"
     )
 
-    if _focal_show_hooks:
+    # v1.13.20: master switch to hide the entire "今日重點 / Today's Focal
+    # Points" block. Set _SHOW_TODAY_FOCAL_POINTS = False to hide it (e.g.
+    # while the Active ETF Top 3 data source is unavailable). The block's
+    # data/render code is untouched — flip this back to True to restore.
+    if _focal_show_hooks and _SHOW_TODAY_FOCAL_POINTS:
         # v1.13.12: Defensive wrap. If render_today_focal_points throws
         # (e.g. snapshot row missing fields, prefetch table unreadable,
         # supabase down), we still want the rest of the page to render.
