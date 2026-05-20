@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.12
+Version : v1.13.15
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,42 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.15 (2026-05-20)  [UI: 前一日加權指數貢獻拆解 全區字級整體放大 (純外觀)]
+
+  應 user 要求字體再大一點。整區字級往上推一級，維持比例協調：
+  標題 18→20、收盤 30→34、副標 12.5→14、族群名 14.5→16、代表股 12.5→14、
+  影響數字 19→22、個股膠囊 12.5→14、類股名 12.5→14 / 類股% 15→17、
+  結論 13→14.5、代碼/eyebrow/tag/note 同步微調。算法與版面結構不變。
+
+v1.13.14 (2026-05-20)  [UI: 前一日加權指數貢獻拆解 區塊重新設計 (純外觀, 算法不變)]
+
+  僅重做「前一交易日 加權指數貢獻拆解」區塊的視覺/排版，功能、資料、payload
+  結構、點數計算完全不變。
+  - 族群表格 → 卡片式 (pda2-card)：左側綠漲紅跌 accent bar、右側影響數值錨定 +
+    貢獻長條 (點數/漲跌幅各自獨立尺度)，掃讀性大幅提升。
+  - 盤勢定調 chip 移至右上；大盤收盤數字放大為視覺焦點 (30px)。
+  - 個股以膠囊呈現 (中文名 + 灰底代碼 + 點數/漲跌幅)。
+  - TWSE 類股改為底部色條卡片，名稱精簡 (去『指數』『類』字)，高度統一。
+  - 結論加 💡 icon + 漸層底；radial gradient 背景增加層次。
+  - 修正 fmt 重複「點」字 (新增 _pda_fmt_pts_num 純數字版)。
+  - CSS class 全面改用 pda2- 前綴 (自成一格, 不影響其他區塊)。
+
+v1.13.13 (2026-05-20)  [Feature: 前一日加權指數貢獻拆解 (Prev-Day TAIEX Attribution)]
+
+  新增首頁區塊，位於「🔴 休息觀察 · TSMC 供應鏈 5 大防守型」之上 (Taiwan only)。
+  三區呈現：① 大盤 header (收盤/漲跌點/漲跌幅/盤勢定調)
+            ② 各供應鏈/族群 (台積電供應鏈・機器人/AI伺服器報「點數」; Memory・低軌報「漲跌幅」)
+            ③ TWSE 類股 (MI_INDEX 各類股指數漲跌幅) + 一句話結論
+
+  點數估算：貢獻點數 = 漲跌元 × 點/元；點/元 ≈ 發行股數(百萬股)/3270。
+  錨定校準 2330=7.93 (277/35=7.91, 477/60=7.95)、2454=0.462 (113/245=0.461)，
+  其餘 ±10%。季度 (3/6/9/12月成分調整後) 用盤後「台積電貢獻X點」反推校準。
+
+  新函式：render_prev_day_index_attribution / build_prev_day_index_attribution /
+          parse_twse_sector_indices / fetch_twse_sector_indices (cache 30min) /
+          PDA_POINT_PER_DOLLAR 等。沿用 dashboard 綠漲紅跌慣例。
+  防禦：fetch/parse 失敗時整塊降級 (zone3 隱藏 / 顯示警告+traceback)，不影響其餘頁面。
 
 v1.13.12 (2026-05-17)  [Defensive: try/except + spinner 包住 focal/momentum render]
 
@@ -18483,8 +18519,9 @@ def _render_live_momentum_and_tsmc_block(scope: str, lang_zh: bool) -> None:
     if html:
         render_html_block(html)
 
-    # Chain into TSMC Top 5 (Taiwan only)
+    # v1.13.13: Prev-day TAIEX attribution, then TSMC Top 5 (Taiwan only)
     if scope == "Taiwan only":
+        render_prev_day_index_attribution(lang_zh=lang_zh)
         render_tsmc_supply_chain_top5_recommendations(
             verdict_key=payload.get("verdict_key", "neutral"),
             score=payload.get("score", 50.0),
@@ -22473,6 +22510,562 @@ def _ensure_tsmc_top5_css():
     """Inject the TSMC top5 CSS every render. v1.10.1: see
     _ensure_tomorrow_momentum_css for rationale."""
     render_html_block(_TSMC_TOP5_CSS)
+
+
+# ============================================================================
+# v1.13.13  前一日加權指數貢獻拆解 (Prev-Day TAIEX Attribution)
+# ----------------------------------------------------------------------------
+# Renders ABOVE the "🔴 休息觀察 · TSMC 供應鏈 5 大防守型" block on the Taiwan
+# overview page. One-glance read of "昨天大盤怎麼動 / 誰帶動 / 誰拖累".
+#
+# THREE ZONES (user decision A + hybrid D):
+#   ① 大盤 header  ② 供應鏈族群(權值股報點數)  ③ TWSE 類股(MI_INDEX 報漲跌幅) + 一句話結論
+#
+# ── 點/元 係數 (points per NT$1 move) ─────────────────────────────────────────
+#   貢獻點數 = 漲跌元 × 點/元 ;  點/元 ≈ 發行股數(百萬股) / 3270 (= 除數 3.27e9 股)
+#   除數由台積電驗證係數 7.93 反推 (25930 / 7.93 ≈ 3270)。
+#   ANCHORS (校準自盤後券商評論): 2330 台積電 7.93 (277/35=7.91, 477/60=7.95) ;
+#                                 2454 聯發科 0.462 (113/245=0.461)。
+#   其餘係數由發行股數推估，誤差約 ±10%。
+#   季度維護 (TWSE 3/6/9/12 月成分調整後): 取盤後「台積電貢獻 X 點」反推當期係數，
+#   偏離 7.93 >3% 時把 _PDA_ISSUED_SHARES_M 對應或整表依比例 rescale。
+# ============================================================================
+
+_PDA_DIVISOR_M = 3270.0  # 指數除數 (百萬股)
+
+_PDA_ISSUED_SHARES_M = {
+    "2330": 25930, "2454": 1510, "2317": 13877, "2382": 3866, "2412": 7757,
+    "2881": 13767, "2308": 2598, "2882": 14718, "3711": 4344, "6505": 9525,
+    "2303": 12490, "2891": 20910, "2886": 14300, "2884": 15700, "2885": 13000,
+    "3034": 608, "3231": 2937, "6669": 175, "2345": 558, "3037": 1514,
+    "2379": 512, "2408": 3098, "2344": 3978, "2337": 1859, "6770": 4074,
+    "2357": 743, "2207": 546, "3008": 134, "2603": 2118, "2002": 15745,
+    "3661": 760, "2376": 645, "2377": 845, "3017": 760,
+}
+_PDA_PINNED_POINT_PER_DOLLAR = {"2330": 7.93, "2454": 0.462}
+
+
+def _pda_build_point_per_dollar() -> dict:
+    table = {c: round(s / _PDA_DIVISOR_M, 4) for c, s in _PDA_ISSUED_SHARES_M.items()}
+    table.update(_PDA_PINNED_POINT_PER_DOLLAR)
+    return table
+
+
+PDA_POINT_PER_DOLLAR = _pda_build_point_per_dollar()
+
+# 供應鏈族群 (zone 2). tickers 為完整 yfinance 代碼(含 .TW/.TWO) 或純代號(預設 .TW)。
+#   mode="stocks" → 列出代表個股 + 各自點數 (權值大票)
+#   mode="group"  → 顯示族群平均漲跌幅 + 跌停/漲停家數 (Memory / 低軌)
+_PDA_SC_GROUPS = [
+    {"label": "台積電供應鏈", "mode": "stocks", "tickers": ["2330", "2454"]},
+    {"label": "機器人 / AI 伺服器", "mode": "stocks", "tickers": ["2317", "2382", "6669", "3231", "2345"]},
+    {"label": "Memory 記憶體", "mode": "group", "tickers": ["2408", "2344", "2337", "6770"]},
+    {"label": "低軌衛星", "mode": "group", "tickers": []},  # 由 LOW_ORBIT catalog 帶入
+]
+_PDA_PRIORITY_SECTORS = ["數位雲端類", "金融保險類", "汽車類", "半導體類", "電子類"]
+_PDA_LIMIT_PCT = 9.5  # 漲/跌停門檻
+
+
+def _pda_name(code: str) -> str:
+    """查中文名 (顯示用; 不影響任何點數計算)。
+    多層後備: TAIWAN_TICKER_METADATA → SUPPLY_CHAIN_RUNTIME_NAME_MAP → 代碼。"""
+    for suffix in (".TW", ".TWO"):
+        meta = TAIWAN_TICKER_METADATA.get(f"{code}{suffix}")
+        if meta and meta.get("zh"):
+            return meta["zh"]
+    for suffix in (".TW", ".TWO"):
+        nm = SUPPLY_CHAIN_RUNTIME_NAME_MAP.get(f"{code}{suffix}")
+        if nm:
+            return str(nm).strip()
+    return code
+
+
+def _pda_accent(v) -> str:
+    if v is None or not (isinstance(v, (int, float)) and math.isfinite(v)):
+        return "flat"
+    if v > 0.05:
+        return "up"
+    if v < -0.05:
+        return "down"
+    return "flat"
+
+
+def _pda_regime(pct, chg_pts, tsmc_points, lang_zh=True):
+    """盤勢定調。權值股領漲/跌 = 台積電貢獻點數佔大盤漲跌點 ≥ 30% 且同向。"""
+    if pct is None or not math.isfinite(pct):
+        return ("資料不足" if lang_zh else "No data", "flat")
+    tsmc_leads = (
+        chg_pts is not None and tsmc_points is not None
+        and math.isfinite(chg_pts) and math.isfinite(tsmc_points)
+        and abs(chg_pts) > 1e-6 and (tsmc_points / chg_pts) >= 0.30
+    )
+    if pct <= -1.5:
+        return ("殺盤日（權值股領跌）" if tsmc_leads else "重挫日", "down") if lang_zh \
+            else (("Sell-off (heavyweights led)" if tsmc_leads else "Heavy decline"), "down")
+    if pct <= -0.5:
+        return ("回檔整理" if lang_zh else "Pullback", "down")
+    if pct < 0.5:
+        return ("平盤震盪" if lang_zh else "Range-bound", "flat")
+    if pct < 1.5:
+        return ("穩步走高" if lang_zh else "Steady gains", "up")
+    if tsmc_leads:
+        return ("強攻日（權值股領漲）" if lang_zh else "Strong rally (heavyweights led)", "up")
+    return ("資金輪動走高" if lang_zh else "Broad-based rally", "up")
+
+
+def parse_twse_sector_indices(payload) -> list:
+    """從 TWSE MI_INDEX (type=ALL) 挑出『各類股指數』表 → list[dict{name,pct}]。
+    容錯：抓不到回 []。類股表 fields 含『指數』與『漲跌百分比』。"""
+    if not isinstance(payload, dict):
+        return []
+    tables = []
+    if isinstance(payload.get("tables"), list):
+        tables = payload["tables"]
+    else:
+        for i in ["", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
+            f, d = payload.get(f"fields{i}"), payload.get(f"data{i}")
+            if f and d:
+                tables.append({"fields": f, "data": d})
+    best = []
+    for tbl in tables:
+        fields = tbl.get("fields") or []
+        data = tbl.get("data") or []
+        if not fields or not data:
+            continue
+        fstr = [str(x) for x in fields]
+        name_idx = next((i for i, c in enumerate(fstr) if "指數" in c or "類股" in c), None)
+        pct_idx = next((i for i, c in enumerate(fstr) if "漲跌百分比" in c or ("漲跌" in c and "%" in c)), None)
+        if name_idx is None or pct_idx is None:
+            continue
+        rows = []
+        for r in data:
+            try:
+                nm = str(r[name_idx]).strip()
+                if "類" not in nm:
+                    continue
+                raw = str(r[pct_idx]).replace(",", "").replace("%", "").replace("+", "").strip()
+                if raw in ("", "--", "X", "N/A"):
+                    continue
+                rows.append({"name": nm, "pct": float(raw)})
+            except (ValueError, IndexError, TypeError):
+                continue
+        if len(rows) > len(best):
+            best = rows
+    return best
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_twse_sector_indices(date_token: str) -> list:
+    """抓 TWSE MI_INDEX 各類股指數 (cached 30min)。失敗回 []。"""
+    url = (
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
+        f"?response=json&date={date_token}&type=ALL"
+    )
+    try:
+        payload = _fetch_json_url(url, timeout=15)
+    except Exception:
+        return []
+    try:
+        return parse_twse_sector_indices(payload)
+    except Exception:
+        return []
+
+
+def build_prev_day_index_attribution(daily_data, sector_rows, low_orbit_tickers, lang_zh=True) -> dict:
+    """純資料 builder。daily_data 為含 ^TWII + 所需 .TW/.TWO 的 bulk yfinance frame。"""
+    def _last_two(sym):
+        close, _ = _momentum_extract_close_volume(daily_data, sym)
+        if close is None or len(close) < 2:
+            return None, None
+        try:
+            return float(close.iloc[-1]), float(close.iloc[-2])
+        except Exception:
+            return None, None
+
+    twii_last, twii_prev = _last_two("^TWII")
+    if twii_last is None:
+        return {"ready": False, "reason": "no ^TWII data"}
+    chg_pts = twii_last - twii_prev
+    chg_pct = (chg_pts / twii_prev * 100.0) if twii_prev else None
+
+    tsmc_last, tsmc_prev = _last_two("2330.TW")
+    tsmc_points = ((tsmc_last - tsmc_prev) * PDA_POINT_PER_DOLLAR.get("2330", 0)) \
+        if (tsmc_last is not None and tsmc_prev is not None) else None
+    verdict_label, verdict_accent = _pda_regime(chg_pct, chg_pts, tsmc_points, lang_zh)
+
+    def _move(sym):
+        code = sym.split(".")[0]
+        last, prev = _last_two(sym)
+        if last is None or prev is None or prev == 0:
+            return None
+        delta = last - prev
+        coeff = PDA_POINT_PER_DOLLAR.get(code)
+        return {
+            "code": code, "name": _pda_name(code), "price": last,
+            "delta": delta, "pct": delta / prev * 100.0,
+            "points": (delta * coeff) if coeff is not None else None,
+            "has_coeff": coeff is not None,
+        }
+
+    groups_cfg = [dict(g) for g in _PDA_SC_GROUPS]
+    for g in groups_cfg:
+        if g["label"] == "低軌衛星" and low_orbit_tickers:
+            g["tickers"] = list(low_orbit_tickers)[:12]
+
+    sc_groups = []
+    for g in groups_cfg:
+        syms = [t if "." in t else f"{t}.TW" for t in g["tickers"]]
+        moves = [m for m in (_move(s) for s in syms) if m]
+        if not moves:
+            sc_groups.append({"label": g["label"], "mode": g["mode"], "rep": None,
+                              "points": None, "avg_pct": None, "limit_down": 0,
+                              "limit_up": 0, "accent": "flat", "rows": []})
+            continue
+        avg_pct = sum(m["pct"] for m in moves) / len(moves)
+        limit_down = sum(1 for m in moves if m["pct"] <= -_PDA_LIMIT_PCT)
+        limit_up = sum(1 for m in moves if m["pct"] >= _PDA_LIMIT_PCT)
+        coeff_moves = [m for m in moves if m["has_coeff"]]
+        pts_sum = sum(m["points"] for m in coeff_moves) if coeff_moves else None
+        if g["mode"] == "stocks":
+            rows = sorted(coeff_moves, key=lambda m: abs(m["points"]), reverse=True)[:3] \
+                or sorted(moves, key=lambda m: abs(m["pct"]), reverse=True)[:3]
+            sc_groups.append({"label": g["label"], "mode": "stocks", "rep": rows[0],
+                              "points": pts_sum, "avg_pct": avg_pct, "limit_down": limit_down,
+                              "limit_up": limit_up,
+                              "accent": _pda_accent(pts_sum if pts_sum is not None else avg_pct),
+                              "rows": rows})
+        else:
+            sc_groups.append({"label": g["label"], "mode": "group",
+                              "rep": max(moves, key=lambda m: abs(m["pct"])),
+                              "points": pts_sum, "avg_pct": avg_pct, "limit_down": limit_down,
+                              "limit_up": limit_up, "accent": _pda_accent(avg_pct), "rows": []})
+
+    sectors_top = []
+    if sector_rows:
+        clean = [r for r in sector_rows if r.get("pct") is not None and math.isfinite(r["pct"])]
+        by_name = {r["name"]: r for r in clean}
+        picked, seen = [], set()
+        for nm in _PDA_PRIORITY_SECTORS:
+            if nm in by_name and nm not in seen:
+                picked.append(by_name[nm]); seen.add(nm)
+        ups = sorted((r for r in clean if r["pct"] > 0), key=lambda r: r["pct"], reverse=True)
+        downs = sorted((r for r in clean if r["pct"] < 0), key=lambda r: r["pct"])
+        for r in ups[:3] + downs[:3]:
+            if r["name"] not in seen:
+                picked.append(r); seen.add(r["name"])
+        sectors_top = picked[:8]
+
+    pos_groups = [s for s in sc_groups if s["accent"] == "up" and s["rep"]]
+    neg_groups = [s for s in sc_groups if s["accent"] == "down" and s["rep"]]
+    pos_sectors = [s for s in sectors_top if s["pct"] > 0.5]
+    neg_sectors = [s for s in sectors_top if s["pct"] < -0.5]
+    conclusion = _pda_conclusion(chg_pct, pos_groups, neg_groups, pos_sectors, neg_sectors, lang_zh)
+
+    return {
+        "ready": True,
+        "header": {"close": twii_last, "chg_pts": chg_pts, "chg_pct": chg_pct,
+                   "verdict": verdict_label, "verdict_accent": verdict_accent},
+        "sc_groups": sc_groups, "sectors": sectors_top, "conclusion": conclusion,
+    }
+
+
+def _pda_conclusion(chg_pct, pos_groups, neg_groups, pos_sectors, neg_sectors, lang_zh):
+    if not lang_zh:
+        return "Prev-session attribution — see breakdown above."
+    pos_bits, neg_bits = [], []
+    if pos_groups:
+        pos_bits.append("、".join(g["label"] for g in pos_groups[:2]))
+    if pos_sectors:
+        pos_bits.append("、".join(s["name"].replace("類", "") for s in pos_sectors[:3]))
+    if neg_groups:
+        neg_bits.append("、".join(g["label"] for g in neg_groups[:2]))
+    if neg_sectors:
+        neg_bits.append("、".join(s["name"].replace("類", "") for s in neg_sectors[:2]))
+    pos_txt = "、".join(b for b in pos_bits if b) or "無明顯領漲族群"
+    neg_txt = "、".join(b for b in neg_bits if b) or "無明顯拖累族群"
+    if chg_pct is not None and chg_pct < -0.3:
+        return f"主要拖累：{neg_txt} 領跌；逆勢正貢獻：{pos_txt}。"
+    if chg_pct is not None and chg_pct > 0.3:
+        return f"正貢獻主要靠：{pos_txt}；相對弱勢：{neg_txt}。"
+    return f"多空拉鋸 — 正貢獻：{pos_txt}；拖累：{neg_txt}。"
+
+
+_PDA_CSS = """
+<style>
+.pda2-shell {
+    background:
+        radial-gradient(120% 80% at 0% 0%, rgba(40, 52, 88, 0.35), transparent 60%),
+        linear-gradient(180deg, rgba(20, 26, 45, 0.94), rgba(12, 16, 28, 0.96));
+    border: 1px solid rgba(96, 110, 145, 0.30);
+    border-radius: 16px; padding: 18px 20px; margin: 0 0 14px 0; color: #e9ecf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+.pda2-accent-up   { box-shadow: inset 3px 0 0 rgba(94, 198, 137, 0.7); }
+.pda2-accent-down { box-shadow: inset 3px 0 0 rgba(232, 110, 120, 0.7); }
+.pda2-accent-flat { box-shadow: inset 3px 0 0 rgba(230, 195, 95, 0.7); }
+.pda2-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.pda2-titlewrap { display: flex; flex-direction: column; gap: 3px; }
+.pda2-title { font-size: 20px; font-weight: 800; color: #f6f8fc; letter-spacing: 0.2px; display: flex; align-items: center; gap: 8px; }
+.pda2-title .pda2-eyebrow {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase;
+    color: #7d8aa8; background: rgba(96,110,145,0.16); padding: 2px 8px; border-radius: 5px;
+}
+.pda2-subtitle { font-size: 14px; color: #8b95ad; }
+.pda2-quote { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-top: 2px; }
+.pda2-close { font-size: 34px; font-weight: 800; color: #f9fafc; font-variant-numeric: tabular-nums; line-height: 1; }
+.pda2-chg { font-size: 16.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pda2-verdict { font-size: 13.5px; font-weight: 700; padding: 5px 13px; border-radius: 999px; letter-spacing: 0.3px; align-self: center; }
+.pda2-up { color: #6fd99a; } .pda2-down { color: #f08894; } .pda2-flat { color: #e6c35f; }
+.pda2-v-up { background: rgba(76,208,168,0.18); color: #8be8b1; border: 1px solid rgba(94,198,137,0.45); }
+.pda2-v-down { background: rgba(217,102,112,0.18); color: #f4a3aa; border: 1px solid rgba(232,110,120,0.45); }
+.pda2-v-flat { background: rgba(230,195,95,0.16); color: #f4d68a; border: 1px solid rgba(230,195,95,0.45); }
+.pda2-divider { height: 1px; background: linear-gradient(90deg, rgba(96,110,145,0.4), rgba(96,110,145,0.05)); margin: 16px 0 12px; }
+.pda2-sec-label {
+    font-size: 12px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+    color: #7d8aa8; margin-bottom: 9px; display: flex; align-items: center; gap: 8px;
+}
+.pda2-sec-label::after { content: ""; flex: 1; height: 1px; background: rgba(96,110,145,0.18); }
+.pda2-groups { display: flex; flex-direction: column; gap: 7px; }
+.pda2-card {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px;
+    background: rgba(10, 14, 26, 0.55); border: 1px solid rgba(96,110,145,0.16);
+    border-radius: 11px; padding: 11px 14px 11px 13px; position: relative; overflow: hidden;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.pda2-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 3px 0 0 3px; }
+.pda2-card.up::before   { background: linear-gradient(180deg, #6fd99a, #4cd0a8); }
+.pda2-card.down::before { background: linear-gradient(180deg, #f08894, #d96670); }
+.pda2-card.flat::before { background: linear-gradient(180deg, #f4d68a, #e6c35f); }
+.pda2-card:hover { border-color: rgba(96,110,145,0.32); background: rgba(14, 19, 34, 0.7); }
+.pda2-left { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.pda2-cat-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pda2-cat { font-size: 16px; font-weight: 700; color: #eef1f7; }
+.pda2-lead { display: inline-flex; align-items: baseline; gap: 6px; font-size: 14px; color: #aeb6ca; }
+.pda2-lead-name { font-weight: 700; color: #dfe4ef; }
+.pda2-code {
+    background: rgba(96,110,145,0.22); color: #9aa3bb; padding: 0.5px 6px; border-radius: 4px;
+    font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.pda2-lead-px { font-variant-numeric: tabular-nums; color: #8b95ad; }
+.pda2-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.pda2-chip {
+    display: inline-flex; align-items: center; gap: 6px; background: rgba(96,110,145,0.13);
+    border: 1px solid rgba(96,110,145,0.22); padding: 3px 10px; border-radius: 7px; font-size: 14px;
+}
+.pda2-chip-name { color: #cfd5e4; font-weight: 600; }
+.pda2-chip-code { color: #828ca6; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.pda2-chip-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pda2-impact { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 104px; }
+.pda2-impact-num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.pda2-impact-unit { font-size: 12px; font-weight: 600; color: #828ca6; margin-left: 2px; }
+.pda2-bar { width: 88px; height: 4px; background: rgba(96,110,145,0.2); border-radius: 2px; overflow: hidden; position: relative; }
+.pda2-bar-fill { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.pda2-bar-fill.up   { background: linear-gradient(90deg, #4cd0a8, #6fd99a); right: 50%; }
+.pda2-bar-fill.down { background: linear-gradient(90deg, #f08894, #d96670); left: 50%; }
+.pda2-bar-mid { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: rgba(150,160,184,0.4); }
+.pda2-tag { font-size: 11.5px; font-weight: 700; color: #828ca6; }
+.pda2-sectors { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 7px; }
+.pda2-sec {
+    background: rgba(10, 14, 26, 0.55); border: 1px solid rgba(96,110,145,0.16); border-radius: 9px;
+    padding: 9px 11px; display: flex; flex-direction: column; gap: 3px; position: relative; overflow: hidden;
+}
+.pda2-sec::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; }
+.pda2-sec.up::after { background: rgba(94,198,137,0.55); }
+.pda2-sec.down::after { background: rgba(232,110,120,0.55); }
+.pda2-sec.flat::after { background: rgba(230,195,95,0.45); }
+.pda2-sec-name { font-size: 14px; color: #d4dae8; font-weight: 600; }
+.pda2-sec-pct { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pda2-concl {
+    margin-top: 13px; padding: 12px 16px; border-radius: 11px;
+    background: linear-gradient(90deg, rgba(35,44,70,0.6), rgba(35,44,70,0.25));
+    border: 1px solid rgba(96,110,145,0.18); font-size: 14.5px; color: #d4dae8; line-height: 1.55;
+    display: flex; gap: 9px; align-items: flex-start;
+}
+.pda2-concl-icon { font-size: 17px; line-height: 1.3; }
+.pda2-concl b { color: #f6f8fc; font-weight: 700; }
+.pda2-note { font-size: 12px; color: #6b7488; margin-top: 9px; font-style: italic; }
+@media (max-width: 720px) {
+    .pda2-card { grid-template-columns: 1fr; }
+    .pda2-impact { align-items: flex-start; flex-direction: row; gap: 10px; margin-top: 2px; }
+    .pda2-bar { display: none; }
+}
+</style>
+"""
+
+
+def _ensure_pda_css():
+    """Unconditional re-injection (Pattern 1)."""
+    render_html_block(_PDA_CSS)
+
+
+def _pda_fmt_pts(p):
+    if p is None or not (isinstance(p, (int, float)) and math.isfinite(p)):
+        return "—"
+    return f"{'+' if p >= 0 else ''}{p:.0f} 點"
+
+
+def _pda_fmt_pts_num(p):
+    """純數字版 (不含『點』字); 重設計版面由 CSS 另外標註單位。"""
+    if p is None or not (isinstance(p, (int, float)) and math.isfinite(p)):
+        return "—"
+    return f"{'+' if p >= 0 else ''}{p:.0f}"
+
+
+def _pda_fmt_pct(p):
+    if p is None or not (isinstance(p, (int, float)) and math.isfinite(p)):
+        return "—"
+    return f"{'+' if p >= 0 else ''}{p:.2f}%"
+
+
+def _pda_cls(accent):
+    return {"up": "pda-up", "down": "pda-down"}.get(accent, "pda-flat")
+
+
+def _render_prev_day_index_attribution_html(payload, lang_zh=True) -> str:
+    if not payload or not payload.get("ready"):
+        return ""
+    h = payload["header"]
+    acc = h["verdict_accent"]
+    shell = {"up": "pda2-accent-up", "down": "pda2-accent-down"}.get(acc, "pda2-accent-flat")
+    vchip = {"up": "pda2-v-up", "down": "pda2-v-down"}.get(acc, "pda2-v-flat")
+    chg_cls = _pda_cls(_pda_accent(h["chg_pct"]))
+    title = "前一交易日 加權指數貢獻拆解" if lang_zh else "Prev-Session TAIEX Attribution"
+    sub = "誰帶動、誰拖累 — 進場前先看大盤怎麼動" if lang_zh else "Who drove it, who dragged it"
+
+    # bar 縮放: 點數(stocks)與漲跌幅%(group)各自獨立尺度，避免互相誤導
+    max_pts, max_grp_pct = 1.0, 1.0
+    for g in payload["sc_groups"]:
+        if g["mode"] == "stocks" and g.get("points") is not None:
+            max_pts = max(max_pts, abs(g["points"]))
+        elif g["mode"] == "group" and g.get("avg_pct") is not None and math.isfinite(g["avg_pct"]):
+            max_grp_pct = max(max_grp_pct, abs(g["avg_pct"]))
+
+    P = [f'<div class="pda2-shell {shell}">']
+    P.append('<div class="pda2-head"><div class="pda2-titlewrap">')
+    P.append(f'<div class="pda2-title">📊 {escape(title)}'
+             f'<span class="pda2-eyebrow">{"前日定稿" if lang_zh else "PREV CLOSE"}</span></div>')
+    P.append(f'<div class="pda2-subtitle">{escape(sub)}</div></div>')
+    P.append(f'<div class="pda2-verdict {vchip}">{escape(str(h["verdict"]))}</div></div>')
+    P.append('<div class="pda2-quote">')
+    P.append(f'<span class="pda2-close">{h["close"]:,.2f}</span>')
+    P.append(f'<span class="pda2-chg {chg_cls}">{_pda_fmt_pts_num(h["chg_pts"])} 點　{_pda_fmt_pct(h["chg_pct"])}</span>')
+    P.append('</div>')
+
+    P.append('<div class="pda2-divider"></div>')
+    P.append(f'<div class="pda2-sec-label">{"供應鏈 / 族群貢獻" if lang_zh else "Supply-chain / Group"}</div>')
+    P.append('<div class="pda2-groups">')
+
+    for g in payload["sc_groups"]:
+        a = g["accent"]
+        rep = g.get("rep")
+        lead = ""
+        if rep:
+            lead = (f'<span class="pda2-lead"><span class="pda2-lead-name">{escape(str(rep["name"]))}</span>'
+                    f'<span class="pda2-code">{escape(str(rep.get("code", "")))}</span>'
+                    f'<span class="pda2-lead-px">{rep["price"]:,.0f} · {_pda_fmt_pct(rep["pct"])}</span></span>')
+        chips = ""
+        if g["mode"] == "stocks" and len(g.get("rows", [])) > 1:
+            cs = []
+            for m in g["rows"]:
+                mc = _pda_cls(_pda_accent(m["pct"]))
+                val = f'{_pda_fmt_pts_num(m["points"])} 點' if m.get("points") is not None else _pda_fmt_pct(m["pct"])
+                cs.append(f'<span class="pda2-chip"><span class="pda2-chip-name">{escape(str(m["name"]))}</span>'
+                          f'<span class="pda2-chip-code">{escape(str(m.get("code", "")))}</span>'
+                          f'<span class="pda2-chip-val {mc}">{val}</span></span>')
+            chips = f'<div class="pda2-chips">{"".join(cs)}</div>'
+        left = (f'<div class="pda2-left"><div class="pda2-cat-row">'
+                f'<span class="pda2-cat">{escape(str(g["label"]))}</span>{lead}</div>{chips}</div>')
+
+        if g["mode"] == "stocks" and g.get("points") is not None:
+            num = _pda_fmt_pts_num(g["points"])
+            unit = "點"
+            frac = min(1.0, abs(g["points"]) / max_pts)
+            bar = (f'<div class="pda2-bar"><div class="pda2-bar-mid"></div>'
+                   f'<div class="pda2-bar-fill {a}" style="width:{frac*50:.0f}%;"></div></div>')
+            tag = ""
+        else:
+            num = _pda_fmt_pct(g.get("avg_pct"))
+            unit = ""
+            avgp = g.get("avg_pct")
+            if avgp is not None and math.isfinite(avgp):
+                frac = min(1.0, abs(avgp) / max_grp_pct)
+                bar = (f'<div class="pda2-bar"><div class="pda2-bar-mid"></div>'
+                       f'<div class="pda2-bar-fill {a}" style="width:{frac*50:.0f}%;"></div></div>')
+            else:
+                bar = ""
+            tag = ""
+            if g.get("limit_down"):
+                tag = f'<span class="pda2-tag">{g["limit_down"]} 檔跌停</span>' if lang_zh else f'<span class="pda2-tag">{g["limit_down"]} limit-down</span>'
+            elif g.get("limit_up"):
+                tag = f'<span class="pda2-tag">{g["limit_up"]} 檔漲停</span>' if lang_zh else f'<span class="pda2-tag">{g["limit_up"]} limit-up</span>'
+        impact = (f'<div class="pda2-impact"><div class="pda2-impact-num {_pda_cls(a)}">{num}'
+                  f'<span class="pda2-impact-unit">{unit}</span></div>{bar}{tag}</div>')
+
+        P.append(f'<div class="pda2-card {a}">{left}{impact}</div>')
+    P.append('</div>')
+
+    if payload.get("sectors"):
+        P.append('<div class="pda2-divider"></div>')
+        P.append(f'<div class="pda2-sec-label">{"TWSE 類股表現" if lang_zh else "TWSE Sectors"}</div>')
+        P.append('<div class="pda2-sectors">')
+        for s in payload["sectors"]:
+            a = _pda_accent(s["pct"])
+            nm = escape(str(s["name"]).replace("指數", "").replace("類", "")) if lang_zh else escape(str(s["name"]))
+            P.append(f'<div class="pda2-sec {a}"><span class="pda2-sec-name">{nm}</span>'
+                     f'<span class="pda2-sec-pct {_pda_cls(a)}">{_pda_fmt_pct(s["pct"])}</span></div>')
+        P.append('</div>')
+
+    if payload.get("conclusion"):
+        lead = "一句話結論：" if lang_zh else "Bottom line: "
+        P.append(f'<div class="pda2-concl"><span class="pda2-concl-icon">💡</span>'
+                 f'<div><b>{escape(lead)}</b>{escape(payload["conclusion"])}</div></div>')
+    note = ("點數為估算值（點/元係數推估，台積電/聯發科已校準）；類股漲跌幅取自 TWSE 收盤。"
+            if lang_zh else "Points are estimates (per-NT$1 coefficients); sector % from TWSE close.")
+    P.append(f'<div class="pda2-note">{escape(note)}</div></div>')
+    return "".join(P)
+
+def render_prev_day_index_attribution(lang_zh: bool = True) -> None:
+    """Top-level entry. Renders ABOVE the TSMC top-5 block (Taiwan overview).
+    Fully defensive (Pattern 4): never breaks the page on fetch/parse failure."""
+    spinner_msg = "載入前一日大盤貢獻拆解..." if lang_zh else "Loading prev-day attribution..."
+    with st.spinner(spinner_msg):
+        try:
+            # 收集需要的代碼：權值族群 + 低軌 catalog + ^TWII + 2330
+            low_orbit = [row.get("ticker") for row in LOW_ORBIT_SUPPLY_CHAIN_CATALOG
+                         if row.get("ticker")][:12]
+            group_syms = []
+            for g in _PDA_SC_GROUPS:
+                for t in g["tickers"]:
+                    group_syms.append(t if "." in t else f"{t}.TW")
+            symbols = sorted(set(["^TWII", "2330.TW"] + group_syms + low_orbit))
+
+            daily_data = fetch_daily_data(symbols, "5d", "1d")
+
+            # 由 ^TWII 最後收盤日推 MI_INDEX 日期 token
+            sector_rows = []
+            try:
+                twii_close, _ = _momentum_extract_close_volume(daily_data, "^TWII")
+                if twii_close is not None and len(twii_close) >= 1:
+                    date_token = pd.Timestamp(twii_close.index[-1]).strftime("%Y%m%d")
+                    sector_rows = fetch_twse_sector_indices(date_token)
+            except Exception:
+                sector_rows = []
+
+            payload = build_prev_day_index_attribution(
+                daily_data, sector_rows, low_orbit, lang_zh=lang_zh
+            )
+            if not payload.get("ready"):
+                return
+            _ensure_pda_css()
+            html = _render_prev_day_index_attribution_html(payload, lang_zh=lang_zh)
+            if html:
+                render_html_block(html)
+        except Exception as e:
+            import traceback
+            warn = "⚠️ 前一日大盤貢獻拆解載入失敗" if lang_zh else "⚠️ Prev-day attribution failed to load"
+            st.warning(f"{warn}（{type(e).__name__}）")
+            with st.expander("🔍 Debug details"):
+                st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
 
 def render_tsmc_supply_chain_top5_recommendations(
