@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.23
+Version : v1.13.24
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,12 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.24 (2026-05-20)  [UI: 隱藏主動式 ETF 熱度卡 (user 決定)]
+
+  user 決定先隱藏主動式 ETF 熱度。將 _SHOW_ACTIVE_ETF_HEAT 改為 False。
+  程式碼/資料/render 全部保留, 翻回 True 即恢復。供應鏈族群熱度
+  (_SHOW_SUPPLY_CHAIN_HEAT=True) 維持顯示, 不受影響。
 
 v1.13.23 (2026-05-20)  [Perf: 供應鏈熱度加結果快取 — 消除每次rerun重跑6族群編排]
 
@@ -8057,7 +8063,8 @@ _SHOW_SUPPLY_CHAIN_HEAT = True
 # v1.13.22: Master switch for the "主動式 ETF 熱度" block. Uses live yfinance
 # daily data (NOT the unavailable Supabase active_etf_snapshots), so it
 # renders reliably like the supply-chain heat block. Set False to hide.
-_SHOW_ACTIVE_ETF_HEAT = True
+# v1.13.24: hidden per user request.
+_SHOW_ACTIVE_ETF_HEAT = False
 
 
 # v1.3.8.3: In-memory cache for the local snapshot JSON store. Without this,
