@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.35
+Version : v1.13.36
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,20 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.36 (2026-05-21)  [Debug fix: 計時改記在實際在跑的熱度卡 (原本永遠測不到)]
+
+  問題: ?debug_focal=1 的 ⏱ Timing 永遠顯示「no timing recorded yet」。
+  根因: 計時 (v1.13.19) 記在 _build_today_focal_points_data /
+  _cached_focal_direct_reads — 那是「今日重點」舊面板的函式, 已隱藏
+  (_SHOW_TODAY_FOCAL_POINTS=False) 不再執行, 所以計時永遠不會被寫入。
+  目前實際在跑的是 render_supply_chain_heat + render_active_etf_heat。
+
+  修法: 在這兩個熱度卡函式內加計時, 量 loader 耗時 + 判斷 cache HIT/MISS
+  (loader<80ms≈命中), 寫入 st.session_state["_sch_timing"] /
+  ["_etfheat_timing"]。探針 ⏱ Timing 區改讀這兩個 key, 分別顯示供應鏈與
+  ETF 熱度的 loader 耗時/cache 狀態/載入筆數。純診斷, 不動資料邏輯。
+  → 部署後勾 Debug 即可看到兩張熱度卡各自的真實耗時, 定位慢點。
 
 v1.13.35 (2026-05-20)  [Perf: 供應鏈 overview 6 族群並行預抓 — 消除序列往返]
 
@@ -20000,7 +20014,22 @@ def render_supply_chain_heat(lang_zh: bool = True) -> None:
     第一眼 High-Level overview。只用穩定的供應鏈快照資料 (不依賴抓不到的
     Active ETF 來源)。全程防禦: 任何失敗都靜默不顯示, 不影響其餘頁面。"""
     try:
+        # v1.13.36: 計時 — 量 loader 耗時並判斷 cache HIT/MISS, 寫進 session_state
+        # 供 ?debug_focal=1 的 ⏱ Timing 顯示。(舊計時記在隱藏的今日重點函式,
+        # 永遠測不到; 改記在實際在跑的熱度卡。)
+        import time as _t
+        _t0 = _t.perf_counter()
         groups = _load_focal_supply_chains_from_lab(limit=6)
+        _elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
+        try:
+            st.session_state["_sch_timing"] = {
+                "loader_ms": _elapsed_ms,
+                "cache_status": ("HIT (cached, fast)" if _elapsed_ms < 80 else "MISS (cold fetch / network)"),
+                "group_count": len(groups) if isinstance(groups, list) else 0,
+                "measured_at": datetime.now(TW_TZ).strftime("%H:%M:%S"),
+            }
+        except Exception:
+            pass
         if not groups:
             return
         data_date = ""
@@ -20119,7 +20148,20 @@ def render_active_etf_heat(lang_zh: bool = True) -> None:
             _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
         except Exception:
             _key = "nodate"
+        # v1.13.36: 計時 (同供應鏈熱度)。
+        import time as _t
+        _t0 = _t.perf_counter()
         items = _build_active_etf_heat(_key)
+        _elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
+        try:
+            st.session_state["_etfheat_timing"] = {
+                "loader_ms": _elapsed_ms,
+                "cache_status": ("HIT (cached, fast)" if _elapsed_ms < 80 else "MISS (cold fetch / network)"),
+                "item_count": len(items) if isinstance(items, list) else 0,
+                "measured_at": datetime.now(TW_TZ).strftime("%H:%M:%S"),
+            }
+        except Exception:
+            pass
         if not items:
             return
         try:
@@ -20303,26 +20345,41 @@ def _render_focal_debug_body(flag) -> None:
     # run; this just displays it). Tells you whether the last load was a
     # cache HIT (fast, no network) or a cold MISS, and on a MISS the split
     # between supply-chain vs ETF loaders.
-    _tb = st.session_state.get("_focal_timing_build")
-    _tl = st.session_state.get("_focal_timing_loaders")
-    if isinstance(_tb, dict):
-        timing_block = (
-            f"cache status:        {_tb.get('cache_status', '?')}\n"
-            f"cached read total:   {_tb.get('cached_read_ms', 0):.0f} ms"
-            f"   (this is what you wait for each rerun)\n"
-            f"cache key:           {_tb.get('cache_key', '?')}\n"
-            f"build measured at:   {_tb.get('measured_at', '?')}"
-        )
-        if isinstance(_tl, dict):
-            timing_block += (
-                f"\n\n  last COLD fetch breakdown (when cache last missed, at {_tl.get('measured_at','?')}):\n"
-                f"    supply-chain loader: {_tl.get('supply_chain_ms', 0):.0f} ms\n"
-                f"    ETF loader (6檔):    {_tl.get('etf_loader_ms', 0):.0f} ms"
+    # v1.13.36: 改讀「實際在跑的熱度卡」計時 (_sch_timing / _etfheat_timing)。
+    # 舊的 _focal_timing_* 記在已隱藏的今日重點函式, 永遠測不到 → 一直顯示
+    # "no timing recorded"。
+    _sch_t = st.session_state.get("_sch_timing")
+    _etf_t = st.session_state.get("_etfheat_timing")
+    _legacy_tb = st.session_state.get("_focal_timing_build")
+    if isinstance(_sch_t, dict) or isinstance(_etf_t, dict):
+        _parts = []
+        if isinstance(_sch_t, dict):
+            _parts.append(
+                f"供應鏈熱度 (supply-chain heat):\n"
+                f"    loader:        {_sch_t.get('loader_ms', 0):.0f} ms\n"
+                f"    cache status:  {_sch_t.get('cache_status', '?')}\n"
+                f"    groups loaded: {_sch_t.get('group_count', 0)}\n"
+                f"    measured at:   {_sch_t.get('measured_at', '?')}"
             )
+        if isinstance(_etf_t, dict):
+            _parts.append(
+                f"主動式 ETF 熱度 (active ETF heat):\n"
+                f"    loader:        {_etf_t.get('loader_ms', 0):.0f} ms\n"
+                f"    cache status:  {_etf_t.get('cache_status', '?')}\n"
+                f"    items loaded:  {_etf_t.get('item_count', 0)}\n"
+                f"    measured at:   {_etf_t.get('measured_at', '?')}"
+            )
+        timing_block = "\n\n".join(_parts)
+        timing_block += "\n\n  (loader <80ms ≈ 快取命中; 較大 = 冷抓取/網路往返)"
+    elif isinstance(_legacy_tb, dict):
+        timing_block = (
+            f"cache status:        {_legacy_tb.get('cache_status', '?')}\n"
+            f"cached read total:   {_legacy_tb.get('cached_read_ms', 0):.0f} ms"
+        )
     else:
-        timing_block = "(no timing recorded yet — interact once then reload with ?debug_focal=1)"
+        timing_block = "(no timing recorded yet — 進 dashboard 看到熱度卡載入後, 再勾 Debug)"
 
-    st.warning("🔍 **Focal Debug Probe (v1.13.30)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
+    st.warning("🔍 **Focal Debug Probe (v1.13.36)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
     st.code(
         f"=== Supabase config (read from Streamlit secrets) ===\n"
         f"SUPABASE_URL set:               {bool(SUPABASE_URL)}  (len={len(SUPABASE_URL)})\n"
