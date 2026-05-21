@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.36
+Version : v1.13.37
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,18 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.37 (2026-05-21)  [Debug fix: 計時保留首次(冷)+最慢, 不被熱快取覆蓋]
+
+  問題: v1.13.36 計時顯示 0ms 是假象。user 點出: 他等頁面載完才勾 Debug,
+  而勾 Debug 觸發的 rerun 快取已熱 → 量到的是熱快取 0ms, 不是真正等很久的
+  第一次冷啟動。舊計時只存「最後一次」, 被熱快取覆蓋掉。
+
+  修法: _sch_timing / _etfheat_timing 改為保留三個值 — first_ms (這個 session
+  第一次, 冷)、max_ms (至今最慢)、loader_ms (本次)。探針顯示「首次冷啟動 /
+  至今最慢 / 本次」三行, 即使事後勾 Debug 也看得到真正痛的第一次耗時。
+  注意: @st.cache_data 是 server 端共用, 若快取已被別的 session 暖過, first_ms
+  也會快 — 此時看 max_ms 較能反映冷啟動。純診斷。
 
 v1.13.36 (2026-05-21)  [Debug fix: 計時改記在實際在跑的熱度卡 (原本永遠測不到)]
 
@@ -8346,7 +8358,7 @@ def _active_etf_supabase_snapshot_from_row(row: dict | None) -> dict | None:
     return snapshot
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _load_supabase_active_etf_snapshot(
     ticker: str,
     lens_meta: dict | None = None,
@@ -8470,7 +8482,7 @@ def _upsert_supabase_active_etf_pair_snapshot(snapshot: dict) -> bool:
     return 200 <= status < 300
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _load_supabase_active_etf_pair_snapshot(left_ticker: str, right_ticker: str) -> dict | None:
     """Load a previously-persisted pair compare snapshot from Supabase.
 
@@ -19066,7 +19078,7 @@ _AUTOREFRESH_BADGE_CSS = """
 # market_scope == "Taiwan only". US-only mode has its own theme radar
 # focal-point UI in the cockpit.
 # =============================================================================
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _cached_supply_chain_overview(cache_key: str) -> list:
     """v1.13.23: Cache the heavy 6-group supply-chain overview orchestration.
 
@@ -19107,7 +19119,7 @@ def _load_focal_supply_chains_from_lab(limit: int = 3) -> list[dict]:
     """
     try:
         try:
-            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
         except Exception:
             _key = "nokey"
         rows = _cached_supply_chain_overview(_key)
@@ -19344,7 +19356,7 @@ def _load_focal_active_etfs_from_lab(limit: int = 3) -> list[dict]:
     return candidates[:limit]
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _cached_focal_direct_reads(cache_key: str) -> dict:
     """v1.13.17: Cache the expensive direct source-table reads (6 ETF
     Supabase snapshots + supply-chain overview) for the focal-points block.
@@ -19415,7 +19427,7 @@ def _build_today_focal_points_data(snapshot_row: dict | None) -> dict | None:
         # No date available — fall back to a coarse 5-min time bucket so we
         # still get cross-rerun caching (matches the 300s TTL granularity).
         try:
-            _focal_date_key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
+            _focal_date_key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
         except Exception:
             _focal_date_key = "nodate"
     # v1.13.19: time the cached read. A fast return ⇒ cache HIT (no network);
@@ -20022,8 +20034,17 @@ def render_supply_chain_heat(lang_zh: bool = True) -> None:
         groups = _load_focal_supply_chains_from_lab(limit=6)
         _elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
         try:
+            # v1.13.37: 保留「首次(冷)」與「最慢」紀錄, 不被後來的熱快取覆蓋。
+            # (舊版只存最後一次, 而使用者通常等頁面載完才勾 Debug → 量到的是
+            #  熱快取 0ms 假象, 看不到真正痛的第一次。)
+            _prev = st.session_state.get("_sch_timing")
+            _is_first = not isinstance(_prev, dict)
+            _first_ms = _elapsed_ms if _is_first else _prev.get("first_ms", _elapsed_ms)
+            _max_ms = _elapsed_ms if _is_first else max(_elapsed_ms, _prev.get("max_ms", 0))
             st.session_state["_sch_timing"] = {
-                "loader_ms": _elapsed_ms,
+                "loader_ms": _elapsed_ms,          # 本次 (通常熱)
+                "first_ms": _first_ms,             # 這個 session 第一次 (冷)
+                "max_ms": _max_ms,                 # 至今最慢一次
                 "cache_status": ("HIT (cached, fast)" if _elapsed_ms < 80 else "MISS (cold fetch / network)"),
                 "group_count": len(groups) if isinstance(groups, list) else 0,
                 "measured_at": datetime.now(TW_TZ).strftime("%H:%M:%S"),
@@ -20047,7 +20068,7 @@ def render_supply_chain_heat(lang_zh: bool = True) -> None:
         return
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _build_active_etf_heat(cache_key: str) -> list:
     """v1.13.22: 主動式 ETF 熱度資料 — 繞過抓不到的 Supabase, 直接用
     fetch_daily_data 抓日線 + _active_etf_price_stats_for_overall 算當日漲跌。
@@ -20145,7 +20166,7 @@ def render_active_etf_heat(lang_zh: bool = True) -> None:
     日線計算, 不依賴抓不到的 Supabase active_etf_snapshots。全程防禦。"""
     try:
         try:
-            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
         except Exception:
             _key = "nodate"
         # v1.13.36: 計時 (同供應鏈熱度)。
@@ -20154,8 +20175,15 @@ def render_active_etf_heat(lang_zh: bool = True) -> None:
         items = _build_active_etf_heat(_key)
         _elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
         try:
+            # v1.13.37: 保留首次(冷)+最慢, 不被熱快取覆蓋 (同供應鏈)。
+            _prev = st.session_state.get("_etfheat_timing")
+            _is_first = not isinstance(_prev, dict)
+            _first_ms = _elapsed_ms if _is_first else _prev.get("first_ms", _elapsed_ms)
+            _max_ms = _elapsed_ms if _is_first else max(_elapsed_ms, _prev.get("max_ms", 0))
             st.session_state["_etfheat_timing"] = {
                 "loader_ms": _elapsed_ms,
+                "first_ms": _first_ms,
+                "max_ms": _max_ms,
                 "cache_status": ("HIT (cached, fast)" if _elapsed_ms < 80 else "MISS (cold fetch / network)"),
                 "item_count": len(items) if isinstance(items, list) else 0,
                 "measured_at": datetime.now(TW_TZ).strftime("%H:%M:%S"),
@@ -20356,18 +20384,18 @@ def _render_focal_debug_body(flag) -> None:
         if isinstance(_sch_t, dict):
             _parts.append(
                 f"供應鏈熱度 (supply-chain heat):\n"
-                f"    loader:        {_sch_t.get('loader_ms', 0):.0f} ms\n"
-                f"    cache status:  {_sch_t.get('cache_status', '?')}\n"
-                f"    groups loaded: {_sch_t.get('group_count', 0)}\n"
-                f"    measured at:   {_sch_t.get('measured_at', '?')}"
+                f"    首次冷啟動 first load: {_sch_t.get('first_ms', 0):.0f} ms  ← 真正等的那次\n"
+                f"    至今最慢 slowest:      {_sch_t.get('max_ms', 0):.0f} ms\n"
+                f"    本次 this run:         {_sch_t.get('loader_ms', 0):.0f} ms ({_sch_t.get('cache_status', '?')})\n"
+                f"    groups loaded: {_sch_t.get('group_count', 0)} · measured {_sch_t.get('measured_at', '?')}"
             )
         if isinstance(_etf_t, dict):
             _parts.append(
                 f"主動式 ETF 熱度 (active ETF heat):\n"
-                f"    loader:        {_etf_t.get('loader_ms', 0):.0f} ms\n"
-                f"    cache status:  {_etf_t.get('cache_status', '?')}\n"
-                f"    items loaded:  {_etf_t.get('item_count', 0)}\n"
-                f"    measured at:   {_etf_t.get('measured_at', '?')}"
+                f"    首次冷啟動 first load: {_etf_t.get('first_ms', 0):.0f} ms  ← 真正等的那次\n"
+                f"    至今最慢 slowest:      {_etf_t.get('max_ms', 0):.0f} ms\n"
+                f"    本次 this run:         {_etf_t.get('loader_ms', 0):.0f} ms ({_etf_t.get('cache_status', '?')})\n"
+                f"    items loaded:  {_etf_t.get('item_count', 0)} · measured {_etf_t.get('measured_at', '?')}"
             )
         timing_block = "\n\n".join(_parts)
         timing_block += "\n\n  (loader <80ms ≈ 快取命中; 較大 = 冷抓取/網路往返)"
@@ -20379,7 +20407,7 @@ def _render_focal_debug_body(flag) -> None:
     else:
         timing_block = "(no timing recorded yet — 進 dashboard 看到熱度卡載入後, 再勾 Debug)"
 
-    st.warning("🔍 **Focal Debug Probe (v1.13.36)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
+    st.warning("🔍 **Focal Debug Probe (v1.13.37)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
     st.code(
         f"=== Supabase config (read from Streamlit secrets) ===\n"
         f"SUPABASE_URL set:               {bool(SUPABASE_URL)}  (len={len(SUPABASE_URL)})\n"
