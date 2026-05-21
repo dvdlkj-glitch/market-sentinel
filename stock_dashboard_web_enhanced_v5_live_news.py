@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.26
+Version : v1.13.32
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,85 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.32 (2026-05-20)  [Fix: publishable key 因 RLS 讀到空 → 自動 fallback service key]
+
+  背景: Supabase 終於連通 (legacy JWT 金鑰 + v1.13.31 短路修正)。診斷顯示
+  SERVICE key probe = HTTP 200 (10 rows) 讀得到, 但 PUBLISHABLE key probe =
+  HTTP 200 but EMPTY (0 rows) — 典型 RLS: anon 角色無 SELECT policy。
+
+  根因 (ETF 仍空): _supabase_active_etf_read_request 與 _supabase_supply_chain_
+  read_request 都是「publishable 優先, 2xx 即回」。publishable 因 RLS 回 200+空,
+  被當成成功 → 回傳 0 筆, 永不 fallback 到讀得到的 service key。
+
+  修法: 兩個 read request 改為「publishable 需 2xx 且『非空』才採用」, 否則
+  fallback 到 service key (service 繞過 RLS)。ETF 與供應鏈前台讀取自此即使
+  anon RLS 未開放也能拿到資料。正規根治仍建議在 Supabase 給 anon 加 SELECT
+  policy, 但本修正讓程式不依賴 RLS 設定即可運作。
+
+v1.13.31 (2026-05-20)  [Perf 治本: Supabase 未設定時短路, 不卡 20s timeout → 直接用本地檔]
+
+  背景: user 多次嘗試設 Streamlit Cloud Supabase secrets 均無效 (三 key 仍 len=0),
+  但診斷顯示本地檔 fallback 正常 (src=local_file, ETF 3筆 / 供應鏈 3筆) — 資料
+  其實一直可用, Supabase 是多餘的一層。
+
+  根因 (慢): _supabase_request (普通讀取) 沒有「未設定短路」, 當 SUPABASE_URL
+  為空時仍組出壞 URL 並嘗試連線, 卡到 20s timeout 才 fallback 本地檔。
+  (_supabase_service_request 早已有短路, 但讀取主路徑走的是 _supabase_request。)
+
+  修法: _supabase_request 開頭加 if not _supabase_is_configured(): return 0。
+  → Supabase 未設定時所有讀取 0 延遲立即回, 直接走本地檔 → loading 大幅變快。
+  純效能/防禦, 不改任何資料邏輯; Supabase 若日後設定成功仍照常使用。
+
+v1.13.30 (2026-05-20)  [Debug fix: 側邊欄 Debug 勾選框 — 免網址參數叫出診斷]
+
+  問題: user 多次嘗試 ?debug_focal=1 (甚至誤打 $) 都無反應。網址參數在其
+  部署/瀏覽器環境讀不到。
+
+  修法: 側邊欄 (render_auth_sidebar 後) 新增「🔍 顯示診斷資訊 (Debug)」勾選框,
+  勾選 → st.session_state["_focal_debug_sidebar"]=True。探針觸發條件改為
+  「URL flag OR sidebar flag」, 完全繞過網址參數。勾選後 Streamlit 自動 rerun,
+  主畫面最上方即顯示診斷 (含 v1.13.29 的 TRIGGERED 確認行 + 內部錯誤顯示)。
+  純診斷工具, 不動資料邏輯。
+
+v1.13.29 (2026-05-20)  [Debug fix: 探針仍無提示 — 加觸發確認行 + 內部錯誤不再靜默吞]
+
+  問題: v1.13.28 後 ?debug_focal=1 仍無任何畫面。推斷: 探針函式內部在
+  st.warning/st.code 之前某步拋錯, 而呼叫點的 try/except: pass 把錯誤靜默吞掉
+  → 畫面全空, 無從判斷。
+
+  修法: (1) 旗標確認後立刻 st.success("Debug probe TRIGGERED…") — 證明探針有
+  被觸發 (即使後續出錯, 這行也會出現, 用以區分「沒跑到」vs「內部出錯」)。
+  (2) 探針內容抽成 _render_focal_debug_body(), 外層用 try/except 捕捉並用
+  st.error + traceback 把內部錯誤「顯示在畫面上」, 不再靜默 pass。
+  下次部署若仍異常, 畫面會明確告訴我們是哪一步、什麼錯誤。純診斷。
+
+v1.13.28 (2026-05-20)  [Debug fix: ?debug_focal=1 沒反應 — 移到最頂 + 放寬旗標偵測]
+
+  問題: user 加 ?debug_focal=1 完全沒反應。根因: 探針呼叫點(52375)位於
+  generate_dashboard 中段, 前面多個分支/early-return 可能在某些狀態下跳過它;
+  且旗標偵測只認非空值。
+
+  修法: (1) 在 generate_dashboard 最開頭(init_auth_db 後)無條件再呼叫一次探針,
+  不管任何 mode/scope/state 都會執行。(2) 放寬旗標偵測 — 只要 URL 有 debug_focal
+  這個 KEY 存在(任何值, 甚至空)就觸發, 跨 st.query_params 與 experimental API
+  雙重檢查。探針冪等, 兩處呼叫最多顯示兩次, 無副作用。純診斷。
+
+v1.13.27 (2026-05-20)  [Debug: ?debug_focal=1 加供應鏈表 probe — 驗證 prefetch 寫入]
+
+  目標: 根治供應鏈熱度慢 (快照沒命中→即時抓6族群)。第一步先確認 prefetch
+  到底有沒有把供應鏈快照寫進 Supabase supply_chain_focus_snapshots 表。
+  根因脈絡: _persist_supply_chain_focus_snapshot 呼叫 upsert 但不檢查回傳值,
+  upsert 失敗 (RLS/表不存在/欄位不符) 會靜默 return False → GitHub Action 仍綠勾。
+  「綠勾 ≠ 寫進去」。
+
+  作法: 把 _probe_with_key 參數化 (table_name/select_cols/row_fmt), debug 探針
+  新增「SUPPLY-CHAIN table probe」, 直接查 supply_chain_focus_snapshots 表並印
+  HTTP 狀態碼 + 實際 rows。一個 ?debug_focal=1 即可同時看 ETF + 供應鏈兩表狀態:
+    HTTP 200 OK (N rows) = 有寫進去 → 慢的是別處
+    HTTP 200 EMPTY       = prefetch 沒寫進去 (要查 upsert 為何失敗)
+    HTTP 404/401/403     = 表名錯 / key 無效 / RLS 擋
+  純診斷, 不動資料邏輯。
 
 v1.13.26 (2026-05-20)  [UI: 隱藏供應鏈族群熱度 (loading 延遲, user 決定)]
 
@@ -6844,9 +6923,10 @@ def _supply_chain_snapshot_as_of_date(snapshot: dict | None) -> str:
 
 
 def _supabase_supply_chain_read_request(path: str) -> tuple[int, dict | list | str]:
+    # v1.13.32: 同 ETF — publishable 因 RLS 讀到 200 但空時, fallback 到 service。
     if _supabase_is_configured():
         status, payload = _supabase_request("GET", path)
-        if 200 <= status < 300:
+        if 200 <= status < 300 and isinstance(payload, list) and len(payload) > 0:
             return status, payload
     if _supabase_service_is_configured():
         return _supabase_service_request("GET", path)
@@ -8166,9 +8246,13 @@ def _active_etf_snapshot_as_of_date(snapshot: dict | None) -> str:
 
 
 def _supabase_active_etf_read_request(path: str) -> tuple[int, dict | list | str]:
+    # v1.13.32: publishable key 可能因 RLS 讀到「HTTP 200 但 0 筆」(anon 角色
+    # 無 SELECT policy)。原本只要 2xx 就回傳 → 回傳空清單、不 fallback。
+    # 改為: publishable 讀到「成功且非空」才用; 否則 fallback 到 service key
+    # (service 繞過 RLS, 讀得到資料)。
     if _supabase_is_configured():
         status, payload = _supabase_request("GET", path)
-        if 200 <= status < 300:
+        if 200 <= status < 300 and isinstance(payload, list) and len(payload) > 0:
             return status, payload
     if _supabase_service_is_configured():
         return _supabase_service_request("GET", path)
@@ -14100,6 +14184,10 @@ def _supabase_request(
     include_auth: bool = False,
     extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, dict | list | str]:
+    # v1.13.31: 未設定就立刻回 — 否則用空 SUPABASE_URL 組出壞 URL 仍會嘗試連線,
+    # 卡到 20s timeout 才 fallback 本地檔 (這是 Supabase 沒設時 loading 慢的主因)。
+    if not _supabase_is_configured():
+        return 0, {"message": "Supabase is not configured."}
     url = f"{SUPABASE_URL}{path}"
     safe_payload = None if payload is None else _json_request_safe(payload)
     data = None if safe_payload is None else json.dumps(safe_payload).encode("utf-8")
@@ -20017,14 +20105,50 @@ def render_focal_debug_probe_if_requested() -> None:
       - checks both keys and the local-file fallback state
     Pure diagnostics — touches no data/render logic.
     """
+    # v1.13.28: robust flag detection — trigger if the `debug_focal` KEY is
+    # present at all (any value, even empty), not just when it equals "1".
+    flag = ""
     try:
         flag = _query_param_first("debug_focal")
     except Exception:
         flag = ""
     if not flag:
+        # Fallback: check key presence directly across Streamlit APIs.
+        try:
+            qp = st.query_params
+            if "debug_focal" in qp:
+                flag = "1"
+        except Exception:
+            pass
+        if not flag:
+            try:
+                if "debug_focal" in st.experimental_get_query_params():
+                    flag = "1"
+            except Exception:
+                pass
+    if not flag:
+        # v1.13.30: also trigger via sidebar checkbox (no URL param needed).
+        try:
+            if st.session_state.get("_focal_debug_sidebar"):
+                flag = "sidebar"
+        except Exception:
+            pass
+    if not flag:
         return
 
-    # --- URL structure parse (catches '/rest/v1 with no host') ---
+    # v1.13.29: 立刻印一行確認, 證明探針確實被觸發 (即使後續任何步驟出錯,
+    # 至少這行會出現 → 區分「探針沒跑」vs「探針內部出錯」)。
+    st.success("🔍 Debug probe TRIGGERED — 正在收集診斷資訊…")
+    try:
+        _render_focal_debug_body(flag)
+    except Exception as _probe_err:
+        import traceback as _tb
+        st.error(f"⚠️ Debug 探針內部出錯: {type(_probe_err).__name__}: {_probe_err}")
+        st.code(_tb.format_exc(), language="text")
+
+
+def _render_focal_debug_body(flag) -> None:
+    """v1.13.29: 探針實際內容抽出, 讓外層能捕捉並顯示內部錯誤 (而非靜默吞掉)。"""
     try:
         from urllib.parse import urlparse as _urlparse
         _p = _urlparse(SUPABASE_URL)
@@ -20036,7 +20160,8 @@ def render_focal_debug_probe_if_requested() -> None:
     except Exception as exc:
         url_struct = f"parse error: {type(exc).__name__}"
 
-    def _probe_with_key(key_name, key_value):
+    def _probe_with_key(key_name, key_value, table_name=None, select_cols="ticker,as_of_date,status,fetched_at", row_fmt="etf"):
+        table_name = table_name or SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE
         if not SUPABASE_URL:
             return f"{key_name}: SKIP (SUPABASE_URL empty)"
         if not key_value:
@@ -20045,8 +20170,8 @@ def render_focal_debug_probe_if_requested() -> None:
             from urllib.request import Request, urlopen
             from urllib.error import HTTPError, URLError
             probe_path = (
-                f"{SUPABASE_URL}/rest/v1/{SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}"
-                f"?select=ticker,as_of_date,status,fetched_at"
+                f"{SUPABASE_URL}/rest/v1/{table_name}"
+                f"?select={select_cols}"
                 f"&order=fetched_at.desc&limit=10"
             )
             req = Request(
@@ -20076,11 +20201,18 @@ def render_focal_debug_probe_if_requested() -> None:
             if isinstance(raw_data, list):
                 if not raw_data:
                     return f"{key_name}: HTTP {status} OK but EMPTY (0 rows → prefetch never wrote to this table)"
-                rows = "\n".join(
-                    f"      - {r.get('ticker','?')} | {r.get('as_of_date','?')} | "
-                    f"{r.get('status','?')} | {str(r.get('fetched_at','?'))[:19]}"
-                    for r in raw_data
-                )
+                if row_fmt == "supply_chain":
+                    rows = "\n".join(
+                        f"      - {r.get('config_key','?')} | {r.get('as_of_date','?')} | "
+                        f"{r.get('status','?')} | {str(r.get('fetched_at','?'))[:19]}"
+                        for r in raw_data
+                    )
+                else:
+                    rows = "\n".join(
+                        f"      - {r.get('ticker','?')} | {r.get('as_of_date','?')} | "
+                        f"{r.get('status','?')} | {str(r.get('fetched_at','?'))[:19]}"
+                        for r in raw_data
+                    )
                 return f"{key_name}: HTTP {status} OK ({len(raw_data)} rows)\n{rows}"
             return f"{key_name}: HTTP {status} non-list ({type(raw_data).__name__})"
         except URLError as ue:
@@ -20090,6 +20222,13 @@ def render_focal_debug_probe_if_requested() -> None:
 
     probe_service = _probe_with_key("SERVICE_ROLE_KEY (helper uses this)", SUPABASE_SERVICE_ROLE_KEY)
     probe_publish = _probe_with_key("PUBLISHABLE_KEY", SUPABASE_PUBLISHABLE_KEY)
+    # v1.13.27: 供應鏈表 probe — 確認 prefetch 有沒有把供應鏈快照寫進 Supabase。
+    probe_sc_service = _probe_with_key(
+        "SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY,
+        table_name=SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE,
+        select_cols="config_key,as_of_date,status,fetched_at",
+        row_fmt="supply_chain",
+    )
 
     # local-file fallback state (the other source in the chain)
     try:
@@ -20139,7 +20278,7 @@ def render_focal_debug_probe_if_requested() -> None:
     else:
         timing_block = "(no timing recorded yet — interact once then reload with ?debug_focal=1)"
 
-    st.warning("🔍 **Focal Debug Probe (v1.13.19)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
+    st.warning("🔍 **Focal Debug Probe (v1.13.30)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
     st.code(
         f"=== Supabase config (read from Streamlit secrets) ===\n"
         f"SUPABASE_URL set:               {bool(SUPABASE_URL)}  (len={len(SUPABASE_URL)})\n"
@@ -20147,10 +20286,12 @@ def render_focal_debug_probe_if_requested() -> None:
         f"SUPABASE_PUBLISHABLE_KEY set:   {bool(SUPABASE_PUBLISHABLE_KEY)}  (len={len(SUPABASE_PUBLISHABLE_KEY)})\n"
         f"_supabase_is_configured:        {_supabase_is_configured()}\n"
         f"_supabase_service_is_configured:{_supabase_service_is_configured()}\n"
-        f"active_etf table name:          {SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}\n\n"
+        f"active_etf table name:          {SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE}\n"
+        f"supply_chain table name:        {SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE}\n\n"
         f"=== URL structure ===\n{url_struct}\n\n"
-        f"=== RAW table probe — SERVICE key (the one ETF helper uses) ===\n{probe_service}\n\n"
-        f"=== RAW table probe — PUBLISHABLE key ===\n{probe_publish}\n\n"
+        f"=== RAW probe: ETF table — SERVICE key (ETF helper uses this) ===\n{probe_service}\n\n"
+        f"=== RAW probe: ETF table — PUBLISHABLE key ===\n{probe_publish}\n\n"
+        f"=== RAW probe: SUPPLY-CHAIN table — SERVICE key ===\n{probe_sc_service}\n\n"
         f"=== Local-file fallback ===\n{local_state}\n\n"
         f"=== ⏱ Timing (last rerun) ===\n{timing_block}\n\n"
         f"=== Helper return counts (after cache) ===\n"
@@ -51862,9 +52003,27 @@ TRANSLATIONS["繁體中文"].update({
 #       - General Market (else) → render_general_market_dashboard_layout [§ 4]
 def generate_dashboard():
     init_auth_db()
+    # v1.13.28: gate-free debug probe at the very TOP of the app body, before
+    # any mode/scope branching or early-returns, so ?debug_focal=1 ALWAYS
+    # triggers regardless of which dashboard state the user is in. (The
+    # earlier call site sat after several branches and could be skipped.)
+    try:
+        render_focal_debug_probe_if_requested()
+    except Exception:
+        pass
     with st.sidebar:
         render_auth_sidebar()
         st.markdown("---")
+        # v1.13.30: 側邊欄 Debug 勾選框 — 免網址參數即可叫出診斷探針, 因為
+        # ?debug_focal=1 對部分使用者/部署環境讀不到。勾選後設 session flag,
+        # 探針改為「URL flag OR session flag」皆觸發。
+        _dbg_checked = st.checkbox(
+            "🔍 顯示診斷資訊 (Debug)",
+            value=st.session_state.get("_focal_debug_sidebar", False),
+            key="_focal_debug_sidebar_cb",
+            help="勾選後在主畫面最上方顯示 Supabase 連線 / 供應鏈 / ETF 表的診斷資訊",
+        )
+        st.session_state["_focal_debug_sidebar"] = bool(_dbg_checked)
 
     load_dashboard_preferences()
 
