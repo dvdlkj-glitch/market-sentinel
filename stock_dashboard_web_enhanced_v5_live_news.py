@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.34
+Version : v1.13.35
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,19 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.35 (2026-05-20)  [Perf: 供應鏈 overview 6 族群並行預抓 — 消除序列往返]
+
+  問題: 重開供應鏈熱度後仍慢。根因: build_supply_chain_overview_rows 對 6 族群
+  跑序列 for 迴圈, 每個呼叫 get_supply_chain_focus_snapshot → peek 讀 Supabase
+  (publishable 空→fallback service, 每族群最多多次往返雪梨), 6 族群序列累加,
+  冷快取首次載入 = 數秒。v1.13.23 的整批快取只擋重複 rerun, 擋不了首次。
+
+  修法: 迴圈前用 ThreadPoolExecutor(max_workers=6) 並行預抓全部族群 snapshot
+  放入 dict, 迴圈優先取預抓結果。把「6×序列往返」壓成「1×並行往返」。
+  worker 掛 add_script_run_ctx; 每 future 15s timeout; 任何失敗回退逐一讀
+  (不退化)。模擬 6族群×0.4s: 序列 2400ms → 並行 400ms (~6x)。
+  get_supply_chain_focus_snapshot 為純讀取, 並行安全; 不改任何資料邏輯。
 
 v1.13.34 (2026-05-20)  [UI: 重開供應鏈熱度 + ETF 熱度 (測速度)]
 
@@ -37641,11 +37654,55 @@ def build_supply_chain_overview_rows(
     force_refresh: bool = False,
 ) -> list[dict]:
     overview_rows: list[dict] = []
+    # v1.13.35: 並行預抓 6 族群 snapshot。原本下方 for 迴圈逐一呼叫
+    # get_supply_chain_focus_snapshot, 每個都讀 Supabase (publishable→
+    # fallback service, 可能多次往返雪梨), 6 族群序列累加 = 載入很慢。
+    # 改為先用 ThreadPoolExecutor 並行抓全部, 迴圈再從預抓 dict 取 → 把
+    # 「6×序列往返」壓成「1×並行往返」。get_supply_chain_focus_snapshot 是
+    # 純讀取, 並行安全。任何失敗回退原本逐一讀 (不退化)。
+    _prefetched: dict = {}
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+            _ctx = get_script_run_ctx()
+        except Exception:
+            add_script_run_ctx = None
+            _ctx = None
+        _valid_keys = [k for k in config_keys if SUPPLY_CHAIN_FOCUS_CONFIGS.get(k)]
+        if len(_valid_keys) > 1:
+            def _prefetch_one(_ck):
+                try:
+                    return _ck, get_supply_chain_focus_snapshot(
+                        _ck, lens_meta=lens_meta, force_refresh=force_refresh
+                    )
+                except Exception:
+                    return _ck, None
+            with ThreadPoolExecutor(max_workers=min(6, len(_valid_keys))) as _ex:
+                _futs = [_ex.submit(_prefetch_one, _ck) for _ck in _valid_keys]
+                if add_script_run_ctx is not None and _ctx is not None:
+                    try:
+                        for _th in list(_ex._threads):  # noqa: SLF001
+                            add_script_run_ctx(_th, _ctx)
+                    except Exception:
+                        pass
+                for _fut in _futs:
+                    try:
+                        _ck, _snap = _fut.result(timeout=15)
+                        if _snap is not None:
+                            _prefetched[_ck] = _snap
+                    except Exception:
+                        pass
+    except Exception:
+        _prefetched = {}
     for config_key in config_keys:
         config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
         if not config:
             continue
-        snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=force_refresh)
+        # v1.13.35: 優先用並行預抓的結果; 沒有才退回逐一讀 (cache 命中時也快)。
+        snapshot = _prefetched.get(config_key)
+        if snapshot is None:
+            snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=force_refresh)
         if not isinstance(snapshot, dict) or str(snapshot.get("status", "ready")) != "ready":
             continue
 
