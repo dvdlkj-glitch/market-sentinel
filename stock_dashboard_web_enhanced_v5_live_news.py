@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.24
+Version : v1.13.26
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,27 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.26 (2026-05-20)  [UI: 隱藏供應鏈族群熱度 (loading 延遲, user 決定)]
+
+  user 反映供應鏈族群熱度也拖慢 loading, 決定隱藏。將 _SHOW_SUPPLY_CHAIN_HEAT
+  改為 False。至此三個 overview 區塊 (今日重點 / 供應鏈熱度 / ETF 熱度) 全部
+  隱藏, 首頁不再渲染該區域 → loading 明顯變快。程式碼/資料/render 全部保留,
+  任一開關翻回 True 即恢復。明日動能脈搏等其餘區塊不受影響。
+
+v1.13.25 (2026-05-20)  [Fix: 明日動能脈搏 盤中改用今日即時價 + 盤中暫估標籤]
+
+  問題: user 觀察今日台股狂漲、台積電也漲, 但明日動能脈搏卻顯示 25.7/100 偏空。
+  根因: build 用 fetch_daily_data(interval=1d), 台股盤中時 yfinance 日線最後
+  一根仍停在昨日(5/19, 下跌)收盤, 今日(5/20)盤中漲幅尚未進日線 → 用昨日跌勢
+  算分 → 偏空, 與實際盤中行情不符。非算法錯, 是資料時點問題。
+
+  修法 (C 方案): 新增 _momentum_splice_intraday_today() — 盤中(_is_tw_market_open)
+  時抓 fetch_intraday_data today 最新價, 拼接到日線最後 (取代停在昨日的那根),
+  讓動能反映今日即時行情。收盤後日線已含今日 → 自動跳過, 用定稿日線。
+  payload["intraday_provisional"] 標記, render 顯示「⏱ 盤中暫估」黃色標籤,
+  提示數值浮動未定稿; 收盤後標籤自動消失。評分邏輯完全不動, 純資料時點修正。
+  防禦: 拼接任何失敗回原日線 (不退化)。
 
 v1.13.24 (2026-05-20)  [UI: 隱藏主動式 ETF 熱度卡 (user 決定)]
 
@@ -8058,7 +8079,8 @@ _SHOW_TODAY_FOCAL_POINTS = False
 # replaces the hidden Today's Focal Points. It only uses the stable
 # supply-chain snapshot data (no dependency on the unavailable Active ETF
 # source), so it renders reliably and fast. Set False to hide.
-_SHOW_SUPPLY_CHAIN_HEAT = True
+# v1.13.26: hidden per user request (loading latency).
+_SHOW_SUPPLY_CHAIN_HEAT = False
 
 # v1.13.22: Master switch for the "主動式 ETF 熱度" block. Uses live yfinance
 # daily data (NOT the unavailable Supabase active_etf_snapshots), so it
@@ -17173,9 +17195,17 @@ def _render_tomorrow_momentum_pulse_html(payload: dict, lang_zh: bool) -> str:
         )
 
     rows_block = "".join(row_html_parts)
+    # v1.13.25: 盤中暫估標籤 — 盤中用今日即時價拼接時顯示, 提示數值浮動未定稿。
+    provisional_badge = ""
+    if payload.get("intraday_provisional"):
+        provisional_badge = (
+            '<span class="momentum-provisional">'
+            + ("⏱ 盤中暫估" if lang_zh else "⏱ Intraday (provisional)")
+            + "</span>"
+        )
     date_block = (
-        f'<span class="momentum-date">· {escape(date_prefix)} {escape(data_date)}</span>'
-        if data_date else ""
+        f'<span class="momentum-date">· {escape(date_prefix)} {escape(data_date)}</span>{provisional_badge}'
+        if data_date else (provisional_badge or "")
     )
     subtitle = subtitle_template.format(scope=scope_text)
 
@@ -17353,6 +17383,11 @@ _TOMORROW_MOMENTUM_CSS = """
 .momentum-date {
     color: #7a8499;
     margin-left: 4px;
+}
+.momentum-provisional {
+    display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 5px;
+    background: rgba(230,195,95,.16); color: #f4d68a; border: 1px solid rgba(230,195,95,.4);
+    font-size: 11px; font-weight: 700; letter-spacing: .3px; vertical-align: middle;
 }
 .momentum-pulse-verdict {
     display: flex;
@@ -18629,6 +18664,74 @@ def _resolve_fragment_decorator():
     return None
 
 
+def _momentum_splice_intraday_today(daily_data, intraday_data, tickers):
+    """v1.13.25: 盤中時, 把今日盤中最新價拼接到日線最後 (取代/補上停在昨日
+    的那根)。讓「明日動能脈搏」在盤中能反映今天的即時漲跌, 而非昨日收盤。
+
+    daily_data : 日線 frame (interval=1d), 盤中時最後一根可能仍是昨日。
+    intraday_data: 盤中 frame (interval=5m), 最後一筆 = 今日最新即時價。
+    tickers    : 要拼接的代號 list (e.g. ["2330.TW","^TWII"])。
+
+    回傳新的 daily_data (copy)。任何問題就回原 daily_data (不退化)。
+    純資料時點修正, 不改任何評分邏輯。
+    """
+    if daily_data is None or intraday_data is None:
+        return daily_data
+    try:
+        out = daily_data.copy()
+        if not isinstance(out.columns, pd.MultiIndex):
+            return daily_data  # 只處理 MultiIndex (group_by=column) 格式
+        try:
+            today_str = datetime.now(TW_TZ).strftime("%Y-%m-%d")
+        except Exception:
+            today_str = None
+        for tk in tickers:
+            # 取盤中最新收盤價 + 當日累積量
+            try:
+                intra_close = intraday_data[("Close", tk)].dropna()
+            except Exception:
+                continue
+            if intra_close is None or intra_close.empty:
+                continue
+            latest_price = float(intra_close.iloc[-1])
+            if not math.isfinite(latest_price):
+                continue
+            # 今日盤中累積成交量 (5m bar 加總當日)
+            today_vol = None
+            try:
+                intra_vol = intraday_data[("Volume", tk)].dropna()
+                if intra_vol is not None and not intra_vol.empty:
+                    if today_str:
+                        same_day = intra_vol[intra_vol.index.strftime("%Y-%m-%d") == today_str]
+                        today_vol = float(same_day.sum()) if not same_day.empty else float(intra_vol.iloc[-1])
+                    else:
+                        today_vol = float(intra_vol.iloc[-1])
+            except Exception:
+                today_vol = None
+
+            try:
+                daily_close = out[("Close", tk)].dropna()
+            except Exception:
+                continue
+            if daily_close.empty:
+                continue
+            last_daily_date = daily_close.index[-1].strftime("%Y-%m-%d")
+            # 若日線最後一根「就是今天」→ 已收盤定稿, 不動。
+            if today_str and last_daily_date == today_str:
+                continue
+            # 否則 (日線停在昨日) → 把今日即時價 append 成新的一根。
+            try:
+                new_idx = pd.Timestamp(today_str) if today_str else (daily_close.index[-1] + pd.Timedelta(days=1))
+                out.loc[new_idx, ("Close", tk)] = latest_price
+                if today_vol is not None:
+                    out.loc[new_idx, ("Volume", tk)] = today_vol
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return daily_data
+
+
 def _render_live_momentum_and_tsmc_block(scope: str, lang_zh: bool) -> None:
     """v1.10.25: The actual data-fetch + render core for momentum pulse
     + TSMC Top 5. Extracted so it can be wrapped in @st.fragment for
@@ -18641,6 +18744,21 @@ def _render_live_momentum_and_tsmc_block(scope: str, lang_zh: bool) -> None:
             daily_data = fetch_daily_data(["2330.TW", "^TWII"], "3mo", "1d")
         except Exception:
             daily_data = None
+        # v1.13.25: 盤中時, 日線最後一根仍停在昨日收盤 → 用今日盤中即時價拼接,
+        # 讓動能反映今天的行情而非昨日。收盤後 _is_tw_market_open() 為 False,
+        # 自動跳過, 用回今日已收盤定稿的日線。
+        intraday_spliced = False
+        if daily_data is not None and _is_tw_market_open():
+            try:
+                intraday_data = fetch_intraday_data(["2330.TW", "^TWII"])
+                spliced = _momentum_splice_intraday_today(
+                    daily_data, intraday_data, ["2330.TW", "^TWII"]
+                )
+                if spliced is not None:
+                    daily_data = spliced
+                    intraday_spliced = True
+            except Exception:
+                intraday_spliced = False
         try:
             twse_aggs = fetch_taiwan_market_aggregates(
                 datetime.now(TW_TZ).strftime("%Y-%m-%d")
@@ -18648,6 +18766,9 @@ def _render_live_momentum_and_tsmc_block(scope: str, lang_zh: bool) -> None:
         except Exception:
             twse_aggs = None
         payload = build_tomorrow_momentum_pulse_taiwan(daily_data, twse_aggs)
+        # v1.13.25: 標記盤中暫估, 供 render 顯示「盤中暫估」標籤。
+        if isinstance(payload, dict):
+            payload["intraday_provisional"] = intraday_spliced
     else:
         tickers = TOMORROW_MOMENTUM_MAG7_TICKERS + ["^VIX"]
         try:
