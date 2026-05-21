@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.32
+Version : v1.13.33
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,18 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.33 (2026-05-20)  [UX: Active ETF Lab 預設帶入 quick-pick (避免空畫面)]
+
+  問題: 進 Active ETF Lab 若未選任何 ETF, 主畫面顯示「目前沒有可顯示的主動式
+  ETF。請先在左側加入」空訊息 (因 dashboard_active_etf_tickers 無預設值)。
+  體驗不佳 — 進到 ETF Lab 卻一片空。
+
+  修法: active_etf_picks 計算後, 若「URL 無 etfpicks 參數 + 偏好無儲存值 +
+  非明確清空(__none__)」, 預設帶入 ACTIVE_ETF_QUICK_PICK_SYMBOLS (6 檔)。
+  明確清空仍被尊重 (不會強制塞回); 使用者已自選則不覆蓋。驗證三情境:
+  全新→6檔 / 明確清空→0 / 已自選→不變。代號經 filter_active_etf_tickers
+  驗證格式; 真正無資料的檔在後續 daily_data 階段自然處理。
 
 v1.13.32 (2026-05-20)  [Fix: publishable key 因 RLS 讀到空 → 自動 fallback service key]
 
@@ -14639,6 +14651,15 @@ def load_dashboard_preferences() -> None:
     active_etf_picks = filter_active_etf_tickers(
         _csv_decode(_query_param_first("etfpicks") or _profile_value("etfpicks"), empty_sentinel=EMPTY_SELECTION_SENTINEL)
     )
+    # v1.13.33: Active ETF Lab 預設帶入 quick-pick — 若使用者從未指定 ETF
+    # (URL 無 etfpicks 參數、偏好無儲存值, 且非「明確清空」的 __none__ 哨符),
+    # 預設帶入 ACTIVE_ETF_QUICK_PICK_SYMBOLS, 讓一進 Lab 就有內容可看, 而非
+    # 顯示「請先在左側加入」空畫面。明確清空 (etfpicks=__none__) 仍會被尊重。
+    _etfpicks_raw = _query_param_first("etfpicks") or _profile_value("etfpicks") or ""
+    _etfpicks_explicitly_empty = str(_etfpicks_raw).strip() == EMPTY_SELECTION_SENTINEL
+    _etfpicks_specified = _query_param_exists("etfpicks") or bool(_profile_value("etfpicks"))
+    if not active_etf_picks and not _etfpicks_specified and not _etfpicks_explicitly_empty:
+        active_etf_picks = filter_active_etf_tickers(list(ACTIVE_ETF_QUICK_PICK_SYMBOLS))
     active_etf_custom_symbols = _query_param_first("etfcustom") or _profile_value("etfcustom") or st.session_state.get("dashboard_active_etf_custom_symbols", "")
     active_etf_symbol_search = _query_param_first("etfsearch") or _profile_value("etfsearch") or st.session_state.get("dashboard_active_etf_symbol_search", "")
 
