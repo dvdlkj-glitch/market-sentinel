@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.33
+Version : v1.13.34
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,13 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.34 (2026-05-20)  [UI: 重開供應鏈熱度 + ETF 熱度 (測速度)]
+
+  Supabase 連線問題已根治 (v1.13.31 未設定短路 + v1.13.32 publishable RLS
+  fallback) + 中層快取 (v1.13.23/17) 到位, 重新開啟兩個熱度組群測試速度:
+  _SHOW_SUPPLY_CHAIN_HEAT = True, _SHOW_ACTIVE_ETF_HEAT = True。
+  今日重點舊面板維持隱藏 (已被熱度卡取代)。
 
 v1.13.33 (2026-05-20)  [UX: Active ETF Lab 預設帶入 quick-pick (避免空畫面)]
 
@@ -8172,13 +8179,16 @@ _SHOW_TODAY_FOCAL_POINTS = False
 # supply-chain snapshot data (no dependency on the unavailable Active ETF
 # source), so it renders reliably and fast. Set False to hide.
 # v1.13.26: hidden per user request (loading latency).
-_SHOW_SUPPLY_CHAIN_HEAT = False
+# v1.13.34: re-enabled — Supabase 連線已通 (v1.13.31 短路 + v1.13.32 RLS fallback)
+# + 快取 (v1.13.23), 重開測試速度。
+_SHOW_SUPPLY_CHAIN_HEAT = True
 
 # v1.13.22: Master switch for the "主動式 ETF 熱度" block. Uses live yfinance
 # daily data (NOT the unavailable Supabase active_etf_snapshots), so it
 # renders reliably like the supply-chain heat block. Set False to hide.
 # v1.13.24: hidden per user request.
-_SHOW_ACTIVE_ETF_HEAT = False
+# v1.13.34: re-enabled — 重開測試速度。
+_SHOW_ACTIVE_ETF_HEAT = True
 
 
 # v1.3.8.3: In-memory cache for the local snapshot JSON store. Without this,
