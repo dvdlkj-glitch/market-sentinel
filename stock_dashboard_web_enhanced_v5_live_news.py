@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.39
+Version : v1.13.40
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,23 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.40 (2026-05-21)  [Perf 真治本: 供應鏈改「一次撈整表」— 24 次往返 → 1 次]
+
+  打臉前一版: v1.13.39 暖身不但沒救, first load 從 22s 爆到 247s(!)。證明問題
+  不是 SSL 並行交握, 而是「往返次數 ×每次都慢」。重算: peek 每族群做 2 查詢
+  (lens-specific + allow_any) ×(publishable→service fallback) = 4 往返, 6 族群
+  = 24 次序列往返雪梨, 每次接近 timeout → 累加數分鐘。
+
+  關鍵反證: RAW probe「一次查整表」毫秒級回 8 rows。→ 單次查詢不慢, 慢在次數。
+
+  真治本: 回退 v1.13.39 暖身。新增 _cached_supply_chain_heat_oneshot —
+  用 1 次 SQL (status=eq.ready, order fetched_at desc) 撈回整表全部 row, 直接
+  從 snapshot_payload 取熱度卡欄位 (average_move/leader_name/rising_count 等
+  prefetch 已算好), 每 config_key 取最新、由強到弱排序。_load_focal_supply_
+  chains_from_lab 優先用 one-shot, 失敗/空才走舊 overview 路徑 (不退化)。
+  24 次往返 → 1 次。@st.cache_data(ttl=1800)。預期 first load 從數十~數百秒
+  降到 <1s。
 
 v1.13.39 (2026-05-21)  [Perf 治本: 並行前單發暖身確立 SSL winner — 解 22 秒供應鏈]
 
@@ -19112,6 +19129,70 @@ _AUTOREFRESH_BADGE_CSS = """
 # focal-point UI in the cockpit.
 # =============================================================================
 @st.cache_data(ttl=1800, show_spinner=False)
+def _cached_supply_chain_heat_oneshot(cache_key: str) -> list:
+    """v1.13.40: 一次 SQL 撈回供應鏈表全部 ready row, 直接從 snapshot_payload
+    取熱度卡需要的欄位。取代逐族群 peek (每族群 2 查詢 × publishable→service
+    fallback = 最多 24 次序列往返雪梨, 實測冷啟動 22-247 秒)。
+
+    RAW probe 證實「一次查整表」毫秒級就回 8 rows — 所以瓶頸是「往返次數」,
+    不是單次查詢。本函式 = 1 次往返撈全部。回傳 list[dict] 與
+    _load_focal_supply_chains_from_lab 的 output 同格式。任何失敗回 [] (上層
+    會 fallback 到舊的 build_supply_chain_overview_rows 路徑, 不退化)。
+    """
+    try:
+        from urllib.parse import quote_plus
+        select_cols = quote_plus("config_key,as_of_date,fetched_at,status,snapshot_payload")
+        # 一次撈全部 ready, 每族群取最新 (order by fetched_at desc, 後面去重取第一筆)
+        path = (
+            f"/rest/v1/{SUPABASE_SUPPLY_CHAIN_SNAPSHOT_TABLE}"
+            f"?select={select_cols}&status=eq.ready"
+            f"&order=fetched_at.desc&limit=100"
+        )
+        status, payload = _supabase_supply_chain_read_request(path)
+        if not (200 <= status < 300) or not isinstance(payload, list) or not payload:
+            return []
+        # 每個 config_key 取最新一筆 (payload 已按 fetched_at desc)
+        seen_keys: set = set()
+        out: list[dict] = []
+        for row in payload:
+            ck = str(row.get("config_key", "") or "").strip()
+            if not ck or ck in seen_keys:
+                continue
+            snap = row.get("snapshot_payload")
+            if isinstance(snap, str):
+                try:
+                    snap = json.loads(snap)
+                except Exception:
+                    snap = {}
+            if not isinstance(snap, dict):
+                continue
+            seen_keys.add(ck)
+            _avg = snap.get("average_move")
+            _agg = snap.get("aggregate_move_sum")
+            out.append({
+                "title": supply_chain_group_label(ck) or str(snap.get("title") or ck),
+                "config_key": ck,
+                "leader_name": str(snap.get("leader_name", "") or "—"),
+                "leader_move": snap.get("leader_move"),
+                "average_move": _avg,
+                "fetched_at": row.get("fetched_at") or snap.get("fetched_at"),
+                "rising_count": int(snap.get("rising_count", 0) or 0),
+                "ticker_count": int(snap.get("ticker_count", 0) or 0),
+                "foreign_net_total": snap.get("foreign_net_total"),
+                "_sort_key": _agg if isinstance(_agg, (int, float)) else (_avg if isinstance(_avg, (int, float)) else -1e9),
+            })
+        # 由強到弱排序, 補 rank
+        out.sort(key=lambda r: (r.get("_sort_key") if isinstance(r.get("_sort_key"), (int, float)) else -1e9), reverse=True)
+        for i, r in enumerate(out, start=1):
+            r["rank"] = i
+            r.pop("_sort_key", None)
+        return out
+    except Exception:
+        return []
+
+
+# =============================================================================
+@st.cache_data(ttl=1800, show_spinner=False)
 def _cached_supply_chain_overview(cache_key: str) -> list:
     """v1.13.23: Cache the heavy 6-group supply-chain overview orchestration.
 
@@ -19155,6 +19236,14 @@ def _load_focal_supply_chains_from_lab(limit: int = 3) -> list[dict]:
             _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
         except Exception:
             _key = "nokey"
+        # v1.13.40: 優先用「一次撈全部」(1 次往返)。成功且有資料就直接回,
+        # 完全跳過逐族群 peek 的 24 次往返。失敗/空才走舊的 overview 路徑。
+        try:
+            _oneshot = _cached_supply_chain_heat_oneshot(_key)
+            if isinstance(_oneshot, list) and _oneshot:
+                return _oneshot[:limit]
+        except Exception:
+            pass
         rows = _cached_supply_chain_overview(_key)
     except Exception:
         # Cache wrapper failed — fall back to direct call so behaviour
@@ -37798,20 +37887,6 @@ def build_supply_chain_overview_rows(
             _ctx = None
         _valid_keys = [k for k in config_keys if SUPPLY_CHAIN_FOCUS_CONFIGS.get(k)]
         if len(_valid_keys) > 1:
-            # v1.13.39: 並行前先「單發」抓第一個族群, 確立 _SSL_CONTEXT_WINNER。
-            # 否則並行的 6 個 thread 同時建 SSL 連線、都還沒 winner 可用 → 各自
-            # 卡在 SSL 交握/輪流試 context → 累加到 ~22s (實測)。先暖身一次後,
-            # 其餘 5 個並行 thread 直接複用 winner context, 大幅變快。
-            try:
-                _warm_ck = _valid_keys[0]
-                _warm_snap = get_supply_chain_focus_snapshot(
-                    _warm_ck, lens_meta=lens_meta, force_refresh=force_refresh
-                )
-                if _warm_snap is not None:
-                    _prefetched[_warm_ck] = _warm_snap
-                _remaining_keys = _valid_keys[1:]
-            except Exception:
-                _remaining_keys = _valid_keys
             def _prefetch_one(_ck):
                 try:
                     return _ck, get_supply_chain_focus_snapshot(
@@ -37819,8 +37894,8 @@ def build_supply_chain_overview_rows(
                     )
                 except Exception:
                     return _ck, None
-            with ThreadPoolExecutor(max_workers=min(6, max(1, len(_remaining_keys)))) as _ex:
-                _futs = [_ex.submit(_prefetch_one, _ck) for _ck in _remaining_keys]
+            with ThreadPoolExecutor(max_workers=min(6, len(_valid_keys))) as _ex:
+                _futs = [_ex.submit(_prefetch_one, _ck) for _ck in _valid_keys]
                 if add_script_run_ctx is not None and _ctx is not None:
                     try:
                         for _th in list(_ex._threads):  # noqa: SLF001
