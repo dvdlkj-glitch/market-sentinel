@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.38
+Version : v1.13.39
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,24 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.39 (2026-05-21)  [Perf 治本: 並行前單發暖身確立 SSL winner — 解 22 秒供應鏈]
+
+  決定性數據: Timing 顯示 供應鏈熱度 first load = 22006ms(!), ETF 熱度僅 196ms。
+  差別: ETF 用 yfinance 不讀 Supabase; 供應鏈讀 Supabase 6 族群。
+
+  根因: v1.13.35 把 6 族群改並行, 但「第一次」並行時 6 個 thread 同時建 SSL
+  連線、都還沒有 _SSL_CONTEXT_WINNER (v1.13.38) 可複用 → 各自卡在 SSL 交握/
+  輪流試多個 context → 累加到 ~22s。winner cache 對「序列後續呼叫」有效, 但
+  對「同時起跑的並行第一批」無效 (大家都還沒設好 winner)。
+
+  修法: 並行前先「單發」抓第一個族群 (同步), 確立 _SSL_CONTEXT_WINNER, 再並行
+  抓其餘 5 個 → 並行 thread 直接複用 winner, 不再各自卡 SSL 交握。預期 22s 大幅
+  下降。配合 v1.13.38 (winner cache + timeout 8/10s)。純連線層, 不動資料邏輯。
+
+  註: 另有次要問題 — peek 的 lens-specific 查詢若與 prefetch 寫入的
+  period/interval/lens_title 對不上會每族群多一次 allow_any_lens 往返; 暖身後
+  每次往返已快, 暫不處理, 列入待優化。
 
 v1.13.38 (2026-05-21)  [Perf 治本: SSL context 快取 + 縮短 timeout — 連線層慢點]
 
@@ -37780,6 +37798,20 @@ def build_supply_chain_overview_rows(
             _ctx = None
         _valid_keys = [k for k in config_keys if SUPPLY_CHAIN_FOCUS_CONFIGS.get(k)]
         if len(_valid_keys) > 1:
+            # v1.13.39: 並行前先「單發」抓第一個族群, 確立 _SSL_CONTEXT_WINNER。
+            # 否則並行的 6 個 thread 同時建 SSL 連線、都還沒 winner 可用 → 各自
+            # 卡在 SSL 交握/輪流試 context → 累加到 ~22s (實測)。先暖身一次後,
+            # 其餘 5 個並行 thread 直接複用 winner context, 大幅變快。
+            try:
+                _warm_ck = _valid_keys[0]
+                _warm_snap = get_supply_chain_focus_snapshot(
+                    _warm_ck, lens_meta=lens_meta, force_refresh=force_refresh
+                )
+                if _warm_snap is not None:
+                    _prefetched[_warm_ck] = _warm_snap
+                _remaining_keys = _valid_keys[1:]
+            except Exception:
+                _remaining_keys = _valid_keys
             def _prefetch_one(_ck):
                 try:
                     return _ck, get_supply_chain_focus_snapshot(
@@ -37787,8 +37819,8 @@ def build_supply_chain_overview_rows(
                     )
                 except Exception:
                     return _ck, None
-            with ThreadPoolExecutor(max_workers=min(6, len(_valid_keys))) as _ex:
-                _futs = [_ex.submit(_prefetch_one, _ck) for _ck in _valid_keys]
+            with ThreadPoolExecutor(max_workers=min(6, max(1, len(_remaining_keys)))) as _ex:
+                _futs = [_ex.submit(_prefetch_one, _ck) for _ck in _remaining_keys]
                 if add_script_run_ctx is not None and _ctx is not None:
                     try:
                         for _th in list(_ex._threads):  # noqa: SLF001
