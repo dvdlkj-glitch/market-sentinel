@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.37
+Version : v1.13.38
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,21 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.38 (2026-05-21)  [Perf 治本: SSL context 快取 + 縮短 timeout — 連線層慢點]
+
+  決定性證據: user 反映「連 debug 探針的訊息都要等好久」。探針先印
+  "TRIGGERED" 後卡在 _render_focal_debug_body 的 Supabase RAW probe → 證明
+  「每次 Supabase 單次往返本身就慢」, 與熱度卡/快取/邏輯無關。
+
+  根因: _read_request_bytes 對「多個 SSL context」(truststore/certifi/default/
+  unverified) 輪流 try, 每個失敗/慢的 context 會耗到 timeout (Supabase 主路徑
+  timeout=20s/30s) 才換下一個 → 最壞 數context×20-30s。
+
+  修法: (1) 快取「成功過的 SSL context」(_SSL_CONTEXT_WINNER), 下次優先直用,
+  不再每次從頭輪流試。(2) Supabase 讀取 timeout 20→8s、service 30→10s, 卡住
+  時更快放棄。純連線層優化, 不動資料邏輯。預期: 首次仍試一輪 (找到 winner),
+  之後每次往返大幅變快。
 
 v1.13.37 (2026-05-21)  [Debug fix: 計時保留首次(冷)+最慢, 不被熱快取覆蓋]
 
@@ -14259,7 +14274,7 @@ def _supabase_request(
         method=method.upper(),
     )
     try:
-        raw_bytes, status_code = _read_request_bytes(request, timeout=20)
+        raw_bytes, status_code = _read_request_bytes(request, timeout=8)
         raw = raw_bytes.decode("utf-8")
         if not raw:
             return status_code, {}
@@ -14315,7 +14330,7 @@ def _supabase_service_request(
         method=method.upper(),
     )
     try:
-        raw_bytes, status_code = _read_request_bytes(request, timeout=30)
+        raw_bytes, status_code = _read_request_bytes(request, timeout=10)
         raw = raw_bytes.decode("utf-8")
         if not raw:
             return status_code, {}
@@ -20407,7 +20422,7 @@ def _render_focal_debug_body(flag) -> None:
     else:
         timing_block = "(no timing recorded yet — 進 dashboard 看到熱度卡載入後, 再勾 Debug)"
 
-    st.warning("🔍 **Focal Debug Probe (v1.13.37)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
+    st.warning("🔍 **Focal Debug Probe (v1.13.38)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
     st.code(
         f"=== Supabase config (read from Streamlit secrets) ===\n"
         f"SUPABASE_URL set:               {bool(SUPABASE_URL)}  (len={len(SUPABASE_URL)})\n"
@@ -37102,7 +37117,14 @@ def _http_headers(accept: str = "application/json,text/plain,*/*") -> dict[str, 
 
 
 def _build_ssl_contexts() -> list[ssl.SSLContext]:
+    # v1.13.38: 若先前已有成功連線的 SSL context, 直接優先用它 (放第一個),
+    # 避免每次都從頭輪流試多個 context — 那是「連 Supabase 單次往返都很慢」
+    # 的元兇之一 (失敗/慢的 context 會耗到 timeout 才換下一個)。
     contexts: list[ssl.SSLContext] = []
+
+    _winner = globals().get("_SSL_CONTEXT_WINNER")
+    if _winner is not None:
+        contexts.append(_winner)
 
     if truststore is not None:
         try:
@@ -37208,6 +37230,8 @@ def _read_request_bytes(
         for context in contexts:
             try:
                 with urlopen(current_request, timeout=timeout, context=context) as response:
+                    # v1.13.38: 記住成功的 context, 下次優先用 (見 _build_ssl_contexts)。
+                    globals()["_SSL_CONTEXT_WINNER"] = context
                     return response.read(), int(getattr(response, "status", 200) or 200)
             except HTTPError as exc:
                 if exc.code in (301, 302, 303, 307, 308):
