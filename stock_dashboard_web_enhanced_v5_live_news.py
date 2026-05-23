@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.41
+Version : v1.13.42
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,18 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.42 (2026-05-23)  [Debug: 探針加 Paper Trading Bot 診斷 — 排查前台區塊不顯示]
+
+  user 回報「🤖 AI 策略實戰」區塊在 dashboard 看不到。區塊設計為「未配置就
+  靜默不顯示」, 可能卡在多個關卡。在 ?debug_focal=1 探針加「🤖 Paper Trading
+  Bot 診斷」段, 一勾即看:
+  - ALPACA_API_KEY_ID/SECRET set + len (前台是否讀到 Streamlit secrets)
+  - _paper_bot_is_configured (False 則靜默不顯示)
+  - alpaca-py 套件是否安裝 (Streamlit Cloud requirements.txt 要有)
+  - 實際試讀 Alpaca 帳戶 (equity/cash/持倉數) — 成功或錯誤訊息
+  - paper_decisions 讀取筆數
+  純診斷, 不動邏輯。探針標題版本同步 v1.13.42。
 
 v1.13.41 (2026-05-21)  [Feature: 🤖 AI 策略實戰 Paper Trading Bot 前台區塊]
 
@@ -20746,7 +20758,41 @@ def _render_focal_debug_body(flag) -> None:
     else:
         timing_block = "(no timing recorded yet — 進 dashboard 看到熱度卡載入後, 再勾 Debug)"
 
-    st.warning("🔍 **Focal Debug Probe (v1.13.38)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
+    # v1.13.42: Paper Trading Bot 診斷 — 排查「🤖 AI 策略實戰」區塊為何不顯示。
+    _bot_probe_lines = []
+    _bot_probe_lines.append(f"ALPACA_API_KEY_ID set:    {bool(ALPACA_API_KEY_ID)}  (len={len(ALPACA_API_KEY_ID)})")
+    _bot_probe_lines.append(f"ALPACA_API_SECRET_KEY set:{bool(ALPACA_API_SECRET_KEY)}  (len={len(ALPACA_API_SECRET_KEY)})")
+    _bot_probe_lines.append(f"ALPACA_PAPER:             {ALPACA_PAPER}")
+    _bot_probe_lines.append(f"_paper_bot_is_configured: {_paper_bot_is_configured()}  ← False 則區塊靜默不顯示")
+    # alpaca-py 套件有沒有裝
+    try:
+        import alpaca  # noqa: F401
+        _bot_probe_lines.append("alpaca-py 套件:           ✓ 已安裝")
+    except Exception as _ae:
+        _bot_probe_lines.append(f"alpaca-py 套件:           ✗ 未安裝! ({type(_ae).__name__}) ← requirements.txt 要加 alpaca-py")
+    # 實際試讀 Alpaca 帳戶
+    if _paper_bot_is_configured():
+        try:
+            from alpaca.trading.client import TradingClient as _TC
+            _cli = _TC(ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY, paper=ALPACA_PAPER)
+            _acct = _cli.get_account()
+            _bot_probe_lines.append(f"Alpaca 帳戶讀取:          ✓ 成功! equity=${float(getattr(_acct,'equity',0) or 0):,.0f} cash=${float(getattr(_acct,'cash',0) or 0):,.0f}")
+            try:
+                _pos = _cli.get_all_positions()
+                _bot_probe_lines.append(f"Alpaca 持倉:              {len(_pos)} 檔")
+            except Exception as _pe:
+                _bot_probe_lines.append(f"Alpaca 持倉讀取失敗:      {type(_pe).__name__}: {_pe}")
+        except Exception as _ace:
+            _bot_probe_lines.append(f"Alpaca 帳戶讀取:          ✗ 失敗! {type(_ace).__name__}: {_ace}")
+    # paper_decisions 表
+    try:
+        _pd = _fetch_paper_decisions("debugkey", limit=20)
+        _bot_probe_lines.append(f"paper_decisions 讀取:     {len(_pd)} 筆決策報告")
+    except Exception as _pde:
+        _bot_probe_lines.append(f"paper_decisions 讀取失敗: {type(_pde).__name__}: {_pde}")
+    _bot_probe = "\n".join(_bot_probe_lines)
+
+    st.warning("🔍 **Focal Debug Probe (v1.13.42)** — `?debug_focal=1` is active. Remove it from the URL to hide.")
     st.code(
         f"=== Supabase config (read from Streamlit secrets) ===\n"
         f"SUPABASE_URL set:               {bool(SUPABASE_URL)}  (len={len(SUPABASE_URL)})\n"
@@ -20765,7 +20811,8 @@ def _render_focal_debug_body(flag) -> None:
         f"=== Helper return counts (after cache) ===\n"
         f"direct active_etf rows: {direct_etf_count}\n"
         f"direct supply_chain rows: {direct_chain_count}\n\n"
-        f"=== Per-ticker trace ===\n" + "\n".join(trace_lines),
+        f"=== Per-ticker trace ===\n" + "\n".join(trace_lines)
+        + f"\n\n=== 🤖 Paper Trading Bot 診斷 ===\n{_bot_probe}",
         language="text",
     )
 
