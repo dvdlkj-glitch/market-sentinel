@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.40
+Version : v1.13.41
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,22 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.41 (2026-05-21)  [Feature: 🤖 AI 策略實戰 Paper Trading Bot 前台區塊]
+
+  新增 Paper Trading Bot 的 dashboard 前台展示 (階段1)。bot 本體是獨立的
+  paper_trading_bot.py (GitHub Actions 排程跑, 用 Alpaca paper + dashboard 訊號
+  做美股模擬交易, 節奏A收盤後決策隔天開盤成交)。本次只加「前台顯示」:
+
+  - Alpaca 金鑰常數: ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY / ALPACA_PAPER
+    (從 secrets 讀; 未設則區塊靜默不顯示)。
+  - _fetch_alpaca_account_and_positions: 讀 Alpaca 帳戶+持倉 (@cache 5min)。
+  - _fetch_paper_decisions: 讀 Supabase paper_decisions 決策報告 (publishable 可讀)。
+  - _BOT_CSS + _render_bot_block_html + render_paper_trading_bot_block: 績效卡
+    (總報酬/總資產/持倉數) + 持倉表 (綠漲紅跌) + 今日決策與依據 (進場依據/目標價/
+    預估漲幅/出場預測/信心, SpaceX 代理標的標警示) + 免責。
+  - 呼叫點: General Market overview ETF 熱度卡之後 (_focal_show_hooks gate)。
+  全程防禦, 任何失敗靜默不顯示。需 Alpaca 金鑰 + paper_decisions 表 + bot 跑過。
 
 v1.13.40 (2026-05-21)  [Perf 真治本: 供應鏈改「一次撈整表」— 24 次往返 → 1 次]
 
@@ -8230,6 +8246,13 @@ SUPABASE_URL = _safe_secret("SUPABASE_URL", os.environ.get("SUPABASE_URL", "")).
 SUPABASE_PUBLISHABLE_KEY = _safe_secret("SUPABASE_PUBLISHABLE_KEY", os.environ.get("SUPABASE_PUBLISHABLE_KEY", ""))
 SUPABASE_SERVICE_ROLE_KEY = _safe_secret("SUPABASE_SERVICE_ROLE_KEY", os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""))
 SUPABASE_PROFILE_TABLE = _safe_secret("SUPABASE_PROFILE_TABLE", os.environ.get("SUPABASE_PROFILE_TABLE", "dashboard_profiles")) or "dashboard_profiles"
+
+# v1.13.41: Paper Trading Bot — Alpaca 金鑰 + 決策報告表名 (前台「🤖 AI 策略實戰」用)
+ALPACA_API_KEY_ID = _safe_secret("ALPACA_API_KEY_ID", os.environ.get("ALPACA_API_KEY_ID", ""))
+ALPACA_API_SECRET_KEY = _safe_secret("ALPACA_API_SECRET_KEY", os.environ.get("ALPACA_API_SECRET_KEY", ""))
+ALPACA_PAPER = (_safe_secret("ALPACA_PAPER", os.environ.get("ALPACA_PAPER", "true")) or "true").lower() != "false"
+PAPER_DECISIONS_TABLE = "paper_decisions"
+PAPER_BOT_INITIAL_CAPITAL = 30000.0
 SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE = _safe_secret(
     "SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE",
     os.environ.get("SUPABASE_ACTIVE_ETF_SNAPSHOT_TABLE", "active_etf_snapshots"),
@@ -20320,6 +20343,200 @@ def render_active_etf_heat(lang_zh: bool = True) -> None:
             data_date = ""
         render_html_block(_SUPPLY_CHAIN_HEAT_CSS)  # 共用同一套 CSS
         html = _render_active_etf_heat_html(items, lang_zh=lang_zh, data_date=data_date)
+        if html:
+            render_html_block(html)
+    except Exception:
+        return
+
+
+# =============================================================================
+# 🤖 AI 策略實戰 (Paper Trading Bot) 前台區塊 — v1.13.41
+# 讀 Alpaca (帳戶/持倉) + Supabase paper_decisions (決策報告), 顯示績效卡 +
+# 持倉表 + 今日決策與依據。資料皆唯讀; 任何失敗靜默不顯示, 不影響其餘頁面。
+# =============================================================================
+
+_BOT_CSS = """
+<style>
+.bot-shell { background: radial-gradient(120% 80% at 100% 0%, rgba(56,48,90,.35), transparent 60%), linear-gradient(180deg, rgba(20,26,45,.94), rgba(12,16,28,.96)); border: 1px solid rgba(110,96,160,.32); border-radius: 16px; padding: 18px 20px; margin: 0 0 14px 0; color: #e9ecf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+.bot-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+.bot-title { font-size:18px; font-weight:800; color:#f6f8fc; display:flex; align-items:center; gap:8px; }
+.bot-sub { font-size:12.5px; color:#8b95ad; margin-top:3px; }
+.bot-perf { display:flex; gap:18px; flex-wrap:wrap; }
+.bot-perf-item { text-align:right; }
+.bot-perf-val { font-size:20px; font-weight:800; font-variant-numeric:tabular-nums; }
+.bot-perf-lbl { font-size:11px; color:#8b95ad; }
+.bot-up { color:#6fd99a; } .bot-down { color:#f08894; } .bot-flat { color:#e6c35f; }
+.bot-section-title { font-size:13px; font-weight:700; color:#aeb6ca; margin:14px 0 8px; letter-spacing:.3px; }
+.bot-pos-table { width:100%; border-collapse:collapse; font-size:13px; }
+.bot-pos-table th { text-align:left; color:#8b95ad; font-weight:600; padding:6px 8px; border-bottom:1px solid rgba(96,110,145,.2); font-size:11.5px; }
+.bot-pos-table td { padding:7px 8px; border-bottom:1px solid rgba(96,110,145,.1); font-variant-numeric:tabular-nums; }
+.bot-tk { font-weight:700; color:#f6f8fc; }
+.bot-decision { background:rgba(40,48,72,.4); border-radius:10px; padding:12px 14px; margin-bottom:8px; border-left:3px solid rgba(110,96,160,.6); }
+.bot-decision-buy { border-left-color:#6fd99a; }
+.bot-decision-sell { border-left-color:#f08894; }
+.bot-decision-hold { border-left-color:#e6c35f; }
+.bot-d-head { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.bot-d-action { font-size:13px; font-weight:800; padding:1px 9px; border-radius:5px; }
+.bot-act-buy { background:rgba(76,208,168,.18); color:#8be8b1; }
+.bot-act-sell { background:rgba(217,102,112,.18); color:#f4a3aa; }
+.bot-act-hold { background:rgba(230,195,95,.16); color:#f4d68a; }
+.bot-d-tk { font-size:15px; font-weight:800; color:#f6f8fc; }
+.bot-d-conf { font-size:11px; color:#8b95ad; margin-left:auto; }
+.bot-d-row { font-size:12.5px; color:#c4ccdc; line-height:1.7; }
+.bot-d-row b { color:#dfe4ef; }
+.bot-disclaimer { font-size:11px; color:#6b7488; margin-top:12px; font-style:italic; border-top:1px solid rgba(96,110,145,.15); padding-top:10px; }
+</style>
+"""
+
+
+def _paper_bot_is_configured() -> bool:
+    return bool(ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_alpaca_account_and_positions(cache_key: str) -> dict:
+    """讀 Alpaca 帳戶 + 持倉 (paper)。回 {account:{...}, positions:[...]}。
+    任何失敗回 {}。@st.cache_data 5 分鐘, 避免每次 rerun 都打 Alpaca。"""
+    if not _paper_bot_is_configured():
+        return {}
+    try:
+        from alpaca.trading.client import TradingClient
+        client = TradingClient(ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY, paper=ALPACA_PAPER)
+        acct = client.get_account()
+        account = {
+            "portfolio_value": float(getattr(acct, "portfolio_value", 0) or 0),
+            "cash": float(getattr(acct, "cash", 0) or 0),
+            "equity": float(getattr(acct, "equity", 0) or 0),
+            "initial": PAPER_BOT_INITIAL_CAPITAL,
+        }
+        positions = []
+        try:
+            for p in client.get_all_positions():
+                positions.append({
+                    "ticker": p.symbol,
+                    "qty": float(p.qty),
+                    "avg_entry": float(p.avg_entry_price),
+                    "current_price": float(p.current_price or 0),
+                    "unrealized_pnl": float(p.unrealized_pl or 0),
+                })
+        except Exception:
+            pass
+        return {"account": account, "positions": positions}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_paper_decisions(cache_key: str, limit: int = 12) -> list:
+    """讀最近的決策報告 (Supabase paper_decisions, publishable 可讀)。"""
+    if not _supabase_is_configured():
+        return []
+    try:
+        from urllib.parse import quote_plus
+        select_cols = quote_plus("decision_date,ticker,action,entry_basis,target_price,est_gain_pct,exit_plan,confidence,claude_note,is_spacex_proxy,decision_price")
+        path = (
+            f"/rest/v1/{PAPER_DECISIONS_TABLE}"
+            f"?select={select_cols}&order=created_at.desc&limit={int(limit)}"
+        )
+        status, payload = _supabase_request("GET", path)
+        if 200 <= status < 300 and isinstance(payload, list):
+            return payload
+    except Exception:
+        pass
+    return []
+
+
+def _render_bot_block_html(account: dict, positions: list, decisions: list, lang_zh: bool = True) -> str:
+    from html import escape
+    pv = account.get("portfolio_value", 0)
+    init = account.get("initial", PAPER_BOT_INITIAL_CAPITAL)
+    total_ret = (pv / init - 1) * 100 if init else 0
+    ret_cls = "bot-up" if total_ret > 0 else ("bot-down" if total_ret < 0 else "bot-flat")
+
+    P = ['<div class="bot-shell">']
+    P.append('<div class="bot-head"><div>')
+    P.append(f'<div class="bot-title">🤖 {"AI 策略實戰 (模擬交易)" if lang_zh else "AI Strategy in Action"}</div>')
+    P.append(f'<div class="bot-sub">{"動能趨勢穩健型 · 美股 · Alpaca Paper" if lang_zh else "Momentum-Trend Steady · US · Alpaca Paper"}</div>')
+    P.append('</div>')
+    P.append('<div class="bot-perf">')
+    P.append(f'<div class="bot-perf-item"><div class="bot-perf-val {ret_cls}">{total_ret:+.2f}%</div><div class="bot-perf-lbl">{"總報酬率" if lang_zh else "Total Return"}</div></div>')
+    P.append(f'<div class="bot-perf-item"><div class="bot-perf-val">${pv:,.0f}</div><div class="bot-perf-lbl">{"總資產" if lang_zh else "Equity"}</div></div>')
+    P.append(f'<div class="bot-perf-item"><div class="bot-perf-val">{len(positions)}</div><div class="bot-perf-lbl">{"持倉檔數" if lang_zh else "Positions"}</div></div>')
+    P.append('</div></div>')
+
+    P.append(f'<div class="bot-section-title">📊 {"目前持倉" if lang_zh else "Positions"}</div>')
+    if positions:
+        P.append('<table class="bot-pos-table"><tr>')
+        for h in (["標的","股數","成本","現價","未實現損益"] if lang_zh else ["Ticker","Qty","Cost","Price","Unrealized P/L"]):
+            P.append(f'<th>{h}</th>')
+        P.append('</tr>')
+        for p in positions:
+            pnl = p.get("unrealized_pnl", 0)
+            pnl_cls = "bot-up" if pnl > 0 else ("bot-down" if pnl < 0 else "bot-flat")
+            P.append(
+                f'<tr><td class="bot-tk">{escape(str(p.get("ticker","")))}</td>'
+                f'<td>{p.get("qty",0):g}</td>'
+                f'<td>${p.get("avg_entry",0):.2f}</td>'
+                f'<td>${p.get("current_price",0):.2f}</td>'
+                f'<td class="{pnl_cls}">${pnl:+,.0f}</td></tr>'
+            )
+        P.append('</table>')
+    else:
+        P.append(f'<div class="bot-sub">{"目前無持倉 (觀望中)" if lang_zh else "No positions"}</div>')
+
+    P.append(f'<div class="bot-section-title">📋 {"今日決策與依據" if lang_zh else "Today\'s Decisions"}</div>')
+    if decisions:
+        for d in decisions:
+            act = str(d.get("action", "hold"))
+            act_cls = {"buy": "bot-decision-buy", "sell": "bot-decision-sell"}.get(act, "bot-decision-hold")
+            act_badge = {"buy": "bot-act-buy", "sell": "bot-act-sell"}.get(act, "bot-act-hold")
+            act_txt = ({"buy": "買入", "sell": "賣出", "hold": "觀望"}.get(act, act)) if lang_zh else act.upper()
+            conf_txt = ({"high": "高信心", "mid": "中信心", "low": "低信心"}.get(str(d.get("confidence", "mid")), "")) if lang_zh else str(d.get("confidence", ""))
+            P.append(f'<div class="bot-decision {act_cls}">')
+            P.append('<div class="bot-d-head">')
+            P.append(f'<span class="bot-d-action {act_badge}">{act_txt}</span>')
+            P.append(f'<span class="bot-d-tk">{escape(str(d.get("ticker","—")))}</span>')
+            P.append(f'<span class="bot-d-conf">{conf_txt}</span></div>')
+            if d.get("entry_basis"):
+                P.append(f'<div class="bot-d-row"><b>{"進場依據" if lang_zh else "Basis"}:</b> {escape(str(d["entry_basis"]))}</div>')
+            if d.get("target_price"):
+                try:
+                    tp = float(d["target_price"]); eg = float(d.get("est_gain_pct", 0) or 0)
+                    P.append(f'<div class="bot-d-row"><b>{"目標價" if lang_zh else "Target"}:</b> ${tp:.2f} ({"預估" if lang_zh else "est"} +{eg:.1f}%)</div>')
+                except Exception:
+                    pass
+            if d.get("exit_plan"):
+                P.append(f'<div class="bot-d-row"><b>{"出場預測" if lang_zh else "Exit"}:</b> {escape(str(d["exit_plan"]))}</div>')
+            if d.get("claude_note"):
+                P.append(f'<div class="bot-d-row"><b>🧠 Claude:</b> {escape(str(d["claude_note"]))}</div>')
+            P.append('</div>')
+    else:
+        P.append(f'<div class="bot-sub">{"尚無決策紀錄 (bot 首次執行後顯示)" if lang_zh else "No decisions yet"}</div>')
+
+    P.append(f'<div class="bot-disclaimer">{"本區為依據 Dashboard 訊號的模擬交易展示 (Alpaca Paper, 非真實資金), 僅供研究參考, 非投資建議。歷史模擬績效不代表未來表現。" if lang_zh else "Simulated trading demo based on dashboard signals (Alpaca Paper, not real money). For research only, not investment advice."}</div>')
+    P.append('</div>')
+    return "".join(P)
+
+
+def render_paper_trading_bot_block(lang_zh: bool = True) -> None:
+    """🤖 AI 策略實戰 區塊。未設定 Alpaca 時靜默不顯示。全程防禦。"""
+    try:
+        if not _paper_bot_is_configured():
+            return  # 沒設 Alpaca 金鑰就不顯示這個區塊
+        try:
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")[:-1]  # 10分鐘桶
+        except Exception:
+            _key = "nokey"
+        snapshot = _fetch_alpaca_account_and_positions(_key)
+        if not snapshot or not snapshot.get("account"):
+            return
+        decisions = _fetch_paper_decisions(_key, limit=12)
+        # 只取最新一個 decision_date 的決策 (今日動作)
+        if decisions:
+            latest_date = decisions[0].get("decision_date")
+            decisions = [d for d in decisions if d.get("decision_date") == latest_date]
+        render_html_block(_BOT_CSS)
+        html = _render_bot_block_html(snapshot["account"], snapshot.get("positions", []), decisions, lang_zh=lang_zh)
         if html:
             render_html_block(html)
     except Exception:
@@ -52840,6 +53057,13 @@ def generate_dashboard():
                 )
                 with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
                     st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
+
+    # v1.13.41: 🤖 AI 策略實戰 (Paper Trading Bot)。未設 Alpaca 金鑰時靜默不顯示。
+    if _focal_show_hooks:
+        try:
+            render_paper_trading_bot_block(lang_zh=_news_briefing_is_zh())
+        except Exception:
+            pass
 
     # v1.9.5: Tomorrow Momentum Pulse — NO experience_level gate.
     # Always renders when General Market mode is active because momentum
