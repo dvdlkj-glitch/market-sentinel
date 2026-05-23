@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.42
+Version : v1.13.43
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,20 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.43 (2026-05-23)  [Fix: 供應鏈熱度卡漲幅消失 / 顯示「資料整理中」]
+
+  問題: v1.13.40 的一次撈整表 (_cached_supply_chain_heat_oneshot) 後, 熱度卡
+  族群「平均漲幅」不顯示、verdict 變「資料整理中」。
+  根因: snapshot_payload 裡 average_move/aggregate_move_sum/leader_move/
+  foreign_net_total 是「文字」(prefetch 用 _supply_chain_snapshot_to_text 存),
+  one-shot 直接 snap.get() 拿到字串, 熱度卡判斷不是 (int,float) → 漲幅失效。
+  舊路徑 build_supply_chain_overview_rows 有 _safe_float 轉換 + rows fallback
+  重算, 但 one-shot 漏了。
+
+  修法: one-shot 取這些欄位改用 _safe_float 轉數字; 若 average_move/aggregate
+  為空, 從 snapshot 的 rows 用 _supply_chain_move_summary 重算 (同舊路徑)。
+  NaN 統一轉 None。驗證: 文字 '2.34' → 2.34, 空字串 → None。
 
 v1.13.42 (2026-05-23)  [Debug: 探針加 Paper Trading Bot 診斷 — 排查前台區塊不顯示]
 
@@ -19202,19 +19216,36 @@ def _cached_supply_chain_heat_oneshot(cache_key: str) -> list:
             if not isinstance(snap, dict):
                 continue
             seen_keys.add(ck)
-            _avg = snap.get("average_move")
-            _agg = snap.get("aggregate_move_sum")
+            # v1.13.43: payload 裡 average_move/aggregate_move_sum/leader_move/
+            # foreign_net_total 都是「文字」(prefetch 用 _supply_chain_snapshot_to_text
+            # 存的), 必須 _safe_float 轉回數字; 若空, 從 rows 重算 (同舊路徑邏輯)。
+            # 否則熱度卡判斷不是數字 → 漲幅不顯示、verdict 變「資料整理中」。
+            _avg = _safe_float(snap.get("average_move"))
+            _agg = _safe_float(snap.get("aggregate_move_sum"))
+            _lead_move = _safe_float(snap.get("leader_move"))
+            _fnet = _safe_float(snap.get("foreign_net_total"))
+            if pd.isna(_avg) or pd.isna(_agg):
+                try:
+                    _ms = _supply_chain_move_summary(snap.get("rows") or [])
+                    if pd.isna(_avg):
+                        _avg = _safe_float(_ms.get("average_move"))
+                    if pd.isna(_agg):
+                        _agg = _safe_float(_ms.get("aggregate_move_sum"))
+                except Exception:
+                    pass
+            _avg = None if pd.isna(_avg) else float(_avg)
+            _agg_num = None if pd.isna(_agg) else float(_agg)
             out.append({
                 "title": supply_chain_group_label(ck) or str(snap.get("title") or ck),
                 "config_key": ck,
                 "leader_name": str(snap.get("leader_name", "") or "—"),
-                "leader_move": snap.get("leader_move"),
+                "leader_move": None if pd.isna(_lead_move) else float(_lead_move),
                 "average_move": _avg,
                 "fetched_at": row.get("fetched_at") or snap.get("fetched_at"),
                 "rising_count": int(snap.get("rising_count", 0) or 0),
                 "ticker_count": int(snap.get("ticker_count", 0) or 0),
-                "foreign_net_total": snap.get("foreign_net_total"),
-                "_sort_key": _agg if isinstance(_agg, (int, float)) else (_avg if isinstance(_avg, (int, float)) else -1e9),
+                "foreign_net_total": None if pd.isna(_fnet) else float(_fnet),
+                "_sort_key": _agg_num if _agg_num is not None else (_avg if _avg is not None else -1e9),
             })
         # 由強到弱排序, 補 rank
         out.sort(key=lambda r: (r.get("_sort_key") if isinstance(r.get("_sort_key"), (int, float)) else -1e9), reverse=True)
