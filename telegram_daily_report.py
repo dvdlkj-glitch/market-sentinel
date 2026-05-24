@@ -79,6 +79,77 @@ def _momentum_score(closes: list[float]) -> dict:
     }
 
 
+def _build_bot_summary() -> list[str]:
+    """讀 Alpaca 帳戶/持倉 + Supabase 今日決策, 組成中等詳細度的 bot 摘要 (list of lines)。
+    任何失敗回 [] (該段就不出現, 不影響方向推估主報告)。"""
+    lines: list[str] = []
+    alpaca_key = os.environ.get("ALPACA_API_KEY_ID", "")
+    alpaca_secret = os.environ.get("ALPACA_API_SECRET_KEY", "")
+    if not alpaca_key or not alpaca_secret:
+        return []
+    # --- Alpaca 帳戶 + 持倉 ---
+    try:
+        from alpaca.trading.client import TradingClient
+        paper = os.environ.get("ALPACA_PAPER", "true").lower() != "false"
+        client = TradingClient(alpaca_key, alpaca_secret, paper=paper)
+        acct = client.get_account()
+        pv = float(getattr(acct, "portfolio_value", 0) or 0)
+        init = 30000.0  # 初始資金 (與 bot/前台一致)
+        ret_pct = (pv / init - 1.0) * 100.0 if init else 0.0
+        try:
+            pos_count = len(client.get_all_positions())
+        except Exception:
+            pos_count = 0
+        ret_emoji = "📈" if ret_pct > 0 else ("📉" if ret_pct < 0 else "➡️")
+        lines.append("🤖 *AI 策略實戰* (Paper, 30K)")
+        lines.append(f"總資產: ${pv:,.0f} ({ret_pct:+.2f}% {ret_emoji}) | 持倉 {pos_count} 檔")
+    except Exception as e:
+        print(f"  [warn] Alpaca 讀取失敗: {type(e).__name__}: {e}")
+        return []
+    # --- Supabase 今日決策 (最新一個 decision_date) ---
+    try:
+        sb_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+        sb_key = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                  or os.environ.get("SUPABASE_PUBLISHABLE_KEY", ""))
+        if sb_url and sb_key:
+            sel = urllib.parse.quote("decision_date,ticker,action,est_gain_pct,confidence,signals_json,is_spacex_proxy")
+            path = (f"{sb_url}/rest/v1/paper_decisions"
+                    f"?select={sel}&order=created_at.desc&limit=20")
+            req = urllib.request.Request(path, headers={
+                "apikey": sb_key, "Authorization": f"Bearer {sb_key}",
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                rows = json.loads(resp.read().decode("utf-8"))
+            if isinstance(rows, list) and rows:
+                latest = rows[0].get("decision_date")
+                today_rows = [r for r in rows if r.get("decision_date") == latest]
+                buys = [r for r in today_rows if r.get("action") == "buy"]
+                sells = [r for r in today_rows if r.get("action") == "sell"]
+                lines.append("")
+                lines.append("今日動作:")
+                if not buys and not sells:
+                    lines.append("• 觀望 (無符合條件標的)")
+                for r in buys[:6]:
+                    tk = r.get("ticker", "?")
+                    eg = r.get("est_gain_pct")
+                    sig = r.get("signals_json") or {}
+                    mom = ""
+                    if isinstance(sig, dict) and sig.get("momentum_score") is not None:
+                        try:
+                            mom = f"動能{float(sig['momentum_score']):.0f}, "
+                        except Exception:
+                            mom = ""
+                    proxy = " ⚠️代理" if r.get("is_spacex_proxy") else ""
+                    eg_txt = f"目標{float(eg):+.0f}%" if eg not in (None, "") else ""
+                    lines.append(f"• 買入 {tk}{proxy} — {mom}{eg_txt}".rstrip(" —,"))
+                for r in sells[:4]:
+                    lines.append(f"• 賣出 {r.get('ticker','?')}")
+    except Exception as e:
+        print(f"  [warn] Supabase 決策讀取失敗: {type(e).__name__}: {e}")
+        # 帳戶那段還是保留, 只是少了今日動作清單
+    return lines
+
+
 def _build_report() -> str:
     now = datetime.now(TPE)
     date_str = now.strftime("%Y/%m/%d %H:%M")
@@ -106,6 +177,12 @@ def _build_report() -> str:
     if not sp and not nq:
         lines.append("方向: 資料不足, 暫無法推估")
     lines.append("")
+
+    # === Paper Trading Bot 摘要 (美股, 接在方向推估後) ===
+    _bot_lines = _build_bot_summary()
+    if _bot_lines:
+        lines.extend(_bot_lines)
+        lines.append("")
 
     lines.append("※ 推估僅供參考, 非投資建議")
     return "\n".join(lines)
