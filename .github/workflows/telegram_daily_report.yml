@@ -1,0 +1,32 @@
+name: Telegram Daily Market Report
+
+# 台灣時間每天 14:30 (台股 13:30 收盤後) 推送開盤方向推估。
+# 台灣 = UTC+8, 所以 14:30 TPE = 06:30 UTC。
+on:
+  schedule:
+    - cron: '30 6 * * 1-5'   # 週一到週五 UTC 06:30 = 台灣 14:30
+  workflow_dispatch: {}        # 也允許手動觸發 (測試用)
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance
+
+      - name: Send daily market report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python telegram_daily_report.py
