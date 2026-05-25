@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.48
+Version : v1.13.49
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,19 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.49 (2026-05-26)  [Fix: 側邊欄輸入框白字 + 台股搜尋顯示中文名]
+
+  User 回報兩個 side panel 問題:
+  (1) 輸入股票代碼時字體不是白色 → 深色底+深色字看不見, 使用者以為沒輸入/
+      沒發現打錯。根因: sidebar input CSS color:#0f1728 (深藍黑) 配深色輸入框底。
+      修: 改 color/-webkit-text-fill-color/caret-color 為 #f5f7fb (白),
+      placeholder 改 rgba(245,247,251,.45)。
+  (2) 台股搜尋結果顯示英文名 (如 yfinance longName) 而非中文。根因:
+      display_ticker_label 對不在 TAIWAN_TICKER_METADATA 的台股, fallback 用
+      runtime name (Yahoo search API 的 shortname/longname = 英文)。
+      修: 台股 + 繁中介面時, 在 runtime 英文名之前先查 fetch_taiwan_company_
+      name_map (TWSE/TPEx 全上市櫃中文名, @cache 1天), 有中文就用中文。
 
 v1.13.48 (2026-05-26)  [Fix: 「刷新 Overall」按鈕卡在「正在更新供應鏈快照」]
 
@@ -13651,6 +13664,18 @@ def display_ticker_label(ticker: str) -> str:
         company = meta["zh"] if get_lang() == "繁體中文" else meta["en"]
         return f"{meta['code']} {company}"
 
+    # v1.13.49: 台股若不在預建 metadata, 優先查 TWSE/TPEx 中文公司名對照表
+    # (fetch_taiwan_company_name_map, 含全上市櫃 + @cache), 避免顯示 yfinance
+    # 英文名。繁中介面下台股本應顯示中文。
+    if is_taiwan_ticker(ticker_upper) and get_lang() == "繁體中文":
+        try:
+            zh_map = fetch_taiwan_company_name_map()
+            zh_name = str(zh_map.get(normalize_dashboard_ticker(ticker_upper), "") or "").strip()
+            if zh_name:
+                return f"{ticker_base_code(ticker_upper)} {zh_name}"
+        except Exception:
+            pass
+
     runtime_name = str(runtime_meta.get("name", "")).strip()
     if runtime_name:
         if is_taiwan_ticker(ticker_upper):
@@ -24903,17 +24928,17 @@ def inject_css():
         section[data-testid="stSidebar"] .stTextInput input,
         section[data-testid="stSidebar"] .stNumberInput input {
             background: transparent !important;
-            color: #0f1728 !important;
-            -webkit-text-fill-color: #0f1728 !important;
-            caret-color: #0f1728 !important;
+            color: #f5f7fb !important;
+            -webkit-text-fill-color: #f5f7fb !important;
+            caret-color: #f5f7fb !important;
             font-weight: 700 !important;
         }
 
         section[data-testid="stSidebar"] [data-baseweb="input"] input::placeholder,
         section[data-testid="stSidebar"] .stTextInput input::placeholder,
         section[data-testid="stSidebar"] .stNumberInput input::placeholder {
-            color: rgba(15,23,40,.42) !important;
-            -webkit-text-fill-color: rgba(15,23,40,.42) !important;
+            color: rgba(245,247,251,.45) !important;
+            -webkit-text-fill-color: rgba(245,247,251,.45) !important;
             opacity: 1 !important;
         }
 
