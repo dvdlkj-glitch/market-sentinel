@@ -4,7 +4,7 @@ name: Telegram US Premarket Brief
 # 設在台灣 21:00 (UTC 13:00) 推送, 約開盤前 0.5~1.5 小時, 盤前消息已明朗。
 on:
   schedule:
-    - cron: '0 13 * * 1-5'   # 週一到週五 UTC 13:00 = 台灣 21:00
+    - cron: '7 13 * * 1-5'   # 週一到週五 UTC 13:07 = 台灣 21:07 (避開整點)
   workflow_dispatch: {}        # 手動觸發 (測試用)
 
 jobs:

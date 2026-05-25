@@ -6,7 +6,7 @@ name: Paper Trading Bot
 # 下單為 market order (DAY), 會在「下一個交易日開盤」成交 → 符合節奏 A。
 on:
   schedule:
-    - cron: '30 22 * * 1-5'   # 週一到週五 UTC 22:30 (美股交易日收盤後)
+    - cron: '37 22 * * 1-5'   # 週一到週五 UTC 22:37 = 美股收盤後 (避開半點)
   workflow_dispatch: {}        # 也允許手動觸發 (測試用)
 
 jobs:

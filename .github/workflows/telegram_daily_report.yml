@@ -4,7 +4,7 @@ name: Telegram Daily Market Report
 # 台灣 = UTC+8, 所以 14:30 TPE = 06:30 UTC。
 on:
   schedule:
-    - cron: '30 6 * * 1-5'   # 週一到週五 UTC 06:30 = 台灣 14:30
+    - cron: '37 6 * * 1-5'   # 週一到週五 UTC 06:37 = 台灣 14:37 (避開整點/半點擁擠時段)
   workflow_dispatch: {}        # 也允許手動觸發 (測試用)
 
 jobs:
