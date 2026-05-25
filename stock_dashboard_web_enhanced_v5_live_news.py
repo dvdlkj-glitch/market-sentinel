@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.45
+Version : v1.13.46
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,24 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.46 (2026-05-26)  [Feature: 🌡️ 市場風險溫度計 — 台灣市場指標區]
+
+  David 要求: 進 dashboard 在台灣市場指標區看到市場風險參考。整合多項客觀
+  指標成一個 0-100 風險分數面板 (定位明確: 風險溫度參考, 非崩盤預言)。
+
+  指標 (yfinance 算, 穩定不依賴 prefetch/Supabase, @cache 15min):
+  - VIX 水位 (^VIX): ≥30 危險/≥20 警戒/≥14 溫和/平靜
+  - VIX 趨勢 (近5日): 急升=風險上升
+  - 殖利率曲線 (^TNX 10年 − ^IRX 短端): 倒掛=衰退前兆
+  - S&P500 對 200日均線乖離: 跌破=風險/過熱
+  - 台股加權對 60日均線乖離
+  各指標子分平均 → 總分; ≥65 高風險/≥45 警戒/<45 平穩 + 綜合判讀。
+  任一指標失敗略過該項 (不影響整體), 全失敗則靜默不顯示。
+
+  函式: _RISK_GAUGE_CSS + _compute_market_risk_gauge + render_market_risk_gauge。
+  呼叫點: Standard/Advanced/Expert 三個 overview 的 macro strip 之後
+  (show_taiwan_macro gate)。全程防禦。
 
 v1.13.45 (2026-05-26)  [Fix: 進供應鏈摘要卡死在 fetch_ticker_news]
 
@@ -8007,6 +8025,10 @@ def render_general_market_dashboard_layout(
         if current_section == "layout_standard_market_brief_tab":
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
+                try:
+                    render_market_risk_gauge(lang_zh=(get_language() == "zh_TW"))
+                except Exception:
+                    pass
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -8037,6 +8059,10 @@ def render_general_market_dashboard_layout(
         if current_section == "layout_overview_tab":
             if show_taiwan_macro:
                 render_taiwan_market_macro_strip(force_show=True)
+                try:
+                    render_market_risk_gauge(lang_zh=(get_language() == "zh_TW"))
+                except Exception:
+                    pass
             render_section_guide()
             render_active_trend_lens(lens_meta)
             render_stock_explorer_nav(tickers)
@@ -8050,6 +8076,10 @@ def render_general_market_dashboard_layout(
     else:
         if show_taiwan_macro:
             render_taiwan_market_macro_strip(force_show=True)
+            try:
+                render_market_risk_gauge(lang_zh=(get_language() == "zh_TW"))
+            except Exception:
+                pass
         expert_sections = [
             "layout_research_flow_tab",
             "layout_comparison_desk_tab",
@@ -36243,6 +36273,183 @@ def render_taiwan_market_macro_strip(force_show: bool = False) -> None:
         </div>
         """
     )
+
+
+_RISK_GAUGE_CSS = """
+<style>
+.riskg-shell { background: linear-gradient(180deg, rgba(22,26,40,.94), rgba(14,17,27,.96)); border: 1px solid rgba(120,130,160,.28); border-radius: 14px; padding: 16px 18px; margin: 0 0 14px 0; color: #e9ecf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+.riskg-head { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+.riskg-title { font-size:16px; font-weight:800; color:#f6f8fc; display:flex; align-items:center; gap:8px; }
+.riskg-sub { font-size:11.5px; color:#8b95ad; margin-top:2px; }
+.riskg-score-wrap { text-align:right; }
+.riskg-score { font-size:30px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+.riskg-level { font-size:12px; font-weight:700; margin-top:3px; }
+.riskg-bar { height:8px; border-radius:6px; background:rgba(120,130,160,.18); margin:6px 0 14px; overflow:hidden; }
+.riskg-bar-fill { height:100%; border-radius:6px; transition:width .3s; }
+.riskg-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.riskg-item { background:rgba(40,46,66,.4); border-radius:9px; padding:9px 11px; border-left:3px solid rgba(120,130,160,.5); }
+.riskg-item-label { font-size:11px; color:#8b95ad; }
+.riskg-item-val { font-size:15px; font-weight:700; color:#f0f3f8; margin-top:2px; font-variant-numeric:tabular-nums; }
+.riskg-item-note { font-size:10.5px; color:#9aa3b8; margin-top:1px; }
+.riskg-calm { color:#6fd99a; } .riskg-warn { color:#e6c35f; } .riskg-danger { color:#f08894; }
+.riskg-bfill-calm { background:#6fd99a; } .riskg-bfill-warn { background:#e6c35f; } .riskg-bfill-danger { background:#f08894; }
+.riskg-bl-calm { border-left-color:#6fd99a; } .riskg-bl-warn { border-left-color:#e6c35f; } .riskg-bl-danger { border-left-color:#f08894; }
+.riskg-verdict { font-size:12.5px; color:#c4ccdc; margin-top:12px; line-height:1.6; }
+.riskg-disclaimer { font-size:10.5px; color:#6b7488; margin-top:10px; font-style:italic; border-top:1px solid rgba(96,110,145,.15); padding-top:8px; }
+</style>
+"""
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _compute_market_risk_gauge(cache_key: str) -> dict:
+    """市場風險溫度計: 整合 VIX/殖利率/大盤乖離/台股, 算 0-100 風險分數。
+    用 yfinance (穩定, 不依賴 prefetch/Supabase)。@cache 15 分鐘。
+    任何單一指標失敗就略過該項 (不影響整體)。回 {} 代表全失敗。
+    定位: 客觀風險溫度參考, 非崩盤預言。"""
+    import math as _math
+
+    def _closes(tk, days=220):
+        try:
+            import yfinance as yf
+            df = yf.download(tk, period=f"{days}d", interval="1d",
+                             progress=False, auto_adjust=True)
+            if df is None or df.empty:
+                return []
+            return [float(c) for c in df["Close"].dropna().values.flatten().tolist()]
+        except Exception:
+            return []
+
+    components = []          # 各指標的 (名稱, 數值文字, 風險子分 0-100, 等級, 註記)
+    risk_parts = []          # 用來平均的子分
+
+    # --- 1) VIX 水位 ---
+    vix = _closes("^VIX", days=30)
+    if vix:
+        v = vix[-1]
+        if v >= 30:
+            sub, lvl, note = 90, "danger", "高恐慌"
+        elif v >= 20:
+            sub, lvl, note = 60, "warn", "警戒區"
+        elif v >= 14:
+            sub, lvl, note = 35, "calm", "溫和"
+        else:
+            sub, lvl, note = 15, "calm", "平靜"
+        components.append(("VIX 恐慌指數", f"{v:.1f}", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 2) VIX 趨勢 (近5日變化) ---
+    if len(vix) >= 6:
+        chg = (vix[-1] / vix[-6] - 1.0) * 100.0
+        if chg >= 25:
+            sub, lvl, note = 85, "danger", f"急升 {chg:+.0f}%"
+        elif chg >= 10:
+            sub, lvl, note = 60, "warn", f"上升 {chg:+.0f}%"
+        elif chg <= -10:
+            sub, lvl, note = 20, "calm", f"回落 {chg:+.0f}%"
+        else:
+            sub, lvl, note = 40, "calm", f"持平 {chg:+.0f}%"
+        components.append(("VIX 趨勢 (5日)", f"{chg:+.0f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 3) 殖利率曲線 (10年 ^TNX vs 2年 ^FVX 近似; 用 ^TNX 趨勢) ---
+    # 註: ^TNX=10年, 2年無直接代號, 用 ^IRX(13週)做短端近似看倒掛傾向
+    tnx = _closes("^TNX", days=30)
+    irx = _closes("^IRX", days=30)
+    if tnx and irx:
+        spread = tnx[-1] - irx[-1]  # 長-短, 負 = 倒掛
+        if spread < 0:
+            sub, lvl, note = 80, "danger", f"倒掛 {spread:.2f}"
+        elif spread < 0.5:
+            sub, lvl, note = 55, "warn", f"偏平 {spread:.2f}"
+        else:
+            sub, lvl, note = 25, "calm", f"正常 {spread:.2f}"
+        components.append(("殖利率曲線", f"{spread:+.2f}", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 4) S&P500 對 200 日均線乖離 ---
+    spx = _closes("^GSPC", days=220)
+    if len(spx) >= 200:
+        ma200 = sum(spx[-200:]) / 200.0
+        dev = (spx[-1] / ma200 - 1.0) * 100.0
+        if dev < -5:
+            sub, lvl, note = 75, "danger", f"跌破200MA {dev:+.0f}%"
+        elif dev > 15:
+            sub, lvl, note = 60, "warn", f"過熱 {dev:+.0f}%"
+        elif dev > 0:
+            sub, lvl, note = 30, "calm", f"健康 {dev:+.0f}%"
+        else:
+            sub, lvl, note = 50, "warn", f"轉弱 {dev:+.0f}%"
+        components.append(("S&P500 乖離", f"{dev:+.1f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 5) 台股加權對 60 日均線 ---
+    twii = _closes("^TWII", days=90)
+    if len(twii) >= 60:
+        ma60 = sum(twii[-60:]) / 60.0
+        dev = (twii[-1] / ma60 - 1.0) * 100.0
+        if dev < -5:
+            sub, lvl, note = 70, "danger", f"跌破季線 {dev:+.0f}%"
+        elif dev < 0:
+            sub, lvl, note = 50, "warn", f"季線下 {dev:+.0f}%"
+        else:
+            sub, lvl, note = 28, "calm", f"季線上 {dev:+.0f}%"
+        components.append(("台股加權乖離", f"{dev:+.1f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
+    if not risk_parts:
+        return {}
+
+    score = sum(risk_parts) / len(risk_parts)
+    if score >= 65:
+        level, level_txt, verdict = "danger", "高風險", "多項指標亮紅燈, 市場處於高波動/避險情緒。宜謹慎、控制部位、留意停損。"
+    elif score >= 45:
+        level, level_txt, verdict = "warn", "警戒", "部分指標轉趨保守, 市場存在不確定性。建議提高警覺、分批操作。"
+    else:
+        level, level_txt, verdict = "calm", "平穩", "整體指標處於相對平穩區間, 但市場永遠有變數, 仍需留意個別風險。"
+
+    return {
+        "score": round(score, 0),
+        "level": level, "level_txt": level_txt,
+        "verdict": verdict, "components": components,
+    }
+
+
+def render_market_risk_gauge(lang_zh: bool = True) -> None:
+    """市場風險溫度計面板 — 放台灣市場指標區。全程防禦, 失敗靜默不顯示。"""
+    try:
+        from html import escape
+        _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
+        data = _compute_market_risk_gauge(_key)
+        if not data or not data.get("components"):
+            return
+        score = data["score"]
+        level = data["level"]
+        level_txt = data["level_txt"]
+        render_html_block(_RISK_GAUGE_CSS)
+        P = ['<div class="riskg-shell">']
+        P.append('<div class="riskg-head"><div>')
+        P.append(f'<div class="riskg-title">🌡️ {"市場風險溫度計" if lang_zh else "Market Risk Gauge"}</div>')
+        P.append(f'<div class="riskg-sub">{"VIX · 殖利率曲線 · 大盤乖離 · 台股 綜合風險參考" if lang_zh else "Composite risk reference"}</div>')
+        P.append('</div>')
+        P.append(f'<div class="riskg-score-wrap"><div class="riskg-score riskg-{level}">{score:.0f}</div>'
+                 f'<div class="riskg-level riskg-{level}">{level_txt}</div></div>')
+        P.append('</div>')
+        P.append(f'<div class="riskg-bar"><div class="riskg-bar-fill riskg-bfill-{level}" style="width:{score:.0f}%;"></div></div>')
+        P.append('<div class="riskg-grid">')
+        for name, val, sub, lvl, note in data["components"]:
+            P.append(
+                f'<div class="riskg-item riskg-bl-{lvl}">'
+                f'<div class="riskg-item-label">{escape(name)}</div>'
+                f'<div class="riskg-item-val riskg-{lvl}">{escape(val)}</div>'
+                f'<div class="riskg-item-note">{escape(note)}</div></div>'
+            )
+        P.append('</div>')
+        P.append(f'<div class="riskg-verdict">💡 {escape(data["verdict"])}</div>')
+        P.append(f'<div class="riskg-disclaimer">{"風險分數為多項客觀指標綜合參考 (0=平穩, 100=高風險), 非崩盤預言, 不構成投資建議。市場無法準確預測。" if lang_zh else "Composite risk reference, not a crash prediction, not investment advice."}</div>')
+        P.append('</div>')
+        render_html_block("".join(P))
+    except Exception:
+        return
 
 
 def render_taiwan_official_data_section(ticker: str, selected_count: int = 1) -> None:
