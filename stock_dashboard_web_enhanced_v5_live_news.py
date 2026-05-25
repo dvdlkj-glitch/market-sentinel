@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.46
+Version : v1.13.47
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,22 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.47 (2026-05-26)  [Enhance: 風險溫度計 — 字體放大 + 新增崩盤前兆指標]
+
+  David 喜歡風險溫度計, 要求 (1) 字體加大 (2) 加更多崩盤相關專業指標。
+
+  字體: title 16→19px, score 30→38px, level 12→14px, item-val 15→18px,
+  item-label 11→12.5px, item-note 10.5→12px, sub/verdict/disclaimer 同步放大。
+
+  新增 4 個崩盤/風險前兆指標 (yfinance, 失敗略過):
+  - 美債10年殖利率 (^TNX 水位): ≥5%偏高/≥4%中性/溫和 — 利率壓抑估值
+  - 信用利差 HY (HYG 高收益債 vs LQD 投資級債 近5日相對): 高收弱於投資級
+    = 利差擴大 = 違約/避險憂慮 (經典領先指標)
+  - 黃金避險 (GLD 近5日): 資金湧入黃金 = 避險情緒升溫
+  - S&P500 回落 (距近250日高點 drawdown): ≤-20%熊市/≤-10%修正/≤-5%回落
+  共 9 個指標子分平均 → 總風險分數。副標題同步更新。
+  定位不變: 客觀風險溫度參考, 非崩盤預言, 非投資建議。
 
 v1.13.46 (2026-05-26)  [Feature: 🌡️ 市場風險溫度計 — 台灣市場指標區]
 
@@ -36267,23 +36283,23 @@ _RISK_GAUGE_CSS = """
 <style>
 .riskg-shell { background: linear-gradient(180deg, rgba(22,26,40,.94), rgba(14,17,27,.96)); border: 1px solid rgba(120,130,160,.28); border-radius: 14px; padding: 16px 18px; margin: 0 0 14px 0; color: #e9ecf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; }
 .riskg-head { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
-.riskg-title { font-size:16px; font-weight:800; color:#f6f8fc; display:flex; align-items:center; gap:8px; }
-.riskg-sub { font-size:11.5px; color:#8b95ad; margin-top:2px; }
+.riskg-title { font-size:19px; font-weight:800; color:#f6f8fc; display:flex; align-items:center; gap:8px; }
+.riskg-sub { font-size:13px; color:#8b95ad; margin-top:2px; }
 .riskg-score-wrap { text-align:right; }
-.riskg-score { font-size:30px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
-.riskg-level { font-size:12px; font-weight:700; margin-top:3px; }
+.riskg-score { font-size:38px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+.riskg-level { font-size:14px; font-weight:700; margin-top:3px; }
 .riskg-bar { height:8px; border-radius:6px; background:rgba(120,130,160,.18); margin:6px 0 14px; overflow:hidden; }
 .riskg-bar-fill { height:100%; border-radius:6px; transition:width .3s; }
 .riskg-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
 .riskg-item { background:rgba(40,46,66,.4); border-radius:9px; padding:9px 11px; border-left:3px solid rgba(120,130,160,.5); }
-.riskg-item-label { font-size:11px; color:#8b95ad; }
-.riskg-item-val { font-size:15px; font-weight:700; color:#f0f3f8; margin-top:2px; font-variant-numeric:tabular-nums; }
-.riskg-item-note { font-size:10.5px; color:#9aa3b8; margin-top:1px; }
+.riskg-item-label { font-size:12.5px; color:#8b95ad; }
+.riskg-item-val { font-size:18px; font-weight:700; color:#f0f3f8; margin-top:2px; font-variant-numeric:tabular-nums; }
+.riskg-item-note { font-size:12px; color:#9aa3b8; margin-top:1px; }
 .riskg-calm { color:#6fd99a; } .riskg-warn { color:#e6c35f; } .riskg-danger { color:#f08894; }
 .riskg-bfill-calm { background:#6fd99a; } .riskg-bfill-warn { background:#e6c35f; } .riskg-bfill-danger { background:#f08894; }
 .riskg-bl-calm { border-left-color:#6fd99a; } .riskg-bl-warn { border-left-color:#e6c35f; } .riskg-bl-danger { border-left-color:#f08894; }
-.riskg-verdict { font-size:12.5px; color:#c4ccdc; margin-top:12px; line-height:1.6; }
-.riskg-disclaimer { font-size:10.5px; color:#6b7488; margin-top:10px; font-style:italic; border-top:1px solid rgba(96,110,145,.15); padding-top:8px; }
+.riskg-verdict { font-size:14px; color:#c4ccdc; margin-top:12px; line-height:1.6; }
+.riskg-disclaimer { font-size:11.5px; color:#6b7488; margin-top:10px; font-style:italic; border-top:1px solid rgba(96,110,145,.15); padding-top:8px; }
 </style>
 """
 
@@ -36384,6 +36400,63 @@ def _compute_market_risk_gauge(cache_key: str) -> dict:
         components.append(("台股加權乖離", f"{dev:+.1f}%", sub, lvl, note))
         risk_parts.append(sub)
 
+    # --- 6) 美債 10 年期殖利率水位 (^TNX) — 利率飆升壓抑股市估值 ---
+    if tnx:
+        y = tnx[-1]
+        if y >= 5.0:
+            sub, lvl, note = 70, "danger", f"偏高 {y:.2f}%"
+        elif y >= 4.0:
+            sub, lvl, note = 50, "warn", f"中性 {y:.2f}%"
+        else:
+            sub, lvl, note = 30, "calm", f"溫和 {y:.2f}%"
+        components.append(("美債10年殖利率", f"{y:.2f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 7) 信用利差 (HYG 高收益債 vs LQD 投資級債) — 利差擴大=避險/違約憂慮 ---
+    hyg = _closes("HYG", days=30)
+    lqd = _closes("LQD", days=30)
+    if len(hyg) >= 6 and len(lqd) >= 6:
+        # 用近5日相對表現: 高收益債弱於投資級 = 信用利差擴大 (風險上升)
+        hyg_chg = (hyg[-1] / hyg[-6] - 1.0) * 100.0
+        lqd_chg = (lqd[-1] / lqd[-6] - 1.0) * 100.0
+        spread_chg = hyg_chg - lqd_chg  # 負 = 高收弱於投資級 = 利差擴大
+        if spread_chg <= -1.5:
+            sub, lvl, note = 75, "danger", f"利差擴大 {spread_chg:+.1f}%"
+        elif spread_chg <= -0.5:
+            sub, lvl, note = 55, "warn", f"略擴大 {spread_chg:+.1f}%"
+        else:
+            sub, lvl, note = 28, "calm", f"穩定 {spread_chg:+.1f}%"
+        components.append(("信用利差(HY)", f"{spread_chg:+.1f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 8) 黃金避險流向 (GLD) — 資金湧入黃金=避險情緒升溫 ---
+    gld = _closes("GLD", days=30)
+    if len(gld) >= 6:
+        g_chg = (gld[-1] / gld[-6] - 1.0) * 100.0
+        if g_chg >= 4:
+            sub, lvl, note = 65, "warn", f"避險買盤 {g_chg:+.1f}%"
+        elif g_chg >= 2:
+            sub, lvl, note = 50, "warn", f"轉強 {g_chg:+.1f}%"
+        else:
+            sub, lvl, note = 30, "calm", f"平穩 {g_chg:+.1f}%"
+        components.append(("黃金避險(GLD)", f"{g_chg:+.1f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
+    # --- 9) S&P500 距近 1 年高點回落幅度 (drawdown) — 修正/熊市訊號 ---
+    if len(spx) >= 60:
+        peak = max(spx[-250:]) if len(spx) >= 250 else max(spx)
+        drawdown = (spx[-1] / peak - 1.0) * 100.0
+        if drawdown <= -20:
+            sub, lvl, note = 90, "danger", f"熊市 {drawdown:.0f}%"
+        elif drawdown <= -10:
+            sub, lvl, note = 70, "danger", f"修正 {drawdown:.0f}%"
+        elif drawdown <= -5:
+            sub, lvl, note = 50, "warn", f"回落 {drawdown:.0f}%"
+        else:
+            sub, lvl, note = 25, "calm", f"近高點 {drawdown:.0f}%"
+        components.append(("S&P500回落", f"{drawdown:.1f}%", sub, lvl, note))
+        risk_parts.append(sub)
+
     if not risk_parts:
         return {}
 
@@ -36417,7 +36490,7 @@ def render_market_risk_gauge(lang_zh: bool = True) -> None:
         P = ['<div class="riskg-shell">']
         P.append('<div class="riskg-head"><div>')
         P.append(f'<div class="riskg-title">🌡️ {"市場風險溫度計" if lang_zh else "Market Risk Gauge"}</div>')
-        P.append(f'<div class="riskg-sub">{"VIX · 殖利率曲線 · 大盤乖離 · 台股 綜合風險參考" if lang_zh else "Composite risk reference"}</div>')
+        P.append(f'<div class="riskg-sub">{"VIX · 殖利率 · 信用利差 · 黃金 · 大盤回落 · 台股 綜合風險參考" if lang_zh else "Composite risk reference"}</div>')
         P.append('</div>')
         P.append(f'<div class="riskg-score-wrap"><div class="riskg-score riskg-{level}">{score:.0f}</div>'
                  f'<div class="riskg-level riskg-{level}">{level_txt}</div></div>')
