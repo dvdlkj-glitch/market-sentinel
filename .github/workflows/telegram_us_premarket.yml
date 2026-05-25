@@ -1,0 +1,35 @@
+name: Telegram US Premarket Brief
+
+# 美股開盤前簡報。美股開盤 9:30 ET = 台灣 21:30(夏)/22:30(冬)。
+# 設在台灣 21:00 (UTC 13:00) 推送, 約開盤前 0.5~1.5 小時, 盤前消息已明朗。
+on:
+  schedule:
+    - cron: '0 13 * * 1-5'   # 週一到週五 UTC 13:00 = 台灣 21:00
+  workflow_dispatch: {}        # 手動觸發 (測試用)
+
+jobs:
+  premarket:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance alpaca-py
+
+      - name: Send US premarket brief
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          ALPACA_PAPER: 'true'
+        run: python telegram_us_premarket.py
