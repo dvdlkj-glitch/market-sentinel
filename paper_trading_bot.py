@@ -386,6 +386,36 @@ def run_bot():
     print(f"選股池 ({len(UNIVERSE)} 檔): {', '.join(UNIVERSE)}")
 
     trading, data = _get_alpaca_clients()
+
+    # v1.1: 休市偵測 — 用 Alpaca get_clock() 查市場是否開盤 (含假期/週末)。
+    # 美股假期 (如 Memorial Day) 或週末 bot 不該動作, 避免無意義掛單與決策報告。
+    # 節奏 A 是「收盤後決策、隔天開盤成交」, 所以邏輯: 若「下一個開盤日」不是
+    # 緊接著的交易日 (即今天非交易日), 或當下市場已收盤且非交易日, 則跳過。
+    # 最穩健: 直接看 get_clock 的 is_open + 今天是否在交易日曆。
+    try:
+        clock = trading.get_clock()
+        # clock.is_open: 當下是否盤中; next_open/next_close 是下一個開關盤時間。
+        # bot 在收盤後跑, is_open 通常 False (正常)。要分辨「收盤後」vs「整天休市」:
+        # 用 trading calendar 查今天是否為交易日。
+        is_trading_day = True
+        try:
+            from alpaca.trading.requests import GetCalendarRequest
+            from datetime import date as _date
+            today_d = datetime.now(timezone.utc).date()
+            cal = trading.get_calendar(filters=GetCalendarRequest(start=today_d, end=today_d))
+            # cal 為空 list = 今天不是交易日 (週末/假期)
+            is_trading_day = bool(cal)
+        except Exception as _ce:
+            print(f"  [warn] 交易日曆查詢失敗, 改用 clock 判斷: {type(_ce).__name__}: {_ce}")
+            # fallback: 若 clock 顯示 next_open 距今超過 ~20 小時, 多半是長假/週末
+            is_trading_day = True  # 查不到就保守當交易日 (Alpaca 仍會擋休市成交)
+
+        if not is_trading_day:
+            print("今天美股休市 (假期/週末) — bot 不動作, 跳過本次決策。")
+            return
+    except Exception as _e:
+        print(f"  [warn] 休市偵測失敗 ({type(_e).__name__}: {_e}), 繼續執行 (Alpaca 仍會擋休市成交)")
+
     acct = _get_account_snapshot(trading)
     positions = _get_positions(trading)
     print(f"帳戶: 總資產 ${acct['portfolio_value']:,.0f} / 現金 ${acct['cash']:,.0f} / 持倉 {len(positions)} 檔")
