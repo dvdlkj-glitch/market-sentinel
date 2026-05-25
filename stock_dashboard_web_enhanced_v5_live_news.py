@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.47
+Version : v1.13.48
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,23 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.48 (2026-05-26)  [Fix: 「刷新 Overall」按鈕卡在「正在更新供應鏈快照」]
+
+  問題: 供應鏈 dashboard 按「刷新 Overall」一直轉「正在更新供應鏈 Overall
+  快照...」不出來 (同 v1.13.45 一般進入卡 fetch_ticker_news, 但那次只修一般
+  進入路徑, 刷新按鈕仍走 force_refresh 舊路徑)。
+  根因: force_refresh=True → build_supply_chain_overview_rows 重建 6 族群快照
+  → 每族群 enrich_supply_chain_top_rows 對 top 10 成分股逐檔 collect_ticker_
+  context (抓新聞 news_limit=6) → 最多 60 次序列外部抓取, 無 timeout → 卡死。
+
+  兩層修法:
+  (1) enrich_supply_chain_top_rows 的逐檔新聞抓取改 ThreadPoolExecutor 並行
+      (max_workers=8, 每檔 timeout 20s)。純讀取, 並行安全。序列→並行大幅加速。
+      並行整個失敗則回退序列 (不退化)。
+  (2) 「刷新 Overall」按鈕用執行緒包重建 + 總時限 75s。超時/出錯 → 改用
+      one-shot 既有快照渲染 (force_refresh=False) + 提示, 不再無限等待。
+  → 刷新要嘛快速完成, 要嘛 75s 內 fallback, 不再卡死。
 
 v1.13.47 (2026-05-26)  [Enhance: 風險溫度計 — 字體放大 + 新增崩盤前兆指標]
 
@@ -6872,9 +6889,38 @@ def enrich_supply_chain_top_rows(
     lens_meta: dict | None = None,
     lead_story_fallback: str = "",
 ) -> list[dict]:
+    # v1.13.48: 原本逐檔序列呼叫 collect_ticker_context (抓新聞, news_limit=6),
+    # 10 檔 × 6 族群 = 最多 60 次序列外部抓取 → 「刷新 Overall」卡很久。
+    # collect_ticker_context 是純讀取, 並行安全 → 改 ThreadPoolExecutor 並行,
+    # 把序列往返壓成並行, 大幅加速。任何失敗回退該檔原 row (不退化)。
+    bundles: dict[int, dict | None] = {}
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            _futs = {
+                _ex.submit(
+                    collect_ticker_context, daily_data, intraday_data,
+                    row["ticker"], news_limit=6, lens_meta=lens_meta,
+                ): i
+                for i, row in enumerate(rows)
+            }
+            for _f in _futs:
+                i = _futs[_f]
+                try:
+                    bundles[i] = _f.result(timeout=20)
+                except Exception:
+                    bundles[i] = None
+    except Exception:
+        # 並行整個失敗 → 回退序列 (不退化)
+        for i, row in enumerate(rows):
+            try:
+                bundles[i] = collect_ticker_context(daily_data, intraday_data, row["ticker"], news_limit=6, lens_meta=lens_meta)
+            except Exception:
+                bundles[i] = None
+
     enriched: list[dict] = []
-    for row in rows:
-        bundle = collect_ticker_context(daily_data, intraday_data, row["ticker"], news_limit=6, lens_meta=lens_meta)
+    for i, row in enumerate(rows):
+        bundle = bundles.get(i)
         if bundle is None:
             enriched.append(dict(row))
             continue
@@ -40324,7 +40370,36 @@ def render_supply_chain_lab_dashboard(
             )
         if refresh_now:
             with st.spinner("正在更新供應鏈 Overall 快照..." if lang_zh else "Refreshing supply-chain overview snapshots..."):
-                render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=True)
+                # v1.13.48: 「刷新 Overall」force_refresh 會重建快照 →
+                # enrich_supply_chain_top_rows 對 6 族群×10 檔成分股抓新聞
+                # (collect_ticker_context, news_limit=6), 序列、無 timeout → 卡死。
+                # 加總時限保護: 用執行緒跑重建, 超時 (75s) 就放棄、改用 one-shot
+                # 既有快照顯示 + 提示。避免使用者無限等待。
+                import concurrent.futures as _cf
+                _done = False
+                try:
+                    with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+                        _fut = _ex.submit(
+                            build_supply_chain_overview_rows,
+                            selected_keys, lens_meta=lens_meta, force_refresh=True,
+                        )
+                        _refreshed_rows = _fut.result(timeout=75)
+                    _done = True
+                except _cf.TimeoutError:
+                    st.warning(
+                        "刷新逾時 (新聞/外資抓取較慢) — 已改用現有快照顯示。可稍後再試, 或直接看下方既有資料。"
+                        if lang_zh else
+                        "Refresh timed out — showing existing snapshot instead."
+                    )
+                except Exception as _re:
+                    st.warning(
+                        f"刷新時發生問題 ({type(_re).__name__}) — 已改用現有快照顯示。"
+                        if lang_zh else
+                        f"Refresh error ({type(_re).__name__}) — showing existing snapshot."
+                    )
+                # 不論成功或超時, 都用 (非 force) 路徑渲染: 成功的話新快照已寫入快取,
+                # 超時的話用 one-shot 既有資料。一律不再 force (避免再次卡住)。
+                render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=False)
         else:
             render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=False)
         render_active_trend_lens(lens_meta)
