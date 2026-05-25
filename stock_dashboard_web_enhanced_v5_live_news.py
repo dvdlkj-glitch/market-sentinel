@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.43
+Version : v1.13.44
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,21 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.44 (2026-05-26)  [Fix: 供應鏈模式「供應鏈摘要」顯示「沒有快照」]
+
+  問題: 進供應鏈 dashboard 模式 → 第一分頁「供應鏈摘要 (Chain Brief)」顯示
+  「目前還沒有可用的供應鏈快照」, 摘要出不來。
+  根因: render_supply_chain_overall_summary 用舊路徑 build_supply_chain_overview_
+  rows → peek 走 lens-specific 查詢 (要 period/interval/lens_title 對得上)。
+  prefetch 寫入的 lens 與前台查詢對不上 → 回空 → 顯示「沒有快照」。
+  (熱度卡 v1.13.40 已改用 one-shot 一次撈整表, 不挑 lens, 證實可用; 但這個
+   摘要還走舊路徑, 沒受惠。)
+
+  修法: (1) render_supply_chain_overall_summary 在舊路徑 rows 回空時, fallback
+  用 _cached_supply_chain_heat_oneshot (熱度卡同源, 一次撈整表), 依 selected_keys
+  過濾。(2) one-shot 輸出補 aggregate_move_sum 欄位 (摘要排序/顯示需要)。
+  不動舊路徑 (仍優先), 只在它失敗時補上 → 不退化。
 
 v1.13.43 (2026-05-23)  [Fix: 供應鏈熱度卡漲幅消失 / 顯示「資料整理中」]
 
@@ -19245,6 +19260,7 @@ def _cached_supply_chain_heat_oneshot(cache_key: str) -> list:
                 "rising_count": int(snap.get("rising_count", 0) or 0),
                 "ticker_count": int(snap.get("ticker_count", 0) or 0),
                 "foreign_net_total": None if pd.isna(_fnet) else float(_fnet),
+                "aggregate_move_sum": _agg_num,  # v1.13.44: 供應鏈摘要 (overall summary) 排序/顯示用
                 "_sort_key": _agg_num if _agg_num is not None else (_avg if _avg is not None else -1e9),
             })
         # 由強到弱排序, 補 rank
@@ -39481,6 +39497,19 @@ def render_supply_chain_overall_summary(
     lang_zh = get_language() == "zh_TW"
     inject_supply_chain_overview_css()
     rows = build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=force_refresh)
+    if not rows:
+        # v1.13.44: 舊路徑 (build_supply_chain_overview_rows) 走 lens-specific peek,
+        # 若 prefetch 寫入的 lens 與前台查詢對不上會回空 → 摘要顯示「沒有快照」。
+        # Fallback 用熱度卡證實可用的 one-shot (一次撈整表, 不挑 lens)。
+        try:
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
+            _oneshot = _cached_supply_chain_heat_oneshot(_key)
+            if isinstance(_oneshot, list) and _oneshot:
+                # one-shot 是全表最新; 若有指定 selected_keys 就過濾, 否則全用
+                _sel = set(selected_keys or [])
+                rows = [r for r in _oneshot if (not _sel or r.get("config_key") in _sel)]
+        except Exception:
+            rows = []
     if not rows:
         st.info("目前還沒有可用的供應鏈快照。" if lang_zh else "No supply-chain snapshots are available yet.")
         return []
