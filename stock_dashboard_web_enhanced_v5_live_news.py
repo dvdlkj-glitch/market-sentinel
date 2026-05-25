@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.51
+Version : v1.13.52
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,15 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.52 (2026-05-26)  [UX: 股票研究模式隱藏上方主 Dashboard 區塊]
+
+  User 回報: 跳到「股票研究」後, 上方台灣市場指標 + 風險溫度計仍顯示, 要捲
+  很久才到股票研究功能。
+  修: 偵測股票研究模式 (_is_stock_research_focus = Expert layout + ticker_desks
+  tab + General Market), 為真時跳過整個「台灣市場指標 + 風險溫度計」區塊,
+  讓使用者直接看到個股工作台。其他模式/層級維持原樣 (一進來看市場總覽)。
+  snapshot_row 給預設 None 避免跳過時後續 NameError。
 
 v1.13.51 (2026-05-26)  [Fix: 加入個股跳轉目標改為「股票研究」(非個股比較)]
 
@@ -53485,44 +53494,54 @@ def generate_dashboard():
     # The user-facing "🔄 抓今天最新" button forces a live refetch when
     # they want fresh numbers; we detect that via the
     # _force_live_main_dashboard session_state flag.
-    scope_for_indicator = st.session_state.get(
-        "dashboard_market_scope", "Taiwan only"
+    # v1.13.52: 「股票研究」模式 (Expert layout + 個股工作台 tab) 時, 隱藏上方
+    # 台灣市場指標 + 風險溫度計, 讓使用者直接看到股票研究功能, 不必往下捲很多。
+    # 其他模式/層級維持原樣 (一進來就看到市場總覽)。
+    _is_stock_research_focus = (
+        st.session_state.get("dashboard_layout_mode") == "Expert"
+        and st.session_state.get("dashboard_expert_general_section") == "layout_ticker_desks_tab"
+        and dashboard_mode == "General Market"
     )
-    force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
-    snapshot_row = None
-    if not force_live:
-        snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
-
-    # Always render the freshness bar so the user knows what data
-    # they're looking at and can refresh.
-    render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
-
-    if snapshot_row and snapshot_row.get("global_indicator_payload"):
-        # Snapshot path: render directly from the stored payload.
-        render_global_market_indicator(snapshot_row["global_indicator_payload"])
-    else:
-        # Live path (snapshot missing OR user pressed refresh).
-        global_reference_data = fetch_global_reference_data(period, interval)
-        scope_indices = get_indices_for_scope(scope_for_indicator)
-        live_quote_tickers = tuple(
-            item["ticker"] for item in scope_indices
-            if not item["ticker"].startswith("__")
+    snapshot_row = None  # v1.13.52: 預設值, 避免股票研究模式跳過上方區塊時後續 NameError
+    if not _is_stock_research_focus:
+        scope_for_indicator = st.session_state.get(
+            "dashboard_market_scope", "Taiwan only"
         )
-        global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
-        global_indicator = build_global_market_indicator(
-            global_reference_data,
-            lens_meta=lens_meta,
-            live_quotes=global_reference_quotes,
-            market_scope=scope_for_indicator,
-        )
-        render_global_market_indicator(global_indicator)
+        force_live = bool(st.session_state.pop("_force_live_main_dashboard", False))
+        snapshot_row = None
+        if not force_live:
+            snapshot_row = load_main_dashboard_snapshot(scope_for_indicator)
 
-    # v1.13.46: 🌡️ 市場風險溫度計 — 緊接在「台灣市場指標」(基準廣度) 之後,
-    # 這是 user 一進 dashboard 就看到的位置。全程防禦, 失敗靜默不顯示。
-    try:
-        render_market_risk_gauge(lang_zh=_news_briefing_is_zh())
-    except Exception:
-        pass
+        # Always render the freshness bar so the user knows what data
+        # they're looking at and can refresh.
+        render_snapshot_freshness_bar(snapshot_row, lang_zh=_news_briefing_is_zh())
+
+        if snapshot_row and snapshot_row.get("global_indicator_payload"):
+            # Snapshot path: render directly from the stored payload.
+            render_global_market_indicator(snapshot_row["global_indicator_payload"])
+        else:
+            # Live path (snapshot missing OR user pressed refresh).
+            global_reference_data = fetch_global_reference_data(period, interval)
+            scope_indices = get_indices_for_scope(scope_for_indicator)
+            live_quote_tickers = tuple(
+                item["ticker"] for item in scope_indices
+                if not item["ticker"].startswith("__")
+            )
+            global_reference_quotes = fetch_live_reference_quotes(live_quote_tickers)
+            global_indicator = build_global_market_indicator(
+                global_reference_data,
+                lens_meta=lens_meta,
+                live_quotes=global_reference_quotes,
+                market_scope=scope_for_indicator,
+            )
+            render_global_market_indicator(global_indicator)
+
+        # v1.13.46: 🌡️ 市場風險溫度計 — 緊接在「台灣市場指標」(基準廣度) 之後,
+        # 這是 user 一進 dashboard 就看到的位置。全程防禦, 失敗靜默不顯示。
+        try:
+            render_market_risk_gauge(lang_zh=_news_briefing_is_zh())
+        except Exception:
+            pass
 
     # v1.12.2 / v1.12.6 / v1.12.8: Focal Points + Momentum Pulse blocks.
     #
