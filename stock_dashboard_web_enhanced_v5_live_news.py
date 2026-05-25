@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.49
+Version : v1.13.50
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,15 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.50 (2026-05-26)  [UX: 側邊欄加入個股後自動跳「研究個股」工作台]
+
+  User 回報: 主頁面搜尋個股、按加入勾選後, 主頁面沒任何反應 (selection 只反映
+  在 Stock Comparison 個股研究 dashboard), 使用者以為沒作用。
+  修: 三個「加入」按鈕 (加入自訂代號 / 加入搜尋結果 / 加入勾選股票) 在加入
+  selection 後, 設 dashboard_mode = "Stock Comparison" 再 rerun → 自動跳到
+  研究個股工作台, 立即看到剛加入的個股。(沿用 v1.13.5 smart-compare 先例做法。)
+  [問題2 側邊欄精簡 (自訂代號 vs 智慧搜尋) 待 user 確認方向後處理。]
 
 v1.13.49 (2026-05-26)  [Fix: 側邊欄輸入框白字 + 台股搜尋顯示中文名]
 
@@ -47103,6 +47112,9 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
             selected_market_scope,
         )
         st.session_state["dashboard_selected_tickers_initialized"] = True
+        # v1.13.50: 加入個股後自動跳到「研究個股」(Stock Comparison) 工作台,
+        # 否則停在原頁面使用者以為沒反應。
+        st.session_state["dashboard_mode"] = "Stock Comparison"
         st.rerun()
 
     symbol_search_widget_key = "dashboard_symbol_search_widget"
@@ -47152,6 +47164,8 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
                     selected_market_scope,
                 )
                 st.session_state["dashboard_selected_tickers_initialized"] = True
+                # v1.13.50: 加入搜尋結果後自動跳到「研究個股」工作台。
+                st.session_state["dashboard_mode"] = "Stock Comparison"
                 st.rerun()
         else:
             st.session_state["dashboard_symbol_search_matches"] = []
@@ -47206,6 +47220,8 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
             selected_market_scope,
         )
         st.session_state["dashboard_selected_tickers_initialized"] = True
+        # v1.13.50: 加入勾選股票後自動跳到「研究個股」工作台。
+        st.session_state["dashboard_mode"] = "Stock Comparison"
         st.rerun()
     if candidate_action_cols[1].button(select_all_visible_label, use_container_width=True):
         st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
