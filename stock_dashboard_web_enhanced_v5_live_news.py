@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.52
+Version : v1.13.53
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,21 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.53 (2026-05-26)  [Fix: 股票研究隱藏動能脈搏 + ETF 自動回來 bug]
+
+  問題1: 股票研究模式仍顯示明日動能脈搏 / 前一日加權指數貢獻拆解 / TSMC 供應鏈
+  5 大。根因: render_tomorrow_momentum_pulse 在 dashboard_mode=="General Market"
+  就無條件顯示 (這三者是一體: pulse 內部 chain 貢獻拆解 + TSMC Top 5)。
+  修: 呼叫條件加 `and not _is_stock_research_focus` → 股票研究模式一併隱藏三者。
+
+  問題2: 主動型 ETF 自動加入選股、移除後又自動回來。兩個根因:
+  (a) ACTIVE_ETF_QUICK_PICK_SYMBOLS 預設填充原本「無條件」(只要 active_etf_picks
+      空且非明確清空就填), 導致任何模式移除後 rerun 又被加回。改為「限定
+      dashboard_mode == Active ETF Lab」才預設帶入。
+  (b) render_taiwan_market_macro_strip 用 `selected += session_state[...]`,
+      += 會 mutate session_state 的 list reference, 把 active_etf_tickers
+      永久併進 dashboard_selected_tickers。改用 list concat (不 mutate)。
 
 v1.13.52 (2026-05-26)  [UX: 股票研究模式隱藏上方主 Dashboard 區塊]
 
@@ -14968,7 +14983,11 @@ def load_dashboard_preferences() -> None:
     _etfpicks_raw = _query_param_first("etfpicks") or _profile_value("etfpicks") or ""
     _etfpicks_explicitly_empty = str(_etfpicks_raw).strip() == EMPTY_SELECTION_SENTINEL
     _etfpicks_specified = _query_param_exists("etfpicks") or bool(_profile_value("etfpicks"))
-    if not active_etf_picks and not _etfpicks_specified and not _etfpicks_explicitly_empty:
+    # v1.13.53: 自動帶入只在 Active ETF Lab 模式生效。原本無條件填充, 導致
+    # 使用者在其他模式 (如股票研究) 移除 ETF 後, 下次 rerun 又被全部加回來
+    # (「移除還會回來」的 bug)。限定 ETF Lab 才預設帶入。
+    if (not active_etf_picks and not _etfpicks_specified and not _etfpicks_explicitly_empty
+            and dashboard_mode == "Active ETF Lab"):
         active_etf_picks = filter_active_etf_tickers(list(ACTIVE_ETF_QUICK_PICK_SYMBOLS))
     active_etf_custom_symbols = _query_param_first("etfcustom") or _profile_value("etfcustom") or st.session_state.get("dashboard_active_etf_custom_symbols", "")
     active_etf_symbol_search = _query_param_first("etfsearch") or _profile_value("etfsearch") or st.session_state.get("dashboard_active_etf_symbol_search", "")
@@ -36312,8 +36331,10 @@ def _official_source_story_html(
 
 
 def render_taiwan_market_macro_strip(force_show: bool = False) -> None:
-    selected = st.session_state.get("dashboard_selected_tickers", []) or []
-    selected += st.session_state.get("dashboard_active_etf_tickers", []) or []
+    # v1.13.53: 用 list concat 而非 += (原 += 會 mutate session_state 的 list
+    # reference, 把 active_etf_tickers 永久併進 selected_tickers)。
+    selected = list(st.session_state.get("dashboard_selected_tickers", []) or [])
+    selected = selected + list(st.session_state.get("dashboard_active_etf_tickers", []) or [])
     has_tw = force_show or any(is_taiwan_ticker(ticker) for ticker in selected)
     if not has_tw:
         return
@@ -53637,7 +53658,9 @@ def generate_dashboard():
     # Always renders when General Market mode is active because momentum
     # pulse internally chains into TSMC Top 5 (Taiwan) or U.S. Theme Radar
     # (U.S.) — these are core navigation, not hooks that should hide.
-    if dashboard_mode == "General Market":
+    # v1.13.53: 但「股票研究」模式 (個股工作台聚焦) 要隱藏明日動能脈搏 (內含
+    # 前一日加權指數貢獻拆解 + TSMC 供應鏈 5 大), 讓使用者直達個股研究功能。
+    if dashboard_mode == "General Market" and not _is_stock_research_focus:
         _momentum_scope = st.session_state.get("dashboard_market_scope", "Taiwan only")
         # v1.13.12: Same defensive wrap as focal points above.
         with st.spinner("⚡ 計算明日動能脈搏…" if _news_briefing_is_zh() else "⚡ Computing Tomorrow Momentum Pulse…"):
