@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.50
+Version : v1.13.51
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,16 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.51 (2026-05-26)  [Fix: 加入個股跳轉目標改為「股票研究」(非個股比較)]
+
+  v1.13.50 跳到 Stock Comparison (個股比較) — 跳錯了。User 要的是「股票研究」
+  = Expert 層級的個股工作台 (單檔深度挖掘), 與個股比較是不同功能。
+  修: 三個「加入」按鈕改設 = General Market + experience_level=expert +
+  layout_mode=Expert + expert_general_section=layout_ticker_desks_tab
+  (同 Hero Bar「股票研究」按鈕做法 line ~14203)。dashboard_mode 保持
+  General Market (個股工作台在 General Market 的 Expert layout 下)。
+  [問題2: 側邊欄精簡 (自訂代號/智慧搜尋擇一) 待 user 確認保留哪個。]
 
 v1.13.50 (2026-05-26)  [UX: 側邊欄加入個股後自動跳「研究個股」工作台]
 
@@ -47112,9 +47122,14 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
             selected_market_scope,
         )
         st.session_state["dashboard_selected_tickers_initialized"] = True
-        # v1.13.50: 加入個股後自動跳到「研究個股」(Stock Comparison) 工作台,
-        # 否則停在原頁面使用者以為沒反應。
-        st.session_state["dashboard_mode"] = "Stock Comparison"
+        # v1.13.51: 加入個股後自動跳到「股票研究」(Expert 個股工作台), 非個股比較。
+        # 正確設定 = General Market + expert 層級 + ticker desks tab (同 Hero Bar
+        # 「股票研究」按鈕做法 line ~14203)。
+        st.session_state["dashboard_mode"] = "General Market"
+        st.session_state["dashboard_experience_level"] = "expert"
+        st.session_state["dashboard_layout_mode"] = "Expert"
+        st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+        st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
         st.rerun()
 
     symbol_search_widget_key = "dashboard_symbol_search_widget"
@@ -47164,8 +47179,12 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
                     selected_market_scope,
                 )
                 st.session_state["dashboard_selected_tickers_initialized"] = True
-                # v1.13.50: 加入搜尋結果後自動跳到「研究個股」工作台。
-                st.session_state["dashboard_mode"] = "Stock Comparison"
+                # v1.13.51: 加入搜尋結果後跳「股票研究」(Expert 個股工作台)。
+                st.session_state["dashboard_mode"] = "General Market"
+                st.session_state["dashboard_experience_level"] = "expert"
+                st.session_state["dashboard_layout_mode"] = "Expert"
+                st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+                st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
                 st.rerun()
         else:
             st.session_state["dashboard_symbol_search_matches"] = []
@@ -47220,8 +47239,12 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
             selected_market_scope,
         )
         st.session_state["dashboard_selected_tickers_initialized"] = True
-        # v1.13.50: 加入勾選股票後自動跳到「研究個股」工作台。
-        st.session_state["dashboard_mode"] = "Stock Comparison"
+        # v1.13.51: 加入勾選股票後跳「股票研究」(Expert 個股工作台)。
+        st.session_state["dashboard_mode"] = "General Market"
+        st.session_state["dashboard_experience_level"] = "expert"
+        st.session_state["dashboard_layout_mode"] = "Expert"
+        st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
+        st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
         st.rerun()
     if candidate_action_cols[1].button(select_all_visible_label, use_container_width=True):
         st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
