@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.44
+Version : v1.13.45
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,20 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.45 (2026-05-26)  [Fix: 進供應鏈摘要卡死在 fetch_ticker_news]
+
+  問題: 進供應鏈 dashboard 模式, 卡在「正在更新供應鏈 Overall 快照」+
+  Running fetch_ticker_news(...), 一直轉進不來。
+  根因: render_supply_chain_overall_summary → build_supply_chain_overview_rows
+  觸發重建快照 → _build_supply_chain_focus_snapshot 對所有族群的所有成分股抓
+  新聞 (news_label / bullish_news_count), 無 timeout 保護 → 卡死。
+
+  修法: 非 force_refresh (一般進入) 時, 優先用 _cached_supply_chain_heat_oneshot
+  (熱度卡同源, 一次撈整表, 純讀取不抓新聞, 毫秒級)。只有 user 明確按「刷新
+  Overall」(force_refresh=True) 才走會抓新聞的舊路徑 (使用者已接受等待 + 有
+  spinner)。one-shot 空才退舊路徑, 仍空再保險試一次 one-shot。
+  → 一般進入秒開, 不再卡新聞抓取。
 
 v1.13.44 (2026-05-26)  [Fix: 供應鏈模式「供應鏈摘要」顯示「沒有快照」]
 
@@ -39496,18 +39510,32 @@ def render_supply_chain_overall_summary(
 ) -> list[dict]:
     lang_zh = get_language() == "zh_TW"
     inject_supply_chain_overview_css()
-    rows = build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=force_refresh)
-    if not rows:
-        # v1.13.44: 舊路徑 (build_supply_chain_overview_rows) 走 lens-specific peek,
-        # 若 prefetch 寫入的 lens 與前台查詢對不上會回空 → 摘要顯示「沒有快照」。
-        # Fallback 用熱度卡證實可用的 one-shot (一次撈整表, 不挑 lens)。
+    # v1.13.45: 進供應鏈摘要「卡在 fetch_ticker_news」修正。
+    # 舊路徑 build_supply_chain_overview_rows 會觸發重建快照 → 對所有成分股抓
+    # 新聞 (news_label), 無 timeout → 卡死。改為「非 force_refresh 時優先用
+    # one-shot」(熱度卡同源, 純讀取、不抓新聞、毫秒級)。只有 user 明確按
+    # 「刷新 Overall」(force_refresh=True) 才走會抓新聞的舊路徑 (使用者接受等待)。
+    rows: list[dict] = []
+    if not force_refresh:
         try:
             _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
             _oneshot = _cached_supply_chain_heat_oneshot(_key)
             if isinstance(_oneshot, list) and _oneshot:
-                # one-shot 是全表最新; 若有指定 selected_keys 就過濾, 否則全用
                 _sel = set(selected_keys or [])
                 rows = [r for r in _oneshot if (not _sel or r.get("config_key") in _sel)]
+        except Exception:
+            rows = []
+    # one-shot 沒拿到 (或 force_refresh) → 走舊路徑
+    if not rows:
+        rows = build_supply_chain_overview_rows(selected_keys, lens_meta=lens_meta, force_refresh=force_refresh)
+    if not rows:
+        # 最後再試一次 one-shot (舊路徑也空時的保險)
+        try:
+            _key2 = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
+            _oneshot2 = _cached_supply_chain_heat_oneshot(_key2)
+            if isinstance(_oneshot2, list) and _oneshot2:
+                _sel2 = set(selected_keys or [])
+                rows = [r for r in _oneshot2 if (not _sel2 or r.get("config_key") in _sel2)]
         except Exception:
             rows = []
     if not rows:
