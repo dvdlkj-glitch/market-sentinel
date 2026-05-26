@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.56
+Version : v1.13.57
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,18 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.57 (2026-05-26)  [UX: 「股票比較」按鈕直接進 Stock Comparison 獨立模式]
+
+  User: 點 Hero Bar「股票比較 ★ (PK 一下誰最強)」應進 Stock Comparison 獨立模式
+  (全頁比較), 但原本跳成 advanced 層級的比較 tab (General Market 下), 而且還顯示
+  上方台灣市場指標/風險溫度計/動能脈搏/貢獻拆解/TSMC 5大。
+  根因: advanced 按鈕原設 dashboard_advanced_general_section=layout_compare_tab
+  (General Market 比較 tab), 不是 Stock Comparison mode。
+  修: advanced 分支改設 dashboard_mode="Stock Comparison"。Stock Comparison 是
+  full-page takeover (line ~53559 直接 return), 本來就不顯示那五個上方區塊 →
+  跳轉修對的同時, 隱藏需求自動達成。
+  [A 方案, 待 user 確認後定案。]
 
 v1.13.56 (2026-05-26)  [Fix: 同類股比較按鈕白底白字 (改 .st-key 鎖定)]
 
@@ -14260,9 +14272,10 @@ def render_top_dashboard_selectors() -> None:
                     # Standard layout → step navigator → jump to plan/compare tab
                     st.session_state["dashboard_standard_general_section"] = "layout_standard_compare_plan_tab"
                 elif level["key"] == "advanced":
-                    # Advanced layout → lightweight selector → jump to compare
-                    st.session_state["dashboard_advanced_general_section"] = "layout_compare_tab"
-                    st.session_state["dashboard_advanced_general_section__selector"] = "layout_compare_tab"
+                    # v1.13.57: 「股票比較」直接進 Stock Comparison 獨立模式 (全頁比較),
+                    # 而非 General Market 的比較 tab。Stock Comparison 是 full-page
+                    # takeover, 不會顯示台灣市場指標/風險溫度計/動能脈搏等上方區塊。
+                    st.session_state["dashboard_mode"] = "Stock Comparison"
                 elif level["key"] == "expert":
                     # Expert layout → lightweight selector → jump to ticker desks (個股工作台)
                     st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
