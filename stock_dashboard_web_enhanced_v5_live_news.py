@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.54
+Version : v1.13.55
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,15 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.55 (2026-05-26)  [Fix: 「跟N檔同類股比較」按鈕白底白字看不見]
+
+  User: 個股研究的「🔄 跟 4 檔同類股比較」按鈕白底白字, 滑鼠移過去才看到字。
+  根因: _SMART_COMPARE_BTN_CSS 用 adjacent-sibling `.smart-compare-btn-wrap + div`
+  鎖定按鈕, 但 Streamlit DOM 某些情況 marker 與按鈕間多一層 wrapper → `+ div`
+  選不到 → CSS 沒套用 → 按鈕回到 Streamlit 預設 (亮色主題白底淺字)。
+  修: selector 改用 `~ div` (後續所有兄弟) + 多層涵蓋; 並加兜底規則強制按鈕內
+  p/span/div 著色 (避免 label 被包內層而顏色沒繼承)。深底綠字 (#8be8b1)。
 
 v1.13.54 (2026-05-26)  [Fix: 個股「綜合評分」誤判 — 台積電顯示 7/100 弱勢]
 
@@ -31540,9 +31549,15 @@ _SMART_COMPARE_BTN_CSS = """
 }
 
 /* Target the very next sibling — Streamlit's columns row containing
-   the button — and dive into the button element. */
+   the button — and dive into the button element.
+   v1.13.55: 原本只用 `+ div` (緊鄰下一兄弟), 但 Streamlit DOM 在某些版本/
+   情況下 marker 與按鈕間多一層 wrapper, `+ div` 選不到 → CSS 沒套用 →
+   按鈕變 Streamlit 預設白底白字 (滑鼠過去才看到字)。改用 `~` (後續所有
+   兄弟) + 多層涵蓋, 確保命中。 */
 .smart-compare-btn-wrap + div .stButton > button,
-.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button {
+.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button,
+.smart-compare-btn-wrap ~ div .stButton > button,
+.smart-compare-btn-wrap ~ div [data-testid="stHorizontalBlock"] .stButton > button {
     background: linear-gradient(180deg, rgba(76, 208, 168, 0.18), rgba(20, 26, 45, 0.85)) !important;
     border: 1px solid rgba(111, 217, 154, 0.55) !important;
     color: #8be8b1 !important;
@@ -31556,11 +31571,26 @@ _SMART_COMPARE_BTN_CSS = """
 }
 
 .smart-compare-btn-wrap + div .stButton > button:hover,
-.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button:hover {
+.smart-compare-btn-wrap + div [data-testid="stHorizontalBlock"] .stButton > button:hover,
+.smart-compare-btn-wrap ~ div .stButton > button:hover,
+.smart-compare-btn-wrap ~ div [data-testid="stHorizontalBlock"] .stButton > button:hover {
     background: linear-gradient(180deg, rgba(76, 208, 168, 0.30), rgba(20, 26, 45, 0.90)) !important;
     border-color: rgba(111, 217, 154, 0.85) !important;
     color: #b4f0c8 !important;
     transform: translateY(-1px) !important;
+}
+
+/* v1.13.55: 兜底 — 連按鈕內的文字 span/p 也強制著色, 避免 Streamlit 把
+   label 包在內層 element 而顏色沒繼承到。 */
+.smart-compare-btn-wrap ~ div .stButton > button p,
+.smart-compare-btn-wrap ~ div .stButton > button span,
+.smart-compare-btn-wrap ~ div .stButton > button div {
+    color: #8be8b1 !important;
+}
+.smart-compare-btn-wrap ~ div .stButton > button:hover p,
+.smart-compare-btn-wrap ~ div .stButton > button:hover span,
+.smart-compare-btn-wrap ~ div .stButton > button:hover div {
+    color: #b4f0c8 !important;
 }
 
 .smart-compare-btn-wrap + div .stButton > button:active,
