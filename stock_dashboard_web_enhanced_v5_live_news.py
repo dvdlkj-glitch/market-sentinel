@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.53
+Version : v1.13.54
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,18 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.54 (2026-05-26)  [Fix: 個股「綜合評分」誤判 — 台積電顯示 7/100 弱勢]
+
+  User 實驗: 台積電 (台股最強權值股, 加權佔比~40%) 綜合評分只有 7/100「弱勢」,
+  但同卡右側「趨勢強多 ●●●, 1Y +138%, 做多」— 自相矛盾。
+  根因: _build_ticker_hook_data 的 score 來自 analyze_market_sentinel 的
+  「原始累加分」(範圍約 -9~+9: 站上SMA200+2/SMA50>200+2/SMA20>50+1/RSI健康+1/
+  年漲+1/量增+1/新聞+1)。台積電原始分 ~7 (很強), 但 hook 直接拿這 7 去套
+  0-100 分級 (≥75強/≥55好/≥40中/≥25弱/<25poor) → 7<25 → 誤判「弱勢」+ 顯示
+  「7/100」。右側趨勢用 one_year_return (正確), 故左右矛盾。
+  修: 取 score 後線性映射 -9~+9 → 0~100 (中性0→50, +9→100, -9→0)。
+  驗證: 原始+7→89/100強●●●, +5→78強, 0→50中性, -5→22弱。台積電修正後顯示強勢。
 
 v1.13.53 (2026-05-26)  [Fix: 股票研究隱藏動能脈搏 + ETF 自動回來 bug]
 
@@ -30780,10 +30792,19 @@ def _build_ticker_hook_data(bundle: dict) -> dict:
     name = bundle.get("name") or analysis.get("name") or ""
     last_price = analysis.get("last_price")
 
-    # Score 0-100
+    # Score — v1.13.54: analyze_market_sentinel 的 score 是「原始累加分」,
+    # 範圍約 -9 ~ +9 (站上SMA200+2/SMA50>200+2/SMA20>50+1/RSI健康+1/年漲+1/
+    # 量增+1/新聞+1, 反向則扣分)。但此處原本直接拿來當 0-100 分級, 導致台積電
+    # 這種強股 (原始分 ~7) 被當成 7/100 → 誤判「弱勢」。
+    # 修: 把原始分線性映射到 0-100 (中性 0 分 → 50, +9 → 100, -9 → 0)。
     raw_score = analysis.get("score")
+    RAW_SCORE_MAX = 9.0  # 約略最高原始分
     try:
-        score = float(raw_score) if raw_score is not None else None
+        _rs = float(raw_score) if raw_score is not None else None
+        if _rs is None:
+            score = None
+        else:
+            score = max(0.0, min(100.0, 50.0 + (_rs / RAW_SCORE_MAX) * 50.0))
     except (TypeError, ValueError):
         score = None
 
