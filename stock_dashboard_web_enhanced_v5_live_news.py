@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.57
+Version : v1.13.58
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,17 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.58 (2026-05-26)  [Fix: prefetch 載入失敗 — f-string 內反斜線 (舊 Python)]
+
+  Daily Main Dashboard Prefetch (GitHub Actions) 載入主程式失敗:
+  「f-string expression part cannot include a backslash (line 20712)」。
+  根因: paper bot 前台區塊有 `f'...{"今日決策與依據" if lang_zh else
+  "Today\'s Decisions"}...'` — f-string 的 {表達式} 內含反斜線 (\')。
+  Python 3.12+ 放寬此限制 (故 Streamlit Cloud 沒爆), 但 prefetch 的 GitHub
+  Actions 跑較舊 Python (3.11-) → SyntaxError, 整個模組載入失敗。
+  修: 撇號改用彎引號 Today’s (U+2019, 無反斜線)。全檔掃描確認無其他同類問題。
+  教訓: 避免在 f-string 的 {} 表達式內用反斜線, 確保新舊 Python 都相容。
 
 v1.13.57 (2026-05-26)  [UX: 「股票比較」按鈕直接進 Stock Comparison 獨立模式]
 
@@ -20751,7 +20762,7 @@ def _render_bot_block_html(account: dict, positions: list, decisions: list, lang
     else:
         P.append(f'<div class="bot-sub">{"目前無持倉 (觀望中)" if lang_zh else "No positions"}</div>')
 
-    P.append(f'<div class="bot-section-title">📋 {"今日決策與依據" if lang_zh else "Today\'s Decisions"}</div>')
+    P.append(f'<div class="bot-section-title">📋 {"今日決策與依據" if lang_zh else "Today’s Decisions"}</div>')
     if decisions:
         for d in decisions:
             act = str(d.get("action", "hold"))
