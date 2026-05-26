@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.55
+Version : v1.13.56
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,14 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.56 (2026-05-26)  [Fix: 同類股比較按鈕白底白字 (改 .st-key 鎖定)]
+
+  v1.13.55 用 `~ div` sibling selector 仍沒命中 → 按鈕還是白底白字。
+  改用 Streamlit 的 `.st-key-{key}` class 精準鎖定 (與既有 supply_chain refresh
+  按鈕同款可靠做法, line ~39612)。用 [class*="st-key-hook_compare_btn"] 部分匹配
+  涵蓋所有 ticker; 按鈕 key 的 ticker 用 re.sub 清成 A-Za-z0-9_ (避免 . 等
+  特殊字元影響 class 匹配)。含按鈕內 p/span/div 兜底著色。深底綠字 #8be8b1。
 
 v1.13.55 (2026-05-26)  [Fix: 「跟N檔同類股比較」按鈕白底白字看不見]
 
@@ -31548,6 +31556,32 @@ _SMART_COMPARE_BTN_CSS = """
     overflow: hidden;
 }
 
+/* v1.13.56: 改用 Streamlit 的 .st-key-{key} class 精準鎖定 (最可靠, 不依賴
+   DOM 相鄰關係)。按鈕 key = hook_compare_btn_{ticker}, 用部分匹配涵蓋所有
+   ticker。這條放最後 + 高優先, 蓋過全域 .stButton>button 與預設白底。 */
+[class*="st-key-hook_compare_btn"] button {
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.20), rgba(20, 26, 45, 0.92)) !important;
+    border: 1px solid rgba(111, 217, 154, 0.55) !important;
+    color: #8be8b1 !important;
+    font-weight: 700 !important;
+    border-radius: 10px !important;
+}
+[class*="st-key-hook_compare_btn"] button p,
+[class*="st-key-hook_compare_btn"] button span,
+[class*="st-key-hook_compare_btn"] button div {
+    color: #8be8b1 !important;
+}
+[class*="st-key-hook_compare_btn"] button:hover {
+    background: linear-gradient(180deg, rgba(76, 208, 168, 0.32), rgba(20, 26, 45, 0.96)) !important;
+    border-color: rgba(111, 217, 154, 0.85) !important;
+    color: #b4f0c8 !important;
+}
+[class*="st-key-hook_compare_btn"] button:hover p,
+[class*="st-key-hook_compare_btn"] button:hover span,
+[class*="st-key-hook_compare_btn"] button:hover div {
+    color: #b4f0c8 !important;
+}
+
 /* Target the very next sibling — Streamlit's columns row containing
    the button — and dive into the button element.
    v1.13.55: 原本只用 `+ div` (緊鄰下一兄弟), 但 Streamlit DOM 在某些版本/
@@ -37647,7 +37681,7 @@ def render_ticker_bundle_page(bundle: dict, lens_meta: dict | None = None, selec
                 )
                 if st.button(
                     compare_btn_label,
-                    key=f"hook_compare_btn_{ticker}",
+                    key=f"hook_compare_btn_{re.sub(r'[^A-Za-z0-9]+', '_', str(ticker))}",
                     help=(
                         f"自動帶入 {ticker} + {len(peers_for_compare)} 檔同類股進「股票比較」全頁模式"
                         if get_lang() == "繁體中文"
