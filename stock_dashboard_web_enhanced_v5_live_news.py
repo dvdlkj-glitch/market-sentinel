@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.58
+Version : v1.13.59
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,16 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.59 (2026-05-26)  [Enhance: 風險溫度計加更新時間 + Refresh 按鈕]
+
+  David 要求風險溫度計顯示資料更新時間 + 可手動 Refresh。
+  - _compute_market_risk_gauge return 加 computed_at (台北時間 yyyy-mm-dd HH:MM)。
+  - header 副標下加「🕒 更新: <時間> (台北)」標示 (riskg-updated CSS)。
+  - 面板下方加「🔄 重新整理風險數據」按鈕: 按下設 _riskg_refresh_clicked 旗標
+    + rerun; 下次進來偵測旗標 → _compute_market_risk_gauge.clear() 清快取 +
+    用分鐘級 cache key 強制重算 (一般用小時級 key 命中快)。
+  純增強, 不動風險計算邏輯。
 
 v1.13.58 (2026-05-26)  [Fix: prefetch 載入失敗 — f-string 內反斜線 (舊 Python)]
 
@@ -36514,6 +36524,7 @@ _RISK_GAUGE_CSS = """
 .riskg-head { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
 .riskg-title { font-size:19px; font-weight:800; color:#f6f8fc; display:flex; align-items:center; gap:8px; }
 .riskg-sub { font-size:13px; color:#8b95ad; margin-top:2px; }
+.riskg-updated { font-size:11.5px; color:#6b7488; margin-top:4px; }
 .riskg-score-wrap { text-align:right; }
 .riskg-score { font-size:38px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
 .riskg-level { font-size:14px; font-weight:700; margin-top:3px; }
@@ -36701,25 +36712,41 @@ def _compute_market_risk_gauge(cache_key: str) -> dict:
         "score": round(score, 0),
         "level": level, "level_txt": level_txt,
         "verdict": verdict, "components": components,
+        "computed_at": datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M"),  # v1.13.59
     }
 
 
 def render_market_risk_gauge(lang_zh: bool = True) -> None:
-    """市場風險溫度計面板 — 放台灣市場指標區。全程防禦, 失敗靜默不顯示。"""
+    """市場風險溫度計面板 — 放台灣市場指標區。全程防禦, 失敗靜默不顯示。
+    v1.13.59: 加更新時間標示 + Refresh 按鈕 (清快取重算)。"""
     try:
         from html import escape
-        _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
+        # v1.13.59: Refresh 按鈕按下時, 清掉 @cache_data 快取, 用新的分鐘級 key 強制重算。
+        _refresh_clicked = st.session_state.pop("_riskg_refresh_clicked", False)
+        if _refresh_clicked:
+            try:
+                _compute_market_risk_gauge.clear()
+            except Exception:
+                pass
+        # 一般用小時級 key (cache 命中快); 剛按 refresh 用分鐘級 key (確保重算)
+        if _refresh_clicked:
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H%M")
+        else:
+            _key = datetime.now(TW_TZ).strftime("%Y%m%d-%H")
         data = _compute_market_risk_gauge(_key)
         if not data or not data.get("components"):
             return
         score = data["score"]
         level = data["level"]
         level_txt = data["level_txt"]
+        computed_at = data.get("computed_at", "")
         render_html_block(_RISK_GAUGE_CSS)
         P = ['<div class="riskg-shell">']
         P.append('<div class="riskg-head"><div>')
         P.append(f'<div class="riskg-title">🌡️ {"市場風險溫度計" if lang_zh else "Market Risk Gauge"}</div>')
         P.append(f'<div class="riskg-sub">{"VIX · 殖利率 · 信用利差 · 黃金 · 大盤回落 · 台股 綜合風險參考" if lang_zh else "Composite risk reference"}</div>')
+        if computed_at:
+            P.append(f'<div class="riskg-updated">🕒 {"更新" if lang_zh else "Updated"}: {escape(computed_at)} (台北)</div>')
         P.append('</div>')
         P.append(f'<div class="riskg-score-wrap"><div class="riskg-score riskg-{level}">{score:.0f}</div>'
                  f'<div class="riskg-level riskg-{level}">{level_txt}</div></div>')
@@ -36738,6 +36765,14 @@ def render_market_risk_gauge(lang_zh: bool = True) -> None:
         P.append(f'<div class="riskg-disclaimer">{"風險分數為多項客觀指標綜合參考 (0=平穩, 100=高風險), 非崩盤預言, 不構成投資建議。市場無法準確預測。" if lang_zh else "Composite risk reference, not a crash prediction, not investment advice."}</div>')
         P.append('</div>')
         render_html_block("".join(P))
+        # v1.13.59: Refresh 按鈕 (在面板下方)。按下設旗標 + rerun, 下次進來清快取重算。
+        if st.button(
+            ("🔄 重新整理風險數據" if lang_zh else "🔄 Refresh risk data"),
+            key="riskg_refresh_btn",
+            use_container_width=False,
+        ):
+            st.session_state["_riskg_refresh_clicked"] = True
+            st.rerun()
     except Exception:
         return
 
