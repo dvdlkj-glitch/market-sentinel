@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.60
+Version : v1.13.61
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,23 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.61 (2026-05-26)  [Perf: 「刷新 Overall」改用 prefetch 快照 (毫秒級)]
+
+  David 報告: 一般進供應鏈不慢 (v1.13.45 one-shot), 但手動「刷新 Overall」仍很久。
+  調查確認 David 的猜測: 刷新走 force_refresh=True → get_supply_chain_focus_
+  snapshot 跳過 peek、清快取後 _build_supply_chain_focus_snapshot 完全重建 (重抓
+  6 族群所有成分股價格+新聞), 完全沒用 prefetch job 已寫進 Supabase 的快照。
+
+  修 (A 方案 — 用 prefetch table): 新增 remote_refresh 模式。
+  - get_supply_chain_focus_snapshot(remote_refresh=True): 清本地快取後, 強制
+    重讀 Supabase 最新 prefetch 快照 (peek_supply_chain_focus_snapshot, 毫秒級),
+    讀不到才 fallback 重建。
+  - build_supply_chain_overview_rows 加 remote_refresh 參數, 並行/逐一呼叫都傳下去。
+  - 「刷新 Overall」按鈕改用 remote_refresh=True (取代 force_refresh=True + 75s
+    timeout 包裝)。prefetch job 定時更新 Supabase, 刷新只需重讀 → 快。
+  注意: 刷新新鮮度取決於 prefetch job 跑的頻率 (右上角「快照 <時間>」可見)。
+  prefetch 本身 v1.13.58 才修好 f-string bug, 故先前 Supabase 快照可能偏舊。
 
 v1.13.60 (2026-05-26)  [UX: 側邊欄移除「自訂代號」, 只留智慧搜尋]
 
@@ -7717,10 +7734,24 @@ def peek_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = N
     return snapshot
 
 
-def get_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = None, *, force_refresh: bool = False) -> dict:
+def get_supply_chain_focus_snapshot(config_key: str, lens_meta: dict | None = None, *, force_refresh: bool = False, remote_refresh: bool = False) -> dict:
     config = SUPPLY_CHAIN_FOCUS_CONFIGS.get(config_key)
     if not config:
         return {}
+
+    # v1.13.61: remote_refresh = 「刷新 Overall」用 — 清本地快取後, 強制重讀
+    # Supabase 最新 prefetch 快照 (peek), 而非自己 force rebuild (重抓所有成分股
+    # 價格+新聞, 很慢)。prefetch job 已定時把最新快照寫進 Supabase, 直接讀即可,
+    # 毫秒級。讀不到才 fallback 重建。
+    if remote_refresh:
+        _clear_supply_chain_refresh_caches()
+        remote_snapshot = peek_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta)
+        if _supply_chain_snapshot_ready(remote_snapshot):
+            _persist_supply_chain_focus_snapshot(remote_snapshot, lens_meta=lens_meta)
+            return remote_snapshot
+        # Supabase 也沒有 ready 快照 → 退回重建 (確保有資料)
+        snapshot = _build_supply_chain_focus_snapshot(config_key, config, lens_meta=lens_meta)
+        return _persist_supply_chain_focus_snapshot(snapshot, lens_meta=lens_meta)
 
     if not force_refresh:
         existing_snapshot = peek_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta)
@@ -38733,6 +38764,7 @@ def build_supply_chain_overview_rows(
     lens_meta: dict | None = None,
     *,
     force_refresh: bool = False,
+    remote_refresh: bool = False,
 ) -> list[dict]:
     overview_rows: list[dict] = []
     # v1.13.35: 並行預抓 6 族群 snapshot。原本下方 for 迴圈逐一呼叫
@@ -38755,7 +38787,7 @@ def build_supply_chain_overview_rows(
             def _prefetch_one(_ck):
                 try:
                     return _ck, get_supply_chain_focus_snapshot(
-                        _ck, lens_meta=lens_meta, force_refresh=force_refresh
+                        _ck, lens_meta=lens_meta, force_refresh=force_refresh, remote_refresh=remote_refresh
                     )
                 except Exception:
                     return _ck, None
@@ -38783,7 +38815,7 @@ def build_supply_chain_overview_rows(
         # v1.13.35: 優先用並行預抓的結果; 沒有才退回逐一讀 (cache 命中時也快)。
         snapshot = _prefetched.get(config_key)
         if snapshot is None:
-            snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=force_refresh)
+            snapshot = get_supply_chain_focus_snapshot(config_key, lens_meta=lens_meta, force_refresh=force_refresh, remote_refresh=remote_refresh)
         if not isinstance(snapshot, dict) or str(snapshot.get("status", "ready")) != "ready":
             continue
 
@@ -40595,36 +40627,23 @@ def render_supply_chain_lab_dashboard(
                 use_container_width=True,
             )
         if refresh_now:
-            with st.spinner("正在更新供應鏈 Overall 快照..." if lang_zh else "Refreshing supply-chain overview snapshots..."):
-                # v1.13.48: 「刷新 Overall」force_refresh 會重建快照 →
-                # enrich_supply_chain_top_rows 對 6 族群×10 檔成分股抓新聞
-                # (collect_ticker_context, news_limit=6), 序列、無 timeout → 卡死。
-                # 加總時限保護: 用執行緒跑重建, 超時 (75s) 就放棄、改用 one-shot
-                # 既有快照顯示 + 提示。避免使用者無限等待。
-                import concurrent.futures as _cf
-                _done = False
+            with st.spinner("正在重讀最新供應鏈快照..." if lang_zh else "Reloading latest supply-chain snapshots..."):
+                # v1.13.61: 「刷新 Overall」改用 remote_refresh — 清本地快取後重讀
+                # Supabase 最新 prefetch 快照 (毫秒級), 而非 force_refresh 完全重建
+                # (重抓 6 族群所有成分股價格+新聞, 很慢)。prefetch job 已定時把最新
+                # 快照寫進 Supabase, 直接讀即可。讀不到才 fallback 重建。
                 try:
-                    with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
-                        _fut = _ex.submit(
-                            build_supply_chain_overview_rows,
-                            selected_keys, lens_meta=lens_meta, force_refresh=True,
-                        )
-                        _refreshed_rows = _fut.result(timeout=75)
-                    _done = True
-                except _cf.TimeoutError:
-                    st.warning(
-                        "刷新逾時 (新聞/外資抓取較慢) — 已改用現有快照顯示。可稍後再試, 或直接看下方既有資料。"
-                        if lang_zh else
-                        "Refresh timed out — showing existing snapshot instead."
+                    build_supply_chain_overview_rows(
+                        selected_keys, lens_meta=lens_meta, remote_refresh=True,
                     )
                 except Exception as _re:
                     st.warning(
-                        f"刷新時發生問題 ({type(_re).__name__}) — 已改用現有快照顯示。"
+                        f"重讀時發生問題 ({type(_re).__name__}) — 已改用現有快照顯示。"
                         if lang_zh else
-                        f"Refresh error ({type(_re).__name__}) — showing existing snapshot."
+                        f"Reload error ({type(_re).__name__}) — showing existing snapshot."
                     )
-                # 不論成功或超時, 都用 (非 force) 路徑渲染: 成功的話新快照已寫入快取,
-                # 超時的話用 one-shot 既有資料。一律不再 force (避免再次卡住)。
+                # 重讀後用 (非 force) 路徑渲染: remote_refresh 已把最新 Supabase 快照
+                # 寫入本地快取, 這裡讀快取即最新。
                 render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=False)
         else:
             render_supply_chain_overall_summary(selected_keys, lens_meta=lens_meta, show_icons=True, force_refresh=False)
