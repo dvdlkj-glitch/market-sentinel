@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.59
+Version : v1.13.60
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,14 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.60 (2026-05-26)  [UX: 側邊欄移除「自訂代號」, 只留智慧搜尋]
+
+  David 決定側邊欄精簡 — 拿掉「自訂代號」輸入框 (智慧搜尋是超集: 能打代號也能
+  打中文名)。移除自訂代號的 text_input + 加入按鈕 UI。
+  注意: custom_ticker_text / custom_tickers 後續仍被引用 (line ~47377 蒐集
+  ticker、函式 return), 故保留變數為空值 (""/[]) 避免 NameError, 只移除 UI。
+  智慧搜尋的「加入搜尋結果」按鈕保留 (按了仍自動跳股票研究)。
 
 v1.13.59 (2026-05-26)  [Enhance: 風險溫度計加更新時間 + Refresh 按鈕]
 
@@ -47273,38 +47281,12 @@ def render_general_market_sidebar_selector(selected_lang: str) -> tuple[list[str
             f"{selected_groups_label}: " + ("未限制，顯示目前市場所有預設群組" if is_zh else "Not limited. Showing all preset groups in this market scope.")
         )
 
-    custom_symbol_widget_key = "dashboard_custom_symbols_widget"
-    if custom_symbol_widget_key not in st.session_state:
-        st.session_state[custom_symbol_widget_key] = st.session_state.get("dashboard_custom_symbols", "")
-    custom_ticker_text = st.text_input(
-        t("custom_symbols"),
-        placeholder=t("custom_symbols_placeholder"),
-        key=custom_symbol_widget_key,
-    )
-    st.session_state["dashboard_custom_symbols"] = custom_ticker_text
-
-    custom_tickers = [
-        normalize_dashboard_ticker(ticker)
-        for ticker in custom_ticker_text.replace("\n", ",").split(",")
-        if ticker.strip()
-    ]
-    custom_tickers = filter_tickers_for_market_scope(custom_tickers, selected_market_scope)
-    if st.button(custom_add_label, use_container_width=True) and custom_tickers:
-        st.session_state["dashboard_selected_tickers"] = merge_ticker_selection(
-            selected_ticker_picks,
-            custom_tickers,
-            selected_market_scope,
-        )
-        st.session_state["dashboard_selected_tickers_initialized"] = True
-        # v1.13.51: 加入個股後自動跳到「股票研究」(Expert 個股工作台), 非個股比較。
-        # 正確設定 = General Market + expert 層級 + ticker desks tab (同 Hero Bar
-        # 「股票研究」按鈕做法 line ~14203)。
-        st.session_state["dashboard_mode"] = "General Market"
-        st.session_state["dashboard_experience_level"] = "expert"
-        st.session_state["dashboard_layout_mode"] = "Expert"
-        st.session_state["dashboard_expert_general_section"] = "layout_ticker_desks_tab"
-        st.session_state["dashboard_expert_general_section__selector"] = "layout_ticker_desks_tab"
-        st.rerun()
+    # v1.13.60: 移除「自訂代號」輸入框 (David 要求側邊欄精簡, 只留智慧搜尋 —
+    # 智慧搜尋能打代號也能打中文名, 是自訂代號的超集)。保留變數為空值, 避免
+    # 後續引用 (line ~47377 蒐集 ticker / 函式 return) NameError。
+    custom_ticker_text = ""
+    custom_tickers = []
+    # (原自訂代號 UI: text_input + 加入按鈕 已移除)
 
     symbol_search_widget_key = "dashboard_symbol_search_widget"
     if symbol_search_widget_key not in st.session_state:
