@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.64
+Version : v1.13.65
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,16 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.65 (2026-05-26)  [UI: 情境提醒改卡片式 + 放大字體 (純外觀)]
+
+  David 要求情境提醒字體調大 + 換卡片呈現。純外觀調整, 完全不動情境偵測邏輯。
+  - 排版: 從「分隔線列表」改為響應式卡片 grid (auto-fit minmax 300px),
+    每情境獨立卡片 (背景 + 邊框 + 圓角 + 左側 4px 色條)。
+  - 色條/標題依 icon 基調: ✅good=綠 / ⚠️warn=黃 / 💡info=藍。
+  - 字體放大: 區標題 14→16.5px, 卡片標題 13.5→15.5px, 內文 12.5→14px,
+    icon 18→21px, 免責 11→12px。
+  HTML 加 tone class (eval-ctx-good/warn/info) 依 icon 對應, 不影響運算。
 
 v1.13.64 (2026-05-26)  [Fix: 情境提醒完全不顯示 — 子指標在 subscores 子層]
 
@@ -24027,28 +24037,41 @@ def _build_evaluation_card_context_alerts(
         # 渲染 HTML
         css = """
 <style>
-.eval-context-alerts { background: linear-gradient(180deg, rgba(22,26,40,.85), rgba(14,17,27,.92)); border: 1px solid rgba(120,130,160,.22); border-radius: 12px; padding: 14px 16px; margin: 10px 0 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; color: #e9ecf3; }
-.eval-context-alerts-title { font-size: 14px; font-weight: 700; color: #f0f3f8; margin-bottom: 10px; }
-.eval-context-alert-item { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(96,110,145,.12); }
-.eval-context-alert-item:first-of-type { border-top: none; }
-.eval-context-alert-icon { font-size: 18px; line-height: 1.3; flex: 0 0 auto; }
-.eval-context-alert-body { flex: 1 1 auto; }
-.eval-context-alert-title { font-size: 13.5px; font-weight: 700; color: #f0f3f8; margin-bottom: 2px; }
-.eval-context-alert-text { font-size: 12.5px; color: #b8c1d4; line-height: 1.55; }
-.eval-context-alert-disclaimer { font-size: 11px; color: #6b7488; margin-top: 10px; font-style: italic; border-top: 1px solid rgba(96,110,145,.12); padding-top: 8px; }
+.eval-context-alerts { background: linear-gradient(180deg, rgba(22,26,40,.85), rgba(14,17,27,.92)); border: 1px solid rgba(120,130,160,.22); border-radius: 14px; padding: 18px 20px; margin: 12px 0 16px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; color: #e9ecf3; }
+.eval-context-alerts-title { font-size: 16.5px; font-weight: 800; color: #f6f8fc; margin-bottom: 14px; }
+.eval-context-alert-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.eval-context-alert-card { background: rgba(40,46,66,.45); border: 1px solid rgba(120,130,160,.20); border-left: 4px solid rgba(120,130,160,.55); border-radius: 11px; padding: 13px 15px; }
+.eval-context-alert-card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.eval-context-alert-icon { font-size: 21px; line-height: 1.2; flex: 0 0 auto; }
+.eval-context-alert-title { font-size: 15.5px; font-weight: 800; color: #f6f8fc; }
+.eval-context-alert-text { font-size: 14px; color: #c4ccdc; line-height: 1.62; }
+.eval-ctx-good { border-left-color: #6fd99a; }
+.eval-ctx-warn { border-left-color: #e6c35f; }
+.eval-ctx-info { border-left-color: #6bb6ff; }
+.eval-ctx-good .eval-context-alert-title { color: #8be8b1; }
+.eval-ctx-warn .eval-context-alert-title { color: #f0d68a; }
+.eval-ctx-info .eval-context-alert-title { color: #a9d4ff; }
+.eval-context-alert-disclaimer { font-size: 12px; color: #6b7488; margin-top: 14px; font-style: italic; border-top: 1px solid rgba(96,110,145,.15); padding-top: 10px; }
 </style>
 """
         title = "💭 情境提醒 (客觀觀察, 非操作建議)" if lang_zh else "💭 Context Alerts (observations, not advice)"
         parts = [css, f'<div class="eval-context-alerts"><div class="eval-context-alerts-title">{title}</div>']
+        parts.append('<div class="eval-context-alert-grid">')
+        # v1.13.65: 依 icon 判斷情境基調 (純外觀, 不影響偵測邏輯):
+        # ⚠️=warn(黃)、✅=good(綠)、💡=info(藍)
+        _tone_map = {"⚠️": "warn", "✅": "good", "💡": "info"}
         for icon, t, body in alerts:
+            _tone = _tone_map.get(icon, "info")
             parts.append(
-                f'<div class="eval-context-alert-item">'
-                f'<div class="eval-context-alert-icon">{_esc(icon)}</div>'
-                f'<div class="eval-context-alert-body">'
-                f'<div class="eval-context-alert-title">{_esc(t)}</div>'
+                f'<div class="eval-context-alert-card eval-ctx-{_tone}">'
+                f'<div class="eval-context-alert-card-head">'
+                f'<span class="eval-context-alert-icon">{_esc(icon)}</span>'
+                f'<span class="eval-context-alert-title">{_esc(t)}</span>'
+                f'</div>'
                 f'<div class="eval-context-alert-text">{_esc(body)}</div>'
-                f'</div></div>'
+                f'</div>'
             )
+        parts.append('</div>')  # close grid
         disclaimer = (
             "以上為多指標組合的客觀情境描述, 不構成投資建議。市場無法準確預測, 任何決策請依個人狀況與風險承受度。"
             if lang_zh else
