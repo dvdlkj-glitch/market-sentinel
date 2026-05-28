@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.63
+Version : v1.13.64
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,17 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.64 (2026-05-26)  [Fix: 情境提醒完全不顯示 — 子指標在 subscores 子層]
+
+  User 兩條路徑進評估卡都沒看到情境區。根本原因 (前面 v1.13.62~63 沒抓到):
+  build_technical_score / build_value_score / build_chip_score 的子指標 (rsi/kd/
+  macd/ma_stack/pe/div_yld/foreign_net) 都包在 **"subscores" 子層**, 但情境函式
+  寫成 (tech_scores).get("rsi") 直接抓頂層 → 全部 None → 無任何情境命中 →
+  回空字串 → 整個情境區不顯示 (try/except 又把潛在錯誤吞掉, 更難察覺)。
+  修: 新增 _sub() helper 從 scores["subscores"][key] 取。實測 8150 真實結構
+  從 0 命中 → 6 命中, 情境區正常顯示。
+  (教訓: 接資料結構前先確認巢狀層級, 勿假設子欄位在頂層。)
 
 v1.13.63 (2026-05-26)  [Fix: 情境提醒殖利率 key 錯誤 + 確認渲染版本]
 
@@ -23927,17 +23938,26 @@ def _build_evaluation_card_context_alerts(
             except (TypeError, ValueError):
                 return None
 
+        def _sub(scores, key):
+            # v1.13.64: 子指標都包在 "subscores" 子層 (見 build_technical_score
+            # 等的 return), 原本直接 .get(key) 抓頂層 → 全 None → 無情境命中 →
+            # 情境區完全不顯示。修: 從 subscores 取。
+            if not scores:
+                return None
+            sub = (scores.get("subscores") or {}).get(key) or {}
+            return sub
+
         # 抽取常用子指標分數 (沒有就 None)
-        rsi_s = _sf((tech_scores or {}).get("rsi", {}).get("score")) if tech_scores else None
-        kd_s = _sf((tech_scores or {}).get("kd", {}).get("score")) if tech_scores else None
-        macd_s = _sf((tech_scores or {}).get("macd", {}).get("score")) if tech_scores else None
-        ma_s = _sf((tech_scores or {}).get("ma_stack", {}).get("score")) if tech_scores else None
-        pe_s = _sf((value_scores or {}).get("pe", {}).get("score")) if value_scores else None
-        pe_raw = _sf((value_scores or {}).get("pe", {}).get("raw")) if value_scores else None
-        yld_s = _sf((value_scores or {}).get("div_yld", {}).get("score")) if value_scores else None
+        rsi_s = _sf(_sub(tech_scores, "rsi").get("score")) if tech_scores else None
+        kd_s = _sf(_sub(tech_scores, "kd").get("score")) if tech_scores else None
+        macd_s = _sf(_sub(tech_scores, "macd").get("score")) if tech_scores else None
+        ma_s = _sf(_sub(tech_scores, "ma_stack").get("score")) if tech_scores else None
+        pe_s = _sf(_sub(value_scores, "pe").get("score")) if value_scores else None
+        pe_raw = _sf(_sub(value_scores, "pe").get("raw")) if value_scores else None
+        yld_s = _sf(_sub(value_scores, "div_yld").get("score")) if value_scores else None
         growth_overall = _sf((growth_scores or {}).get("overall_score")) if growth_scores else None
         chip_overall = _sf((chip_scores or {}).get("overall_score")) if chip_scores else None
-        foreign_s = _sf((chip_scores or {}).get("foreign_net", {}).get("score")) if chip_scores else None
+        foreign_s = _sf(_sub(chip_scores, "foreign_net").get("score")) if chip_scores else None
 
         # --- 情境 1: 短線過熱 (RSI + KD 都低分=過熱區) ---
         # 分數低 (≤3) = 該指標處於過熱/超買區
