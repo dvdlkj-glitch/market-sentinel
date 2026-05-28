@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.61
+Version : v1.13.62
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,27 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.62 (2026-05-26)  [Feature: 個股評估卡 — 情境提醒 (客觀觀察, 非買賣訊號)]
+
+  David 詢問是否能加買進/賣出建議。我誠實提醒: 技術指標研究上不能穩定打敗大盤、
+  分析師目標價接近隨機、不應做投資推薦工具。建議「情境提醒卡」(選項 B): 偵測
+  指標組合給客觀情境描述, 不給操作訊號。David 同意。
+
+  新增 _build_evaluation_card_context_alerts 函式 — 根據 tech/value/growth/chip
+  各子指標分數偵測 6 個典型情境並出 HTML 卡片:
+  - ⚠️ 短線過熱: RSI + KD 都進過熱區 (score ≤3.5)
+  - ✅ 趨勢強勢: MA 多頭 + MACD 強 (≥8)
+  - 💡 成長股溢價: PE 偏貴 (≤3) + 成長高 (≥7), 顯示 PE 原值
+  - 💡 法人籌碼正向: 外資強買 (≥8) + 技術強 (MA ≥7)
+  - ⚠️ 價值面偏弱: 低殖利率 + 高 PE (兩者皆 ≤3)
+  - ⚠️ 技術轉弱: MA + MACD 都弱 (≤4)
+  每條含 emoji + 標題 + 白話描述 + 限制提醒 (例如「趨勢會反轉」「籌碼會變」)。
+  含明確 disclaimer「客觀情境描述, 不構成投資建議」。沒有任何情境命中時不顯示。
+
+  渲染位置: 在 toggle 版評估卡 (render_evaluation_card_toggle_for_ticker,
+  line ~24105, 實際在用的版本) 的 render_eval_card_html 之後; 也在 expander 版
+  (legacy v1.10.29) 加同樣呼叫以防舊路徑被使用。全程防禦, 失敗靜默。
 
 v1.13.61 (2026-05-26)  [Perf: 「刷新 Overall」改用 prefetch 快照 (毫秒級)]
 
@@ -23869,6 +23890,146 @@ def _fetch_eval_card_data(ticker: str, daily_df) -> dict:
     }
 
 
+def _build_evaluation_card_context_alerts(
+    tech_scores: dict | None,
+    value_scores: dict | None,
+    growth_scores: dict | None,
+    chip_scores: dict | None,
+    *,
+    lang_zh: bool = True,
+) -> str:
+    """v1.13.62: 情境提醒卡 — 偵測指標組合給「客觀風險/機會提示」, 非買賣訊號。
+
+    根據各維度分數和子指標 (KD/RSI/MACD/PE/外資等) 組合, 偵測典型情境並給
+    白話提醒。例如 RSI+KD 過熱 → 短線過熱提示; 估值偏貴+成長高 → 成長股
+    溢價情境。每條提醒含 emoji 標識 (⚠️ 風險/💡 觀察/✅ 正向) 和原因依據。
+
+    定位: 純客觀情境描述, 完全不給「買進/賣出」訊號, 也不給操作建議。
+    回傳 HTML 字串 (含完整 CSS), 失敗回空字串 (靜默不顯示)。
+    """
+    try:
+        from html import escape as _esc
+        alerts: list[tuple[str, str, str]] = []  # (icon, title, body)
+
+        def _sf(v):
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        # 抽取常用子指標分數 (沒有就 None)
+        rsi_s = _sf((tech_scores or {}).get("rsi", {}).get("score")) if tech_scores else None
+        kd_s = _sf((tech_scores or {}).get("kd", {}).get("score")) if tech_scores else None
+        macd_s = _sf((tech_scores or {}).get("macd", {}).get("score")) if tech_scores else None
+        ma_s = _sf((tech_scores or {}).get("ma_stack", {}).get("score")) if tech_scores else None
+        pe_s = _sf((value_scores or {}).get("pe", {}).get("score")) if value_scores else None
+        pe_raw = _sf((value_scores or {}).get("pe", {}).get("raw")) if value_scores else None
+        yld_s = _sf((value_scores or {}).get("yield", {}).get("score")) if value_scores else None
+        growth_overall = _sf((growth_scores or {}).get("overall_score")) if growth_scores else None
+        chip_overall = _sf((chip_scores or {}).get("overall_score")) if chip_scores else None
+        foreign_s = _sf((chip_scores or {}).get("foreign_net", {}).get("score")) if chip_scores else None
+
+        # --- 情境 1: 短線過熱 (RSI + KD 都低分=過熱區) ---
+        # 分數低 (≤3) = 該指標處於過熱/超買區
+        if rsi_s is not None and kd_s is not None and rsi_s <= 3.5 and kd_s <= 3.5:
+            alerts.append((
+                "⚠️",
+                "短線過熱" if lang_zh else "Short-term overheated",
+                ("RSI 與 KD 都進入過熱區, 短線可能拉回。技術指標過熱不等於下跌, 但提示「再追高的勝率變低」。"
+                 if lang_zh else
+                 "Both RSI and KD are in overbought zones. Technical overheating doesn't mean a drop, but the odds of chasing higher get worse.")
+            ))
+
+        # --- 情境 2: 強勢趨勢 (MA 多頭 + MACD 強) ---
+        if ma_s is not None and macd_s is not None and ma_s >= 8 and macd_s >= 8:
+            alerts.append((
+                "✅",
+                "趨勢強勢" if lang_zh else "Strong trend",
+                ("均線多頭排列加 MACD 紅柱擴大, 屬於趨勢明確的多方結構。但趨勢會反轉, 過去走勢不保證未來。"
+                 if lang_zh else
+                 "MA bullish stack with MACD expanding — clear uptrend structure. Trends do reverse; past performance doesn't guarantee future.")
+            ))
+
+        # --- 情境 3: 成長股溢價 (估值偏貴 + 成長高) ---
+        if pe_s is not None and growth_overall is not None and pe_s <= 3 and growth_overall >= 7:
+            pe_str = f" (PE≈{pe_raw:.1f})" if pe_raw is not None else ""
+            alerts.append((
+                "💡",
+                "成長股溢價情境" if lang_zh else "Growth premium scenario",
+                (f"本益比偏高{pe_str}但成長動能強勁 — 典型成長股樣態。合理性取決於『成長能持續多久』, 一旦成長放緩, 估值修正幅度可能不小。"
+                 if lang_zh else
+                 f"High PE{pe_str} with strong growth — classic growth-stock pattern. Reasonableness hinges on growth durability; valuation can correct sharply if growth slows.")
+            ))
+
+        # --- 情境 4: 法人籌碼進駐 + 技術強 ---
+        if foreign_s is not None and ma_s is not None and foreign_s >= 8 and ma_s >= 7:
+            alerts.append((
+                "💡",
+                "法人籌碼正向" if lang_zh else "Institutional flow positive",
+                ("外資/法人持續買超, 同時技術面強勢 — 籌碼+技術雙向支撐。但法人籌碼會變, 短期動向 ≠ 長期持有保證。"
+                 if lang_zh else
+                 "Sustained institutional buying with strong technicals — flow + technical support. Institutional flows change; short-term flow ≠ long-term holding signal.")
+            ))
+
+        # --- 情境 5: 低殖利率 + 估值偏貴 (價值投資者警示) ---
+        if yld_s is not None and pe_s is not None and yld_s <= 3 and pe_s <= 3:
+            alerts.append((
+                "⚠️",
+                "價值面偏弱" if lang_zh else "Valuation looks stretched",
+                ("殖利率偏低且本益比偏貴 — 對重視『現金流回報』的投資人來說價值面不利。重點看你是『買成長』還是『買現金流』。"
+                 if lang_zh else
+                 "Low yield with high PE — unfavorable for cash-flow-oriented investors. Depends on whether you're buying growth or yield.")
+            ))
+
+        # --- 情境 6: 技術轉弱 (MA 弱 + MACD 弱) ---
+        if ma_s is not None and macd_s is not None and ma_s <= 4 and macd_s <= 4:
+            alerts.append((
+                "⚠️",
+                "技術轉弱" if lang_zh else "Technical weakening",
+                ("均線結構轉弱加 MACD 走空, 短中期趨勢承壓。指標只看過去, 不能預測底部; 但確實提示『順勢交易者進場勝率偏低』。"
+                 if lang_zh else
+                 "MA structure weakening with bearish MACD — short-to-mid term under pressure. Indicators only describe the past, but flag lower odds for trend followers.")
+            ))
+
+        if not alerts:
+            return ""
+
+        # 渲染 HTML
+        css = """
+<style>
+.eval-context-alerts { background: linear-gradient(180deg, rgba(22,26,40,.85), rgba(14,17,27,.92)); border: 1px solid rgba(120,130,160,.22); border-radius: 12px; padding: 14px 16px; margin: 10px 0 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; color: #e9ecf3; }
+.eval-context-alerts-title { font-size: 14px; font-weight: 700; color: #f0f3f8; margin-bottom: 10px; }
+.eval-context-alert-item { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(96,110,145,.12); }
+.eval-context-alert-item:first-of-type { border-top: none; }
+.eval-context-alert-icon { font-size: 18px; line-height: 1.3; flex: 0 0 auto; }
+.eval-context-alert-body { flex: 1 1 auto; }
+.eval-context-alert-title { font-size: 13.5px; font-weight: 700; color: #f0f3f8; margin-bottom: 2px; }
+.eval-context-alert-text { font-size: 12.5px; color: #b8c1d4; line-height: 1.55; }
+.eval-context-alert-disclaimer { font-size: 11px; color: #6b7488; margin-top: 10px; font-style: italic; border-top: 1px solid rgba(96,110,145,.12); padding-top: 8px; }
+</style>
+"""
+        title = "💭 情境提醒 (客觀觀察, 非操作建議)" if lang_zh else "💭 Context Alerts (observations, not advice)"
+        parts = [css, f'<div class="eval-context-alerts"><div class="eval-context-alerts-title">{title}</div>']
+        for icon, t, body in alerts:
+            parts.append(
+                f'<div class="eval-context-alert-item">'
+                f'<div class="eval-context-alert-icon">{_esc(icon)}</div>'
+                f'<div class="eval-context-alert-body">'
+                f'<div class="eval-context-alert-title">{_esc(t)}</div>'
+                f'<div class="eval-context-alert-text">{_esc(body)}</div>'
+                f'</div></div>'
+            )
+        disclaimer = (
+            "以上為多指標組合的客觀情境描述, 不構成投資建議。市場無法準確預測, 任何決策請依個人狀況與風險承受度。"
+            if lang_zh else
+            "Objective scenario observations from combined indicators. Not investment advice."
+        )
+        parts.append(f'<div class="eval-context-alert-disclaimer">{disclaimer}</div></div>')
+        return "".join(parts)
+    except Exception:
+        return ""
+
+
 def render_evaluation_card_for_ticker(ticker: str, name: str | None,
                                        daily_df) -> None:
     """v1.10.29: Render the evaluation card section for one ticker.
@@ -23923,6 +24084,20 @@ def render_evaluation_card_for_ticker(ticker: str, name: str | None,
             lang_zh=lang_zh,
         )
         render_html_block(html)
+
+        # v1.13.62: 情境提醒卡 — 客觀觀察, 非買賣訊號
+        try:
+            _ctx_html = _build_evaluation_card_context_alerts(
+                tech_scores=cached.get("tech"),
+                value_scores=cached.get("value"),
+                growth_scores=cached.get("growth"),
+                chip_scores=cached.get("chip"),
+                lang_zh=lang_zh,
+            )
+            if _ctx_html:
+                render_html_block(_ctx_html)
+        except Exception:
+            pass
 
         # Refresh button — lets user manually invalidate cache
         refresh_label = "🔄 重新計算" if lang_zh else "🔄 Recompute"
@@ -24021,6 +24196,20 @@ def render_evaluation_card_toggle_for_ticker(ticker: str, name: str | None,
         lang_zh=lang_zh,
     )
     render_html_block(html)
+
+    # v1.13.62: 情境提醒卡 — 多指標組合的客觀情境描述, 非買賣訊號。
+    try:
+        _ctx_html = _build_evaluation_card_context_alerts(
+            tech_scores=cached.get("tech"),
+            value_scores=cached.get("value"),
+            growth_scores=cached.get("growth"),
+            chip_scores=cached.get("chip"),
+            lang_zh=lang_zh,
+        )
+        if _ctx_html:
+            render_html_block(_ctx_html)
+    except Exception:
+        pass
 
     # Refresh button — lets user manually invalidate cache
     refresh_label = "🔄 重新計算" if lang_zh else "🔄 Recompute"
