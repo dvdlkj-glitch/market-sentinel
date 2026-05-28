@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.65
+Version : v1.13.66
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,19 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.66 (2026-05-27)  [Enhance: 情境提醒支援美股 — 加技術型情境 + 保底]
+
+  David 要情境提醒也用在美股 (AMZN/DXYZ 沒顯示)。查明: 台股美股共用同一評估卡
+  函式, 情境程式碼本就會跑, 但美股常缺 growth/chip 資料, 且原 6 情境多需 growth/
+  chip/極端技術值 → 美股數據組合常「全部不中→空白」(非 bug, 是閾值縫隙)。
+  修 (C+B 方案): 加 4 個只用技術+PE 的情境 (美股也能命中) + 保底中性提示:
+  - 💡 動能背離: RSI≥7 但 MACD≤4 (價強動能弱)
+  - 💡 均線糾結: MA 在 4~7 中間值 (整理)
+  - ✅ 多頭健康: KD + RSI 都在 5.5~8.5 健康多頭區 (非過熱)
+  - ⚠️ 估值偏貴: PE≤2 單獨提示 (無論成長, 且不與成長股溢價重複)
+  - 保底: 一個都不中時顯示「無明顯組合特徵」中性卡 (而非整區消失)。
+  驗證: AMZN→動能背離+均線糾結; DXYZ→保底中性; 台股 8150→原 4 情境不退化。
 
 v1.13.65 (2026-05-26)  [UI: 情境提醒改卡片式 + 放大字體 (純外觀)]
 
@@ -24031,8 +24044,60 @@ def _build_evaluation_card_context_alerts(
                  "MA structure weakening with bearish MACD — short-to-mid term under pressure. Indicators only describe the past, but flag lower odds for trend followers.")
             ))
 
+        # v1.13.66: 以下情境只用技術 + PE (不依賴 growth/chip), 美股也能命中。
+        # 避免美股因缺 growth/chip 資料而「全部不中→空白」。
+
+        # --- 情境 7: 動能背離 (RSI/KD 健康多頭 但 MACD 轉弱) ---
+        if rsi_s is not None and macd_s is not None and rsi_s >= 7 and macd_s <= 4:
+            alerts.append((
+                "💡",
+                "動能背離" if lang_zh else "Momentum divergence",
+                ("RSI 仍在多頭區但 MACD 動能轉弱 — 價格偏強、動能卻在減速, 屬於『漲勢可能換檔』的觀察訊號。背離不必然反轉, 但值得留意。"
+                 if lang_zh else
+                 "RSI still bullish but MACD momentum weakening — price firm while momentum cools. A 'rally may be shifting gears' signal; divergence doesn't always reverse, but worth watching.")
+            ))
+
+        # --- 情境 8: 均線糾結整理 (MA 中間值, 方向不明) ---
+        if ma_s is not None and 4 < ma_s < 7:
+            alerts.append((
+                "💡",
+                "均線糾結" if lang_zh else "MAs entangled",
+                ("均線排列不夠明確 (短中長線交錯), 多空方向未定 — 典型『整理/盤整』樣態。趨勢交易者通常等方向表態再動作。"
+                 if lang_zh else
+                 "MA stack not clearly ordered — direction undecided, typical consolidation. Trend traders often wait for a clearer signal.")
+            ))
+
+        # --- 情境 9: 多頭健康 (KD + RSI 都在健康多頭區, 非過熱) ---
+        if kd_s is not None and rsi_s is not None and 5.5 <= kd_s <= 8.5 and 5.5 <= rsi_s <= 8.5:
+            alerts.append((
+                "✅",
+                "多頭健康" if lang_zh else "Healthy uptrend momentum",
+                ("KD 與 RSI 都在健康多頭區 (非過熱), 動能正向且未過度延伸 — 相對穩健的多方狀態。但任何狀態都會變, 仍需留意大盤與個股消息。"
+                 if lang_zh else
+                 "Both KD and RSI in healthy bullish zones (not overbought) — positive momentum without overextension. Any state can change; watch the broader market.")
+            ))
+
+        # --- 情境 10: 估值偏貴單獨提示 (PE 偏貴, 無論成長) ---
+        if pe_s is not None and pe_s <= 2 and not any("溢價" in a[1] or "premium" in a[1].lower() for a in alerts):
+            pe_str = f" (PE≈{pe_raw:.1f})" if pe_raw is not None else ""
+            alerts.append((
+                "⚠️",
+                "估值偏貴" if lang_zh else "Valuation rich",
+                (f"本益比偏高{pe_str} — 進場成本較高, 對價格容錯空間較小。是否合理取決於你對其成長/品質的判斷。"
+                 if lang_zh else
+                 f"High PE{pe_str} — higher entry cost, less margin for error. Whether it's justified depends on your view of its growth/quality.")
+            ))
+
+        # v1.13.66: 保底 — 一個情境都沒命中時 (常見於資料不全的美股), 顯示中性提示,
+        # 而非整個區塊消失 (避免使用者以為功能壞了)。
         if not alerts:
-            return ""
+            alerts.append((
+                "💡",
+                "無明顯組合特徵" if lang_zh else "No strong pattern",
+                ("目前各指標未形成明顯的組合情境 (可能處於中性區間, 或部分資料不足)。可參考上方各維度分數自行綜合判斷。"
+                 if lang_zh else
+                 "Indicators don't form a strong combined pattern right now (neutral range, or some data unavailable). Refer to the dimension scores above.")
+            ))
 
         # 渲染 HTML
         css = """
