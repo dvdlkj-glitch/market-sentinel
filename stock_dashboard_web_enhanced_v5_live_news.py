@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.62
+Version : v1.13.63
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,16 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.63 (2026-05-26)  [Fix: 情境提醒殖利率 key 錯誤 + 確認渲染版本]
+
+  User 回報沒看到情境提醒區塊。排查: render_eval_card_html 有 3 個定義 (Python
+  後者覆蓋), 實際生效 = line ~23647 版本 (有籌碼面/量能比, 符合 user 截圖),
+  由 render_evaluation_card_toggle_for_ticker 呼叫 — 情境提醒已加在該處
+  (v1.13.62)。故程式路徑正確, 最可能 user 尚未 push v1.13.62。
+  順帶修一個真 bug: 情境函式殖利率 key 寫成 "yield", 實際欄位是 "div_yld"
+  (見 value_sublabels)。修正後「價值面偏弱」「低殖利率」情境才能正確偵測。
+  其他情境 (趨勢/成長股溢價/法人籌碼) key 本就正確。
 
 v1.13.62 (2026-05-26)  [Feature: 個股評估卡 — 情境提醒 (客觀觀察, 非買賣訊號)]
 
@@ -23924,7 +23934,7 @@ def _build_evaluation_card_context_alerts(
         ma_s = _sf((tech_scores or {}).get("ma_stack", {}).get("score")) if tech_scores else None
         pe_s = _sf((value_scores or {}).get("pe", {}).get("score")) if value_scores else None
         pe_raw = _sf((value_scores or {}).get("pe", {}).get("raw")) if value_scores else None
-        yld_s = _sf((value_scores or {}).get("yield", {}).get("score")) if value_scores else None
+        yld_s = _sf((value_scores or {}).get("div_yld", {}).get("score")) if value_scores else None
         growth_overall = _sf((growth_scores or {}).get("overall_score")) if growth_scores else None
         chip_overall = _sf((chip_scores or {}).get("overall_score")) if chip_scores else None
         foreign_s = _sf((chip_scores or {}).get("foreign_net", {}).get("score")) if chip_scores else None
