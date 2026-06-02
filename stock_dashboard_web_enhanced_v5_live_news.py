@@ -3,7 +3,7 @@
 ================================================================================
 HORIZON Release LEO Supply Chain — Stock Market Dashboard
 ================================================================================
-Version : v1.13.66
+Version : v1.13.67
 Updated : 2026-05-17
 Author  : David Lau (with iterative AI-assisted refactors)
 Lines   : ~39,290
@@ -246,6 +246,19 @@ TABLE OF CONTENTS  (line numbers approximate; use your IDE's jump-to-symbol)
 ================================================================================
 CHANGELOG (most recent first)
 ================================================================================
+
+v1.13.67 (2026-05-27)  [Fix: 虛擬交易 (Paper Bot) section 沒顯示]
+
+  David 發現「AI 策略實戰」section 消失了。根因: line 54103 原本綁
+  `if _focal_show_hooks:`, 而 _focal_show_hooks 要求三個條件同時成立:
+  (1) dashboard_mode == "General Market"
+  (2) dashboard_market_scope == "Taiwan only"  ← 美股範圍時被擋
+  (3) experience_level == "overview"  ← 切到 beginner/expert 等就被擋
+  使用者只要切到美股範圍或非 overview 層級, Paper Bot section 就消失。
+  這個綁定不合理 — Paper Bot 是美股自動交易, 不該只在 Taiwan only 顯示;
+  也不該只在 overview 層級才有。v1.13.41 寫入時的設計疏忽, 今天才被發現。
+  修: 改成只看 dashboard_mode == "General Market" + 排除股票研究聚焦 (個股工作台
+  時不打擾)。未設 Alpaca 金鑰時函式內部仍靜默 return (不影響無金鑰使用者)。
 
 v1.13.66 (2026-05-27)  [Enhance: 情境提醒支援美股 — 加技術型情境 + 保底]
 
@@ -54099,8 +54112,12 @@ def generate_dashboard():
                 with st.expander("🔍 Debug details (供開發排查)" if _news_briefing_is_zh() else "🔍 Debug details"):
                     st.code(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
-    # v1.13.41: 🤖 AI 策略實戰 (Paper Trading Bot)。未設 Alpaca 金鑰時靜默不顯示。
-    if _focal_show_hooks:
+    # v1.13.67: Paper Bot section 原本綁 _focal_show_hooks (= overview 層級 +
+    # Taiwan only), 但 Paper Bot 是美股自動交易, 不該只在 Taiwan only 範圍顯示,
+    # 也不該只在 overview 層級才有 (使用者切到 expert/advanced 時也要看得到 bot)。
+    # 改成只看 dashboard_mode == "General Market" (大盤級別功能), 且排除股票研究
+    # 聚焦模式 (個股工作台時不打擾)。未設 Alpaca 金鑰時函式內部會靜默 return。
+    if dashboard_mode == "General Market" and not _is_stock_research_focus:
         try:
             render_paper_trading_bot_block(lang_zh=_news_briefing_is_zh())
         except Exception:
