@@ -8645,7 +8645,7 @@ TAIWAN_OFFICIAL_SNAPSHOT_PATH = Path(".dashboard_cache") / "taiwan_official_snap
 ACTIVE_ETF_HOLDINGS_SOURCE_LABEL = "Yahoo Finance funds_data"
 ACTIVE_ETF_UPDATE_NOTE_EN = "This section is designed for after-close review and refreshes after 4:00 PM Asia/Taipei."
 ACTIVE_ETF_UPDATE_NOTE_ZH = "本區為收盤後追蹤用途，資訊設計為每日下午 4:00（台北時間）後更新。"
-ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00981A", "00982A", "00988A", "00990A", "00991A", "00992A"]
+ACTIVE_ETF_QUICK_PICK_SYMBOLS = ["00981A", "00403A", "00982A", "00988A", "00990A", "00991A", "00992A"]
 TAIWAN_OFFICIAL_SNAPSHOT_MARKET_KEY = "__MARKET__"
 
 # v1.13.20: Master switch for the "今日重點 / Today's Focal Points" homepage
@@ -11032,6 +11032,19 @@ ACTIVE_ETF_METADATA = {
         "direction_en": "Income bullish",
         "group_key": "high-dividend",
         "aliases": ["國泰動能高息", "主動國泰動能高息ETF"],
+    },
+    "00403A.TW": {
+        "code": "00403A",
+        "zh": "主動統一升級50",
+        "en": "Uni-President Taiwan Upgrade 50 Active ETF",
+        "issuer_zh": "統一投信",
+        "issuer_en": "Uni-President SITE",
+        "style_zh": "台股核心 / 升級50",
+        "style_en": "Taiwan core / upgrade 50",
+        "direction_zh": "核心偏多",
+        "direction_en": "Core bullish",
+        "group_key": "taiwan-core",
+        "aliases": ["統一升級50", "統一台股升級50", "主動統一台股升級50"],
     },
     "00980A.TW": {
         "code": "00980A",
